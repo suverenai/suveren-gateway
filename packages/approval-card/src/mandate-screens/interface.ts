@@ -26,8 +26,8 @@ export interface HeldBackMandate {
  * are older spellings, kept.)
  */
 export function heldReason(code: string): HeldReason {
-  if (code === 'mandate_body_not_received' || code === 'mandate_not_granted' || code === 'no_grant') return 'not_received';
-  if (code === 'grant_check_required' || code === 'CHECK_REQUIRED' || code === 'check_required') return 'check_required';
+  if (code === 'mandate_body_not_received' || code === 'no_grant') return 'not_received';
+  if (code === 'grant_check_required' || code === 'mandate_not_granted' || code === 'CHECK_REQUIRED' || code === 'check_required') return 'check_required';
   if (code === 'owner_unknown' || code === 'owner_not_this_person') return 'owner_unknown';
   if (code === 'mandate_revoked') return 'revoked';
   return 'changed';

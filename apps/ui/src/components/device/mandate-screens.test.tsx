@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MandateDiff } from '@hap/core/mandate-change';
 import {
-  S13, HeldBackList, EndMandate, ChangeMandate, JoinCompare, ColleagueList, teamDiff, heldReason, groupCode, isExtendOnly,
+  S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, durationText, endDateText, giveErrorText, HeldBackList, EndMandate, ChangeMandate, JoinCompare, ColleagueList, teamDiff, heldReason, groupCode, isExtendOnly,
   type HeldBackMandate, type TeamTerms,
 } from '@suveren/approval-card/mandate-screens';
 import { endIsDeviceSigned } from '../../lib/end-mandate';
@@ -38,7 +38,7 @@ describe('screen 3: held back', () => {
   it('gateway codes map to reasons', () => {
     expect(heldReason('no_grant')).toBe('not_received'); expect(heldReason('CHECK_REQUIRED')).toBe('check_required');
     // the gateway's own codes (apps/mcp-server mandate-grants.ts)
-    expect(heldReason('mandate_body_not_received')).toBe('not_received'); expect(heldReason('mandate_not_granted')).toBe('not_received'); expect(heldReason('grant_check_required')).toBe('check_required'); expect(heldReason('owner_not_this_person')).toBe('owner_unknown'); expect(heldReason('mandate_body_mismatch')).toBe('changed'); expect(heldReason('grant_mismatch')).toBe('changed');
+    expect(heldReason('mandate_body_not_received')).toBe('not_received'); expect(heldReason('mandate_not_granted')).toBe('check_required'); expect(heldReason('grant_check_required')).toBe('check_required'); expect(heldReason('owner_not_this_person')).toBe('owner_unknown'); expect(heldReason('mandate_body_mismatch')).toBe('changed'); expect(heldReason('grant_mismatch')).toBe('changed');
     expect(heldReason('owner_unknown')).toBe('owner_unknown'); expect(heldReason('mandate_revoked')).toBe('revoked'); expect(heldReason('grant_member_differs')).toBe('changed');
   });
 });
@@ -184,5 +184,56 @@ describe('the held-back, preview and change routes (step 13 wiring)', () => {
     expect(await spClient.changeMandate('authz_x', {}, baseDiff)).toEqual({ ok: false, code: 'changed_since_proposal' });
     answer(500, {});
     expect(await spClient.changeMandate('authz_x', {}, baseDiff)).toEqual({ ok: false, code: 'other' });
+  });
+});
+
+describe('screen 1: give a mandate (review step, chain accounts)', () => {
+  const people = [{ userId: 'u1', name: 'Ben Huber' }, { userId: 'u2', name: 'Carla Weiss' }, { userId: 'me', name: 'Me' }];
+  const list = (unconfirmed: string[] | null) => approverLines(people, unconfirmed === null ? null : new Set(unconfirmed));
+  const view = (unconfirmed: string[] | null) => text(<GiveApprovers capText="500 EUR" count={2} approvers={list(unconfirmed)} adminName="Anna Muster" ownId="me" />);
+  it('names the cap, the count and the people; your own row explains', () => {
+    const s = view(['u2']);
+    expect(s).toContain('Above 500 EUR, 2 of these people must approve first:');
+    expect(s).toContain('Ben Huber'); expect(s).toContain('confirmed by Anna Muster'); expect(s).toContain('not confirmed by your admin yet');
+    expect(s).toContain(S13.giveYouNote);
+  });
+  it('an unconfirmed approver blocks with the reason and one next step', () => {
+    expect(view(['u2'])).toContain('Carla Weiss is not confirmed by your admin yet. She cannot approve until Anna Muster confirms her. Ask Anna Muster to confirm her.');
+    expect(giveBlocked(list(['u2']), 'me')).toBe(true);
+    expect(giveBlocked(list([]), 'me')).toBe(false);
+    expect(giveBlocked(list(['me']), 'me')).toBe(false);
+  });
+  it('before the first give nothing is claimed as confirmed (interim source)', () => {
+    const s = view(null);
+    expect(s).not.toContain('confirmed by Anna'); expect(s).toContain(S13.giveApproversChecked); expect(giveBlocked(list(null), 'me')).toBe(false);
+  });
+  it('limits show profile labels and units', () => {
+    const schema = { fields: { amount: { displayName: 'Value of one offer', unit: 'currency:EUR' }, per_day: { displayName: 'Offers per day', unit: 'count' } } };
+    expect(limitRows({ profile: 'x', amount: 500, per_day: 10, other: 3 }, schema)).toEqual([
+      { key: 'amount', label: 'Value of one offer', value: '500 EUR' }, { key: 'per_day', label: 'Offers per day', value: '10' }, { key: 'other', label: 'other', value: '3' }]);
+    expect(limitValueText({ unit: 'percent' }, 5)).toBe('5%');
+  });
+  it('end date next to the duration', () => {
+    expect(durationText(14 * 86400)).toBe('14 days'); expect(durationText(3600)).toBe('1 hour');
+    expect(endDateText(Date.UTC(2026, 10, 19, 12), 86400)).toMatch(/2026/);
+    expect(S13.giveUntil('14 days', '3 Dec 2026, 14:20')).toBe('14 days (until 3 Dec 2026, 14:20)');
+    expect(S13.giveDone('Sales', '3 Dec 2026, 14:20')).toBe('Done. The mandate for Sales is active until 3 Dec 2026, 14:20.');
+  });
+  it('refusals map to the mockup texts 218 to 224', () => {
+    expect(giveErrorText({ code: 'cap_exceeded' })).toBe(S13.giveErrCap);
+    expect(giveErrorText({ code: 'approvers_unavailable' })).toBe(S13.giveErrApprovers);
+    expect(giveErrorText({ code: 'as_unreachable' })).toBe(S13.endOffline);
+    expect(giveErrorText({ code: 'approver_has_no_chain' })).toBe(S13.giveErrNoChain);
+    expect(giveErrorText({ code: 'check_failed', reason: 'user_cancelled' })).toBe(S13.giveErrCancelled);
+    expect(giveErrorText({ code: 'check_failed', reason: 'check_failed' })).toBe(S13.giveErrTouch);
+    expect(giveErrorText({ code: 'delivery_failed' })).toBe(S13.giveErrNotDelivered);
+    expect(giveErrorText({ code: 'grant_not_recorded' })).toBe(S13.giveErrNotAccepted);
+  });
+  it('the sign route keeps the old message and adds the code', async () => {
+    const { MandateSignError } = await import('../../lib/sp-client');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error: 'mandate_refused', message: 'nope', code: 'grant_refused', grantCode: 'cap_exceeded' }), { status: 422, headers: { 'content-type': 'application/json' } }));
+    const err = await spClient.signMandate({ team: 'personal', profile: 'p', limits: {}, scope: {}, intent: 'i', mode: 'review', ttlSeconds: 1, title: 't', discloseIdentity: false }).catch(e => e);
+    expect(err).toBeInstanceOf(MandateSignError); expect(err).toBeInstanceOf(Error); expect(err.code).toBe('cap_exceeded');
+    vi.restoreAllMocks();
   });
 });

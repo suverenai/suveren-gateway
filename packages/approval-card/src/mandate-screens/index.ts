@@ -6,3 +6,5 @@ export { HeldBackCard, HeldBackList, heldCardText } from './HeldBackCard';
 export { EndMandate, endErrorText, type EndState, type EndFacts } from './EndMandate';
 export { ChangeMandate, isExtendOnly, changeErrorText, type ChangeMandateProps, type ChangeState, type ChangeError } from './ChangeMandate';
 export { JoinCompare, ColleagueList, type JoinState, type JoinFacts } from './JoinCompare';
+export * from './give-view';
+export { GiveApprovers, giveBlocked } from './GiveApprovers';

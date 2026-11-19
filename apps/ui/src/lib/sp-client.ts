@@ -529,6 +529,11 @@ export interface BuiltinStatus {
  * below, instead of re-deriving this per method (and re-missing the new
  * envelope per method, which is exactly how this bug happened).
  */
+/** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
+export class MandateSignError extends Error {
+  constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string) { super(message); this.name = 'MandateSignError'; }
+}
+
 export function asErrorMessage(body: unknown, fallback: string): string {
   const r = readRefusal(body, fallback);
   return r.code && r.message !== r.code ? `${r.message} (${r.code})` : r.message;
@@ -2351,7 +2356,10 @@ class SPClient {
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; approvers?: unknown; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason);
+    }
     return body as { authorizationId: string; revokeError?: string };
   }
 

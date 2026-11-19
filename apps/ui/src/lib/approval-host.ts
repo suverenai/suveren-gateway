@@ -10,6 +10,7 @@ import { spClient } from './sp-client';
 import { useAuth } from '../contexts/AuthContext';
 import { useSSEEvent, type SSEEventType } from '../contexts/EventSourceContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
+import { useDeviceChain } from './use-device-chain';
 
 function HostLink(props: { to: string; className?: string; children?: ReactNode }) {
   return createElement(Link, props);
@@ -43,6 +44,7 @@ configureApprovalHost({
     useSSEEvent(type as SSEEventType, handler);
   },
   useSimulationMode,
+  useGiveWording: useDeviceChain,
   useOpenMandateScreen() {
     const navigate = useNavigate();
     return (handoff) => {

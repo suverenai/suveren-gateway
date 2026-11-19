@@ -8,6 +8,36 @@
  */
 
 export const S13 = {
+  // Screen 1: give a mandate (step 13; today's review step, changed in place: DEC-80)
+  giveButton: 'Give this mandate with Touch ID', // 211
+  /** DRAFT: while the touch is asked for. */
+  giveBusy: 'Waiting for your touch...',
+  giveCardButton: 'Give this mandate', // DRAFT: the AI-proposal card's "Sign mandate"; the touch follows
+  giveCardApprove: 'Approve', // DRAFT: the card's "Approve and sign"
+  giveTouchNote: 'Your device asks for your touch. It names only the area ({area}). The details are on this page.', // 212 (device, not Mac)
+  giveHowLong: 'How long', // 206
+  giveUntil: (duration: string, end: string): string => `${duration} (until ${end})`, // 206
+  giveApproversAbove: (cap: string, n: number): string => `Above ${cap}, ${n} of these people must approve first:`, // 208
+  giveApproversAll: (n: number): string => `${n} of these people must approve first:`, // DRAFT: team without caps
+  giveWithinCaps: (cap: string): string => `Up to ${cap} your AI acts alone.`, // 207
+  giveApproverConfirmed: (admin: string): string => `confirmed by ${admin}`, // 330
+  giveApproverUnconfirmed: 'not confirmed by your admin yet', // 330
+  giveYou: 'You', // 245
+  giveYouNote: 'Someone else must approve your AI\'s actions above this limit.', // 245
+  giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. She cannot approve until ${admin} confirms her.`, // 214
+  giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm her.`, // 215
+  /** DRAFT: shown until the check can read confirmations before the touch (DEC-73 member list). */
+  giveApproversChecked: 'Checked when you give the mandate.',
+  giveDone: (area: string, end: string): string => `Done. The mandate for ${area} is active until ${end}.`, // 217
+  giveErrCap: 'A limit is higher than your team allows. Nothing changed. Lower it and try again.', // 218
+  giveErrApprovers: 'suveren.ai did not say who may approve for this team. Nothing changed. Try again.', // 219
+  giveErrNoChain: 'An approver has not finished setting up Suveren yet. Nothing changed. Ask them to finish it.', // 220
+  giveErrCancelled: 'Cancelled. Nothing changed.', // 221
+  giveErrTouch: 'Touch ID did not work this time. Nothing changed. Try again.', // 222
+  giveErrNotAccepted: 'suveren.ai did not accept the mandate. Try again.', // 223
+  giveErrNotDelivered: 'The mandate could not reach the gateway, so it was ended again. Give it again.', // 224
+  giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // 225
+
   // Screen 3: a mandate this gateway holds back
   heldTitle: 'On hold: Your AI cannot use these yet', // 250
   heldName: (profile: string, owner: string): string => `${profile}, from ${owner}`, // 251

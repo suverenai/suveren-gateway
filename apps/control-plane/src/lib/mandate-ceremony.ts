@@ -142,7 +142,7 @@ export interface MandatePlan {
 
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one' | 'grant_refused', readonly detail?: Record<string, unknown>) { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one' | 'grant_refused' | 'delivery_failed', readonly detail?: Record<string, unknown>) { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -432,7 +432,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     await deps.as('POST', `/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
       reason: 'Auto-revoked: gate content delivery failed',
     }).catch(() => {});
-    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
+    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`, 'delivery_failed');
   }
   const retired = req.replaces ? await retireReplaced(req.replaces, authorizationId, deps) : {};
   return { authorizationId, plan, ...retired };
@@ -530,7 +530,7 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   } catch (err) {
     // A mandate whose intent never reached the gateway must not stay active: ended with a device signature (final).
     await grants.revoke(authorizationId).catch(() => {});
-    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
+    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`, 'delivery_failed');
   }
   // The Authority Server ended the authorization this one replaces in the same moment the new version was issued.
   if (req.replaces) void deps.resyncGates?.().catch(() => {});
