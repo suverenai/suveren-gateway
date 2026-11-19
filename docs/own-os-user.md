@@ -471,6 +471,108 @@ tests this; the fix may be the `proxy` entry of the account's `config.json`, set
 
 ### 13.1 Status
 
-- Increments 1 and 2: unit and scratch tests pass; dry run and scratch install and uninstall ran on a Mac. The `--prefix` inside the package folder is refused.
-- Increment 3, built and unit-tested without a second account: `lib/system-mode.mjs` detects the protected install (plist and root-owned settings file both present) and makes the CLI a thin client. Ports come from the settings file, not from the person's environment. `status` asks `/health`; `config get port|mcp-port|data-dir` reads the settings file; `stop`, `restart`, `start`, `logs`, `service`, `simulation` and `config set` refuse and name the admin command. `SUVEREN_SYSTEM_PREFIX` points the CLI at a scratch install (tests only). Tested by running the real CLI against a scratch install with a throwaway health server on a high port.
-- **Only the VM run can show** (increment 3): that the daemon starts as `_suveren` and serves; that the person's user is refused reading `/var/lib/suveren`, writing the code folder, and killing the daemon; that it comes up locked after `kickstart -k`; that the connectors start. Known gap to check first: connectors are started with `npx`, but the daemon's fixed PATH holds no `npx` and the code folder holds only `node`. Either the install must ship an npm next to the Node, or the manifests must name an absolute command. Decide after the VM shows what happens.
+- Increments 1 and 2: unit and scratch tests pass; dry run and scratch install and uninstall ran on a Mac. A `--prefix` inside the package folder is refused.
+- Increment 3 (thin CLI), built without a second account: `lib/system-mode.mjs` detects the protected install (plist and root-owned settings file both present). Ports come from the settings file, not the person's environment. `status` asks `/health`; `config get port|mcp-port|data-dir` reads the settings file; `stop`, `restart`, `start`, `logs`, `service`, `simulation` and `config set` refuse and name the admin command. `SUVEREN_SYSTEM_PREFIX` points the CLI at a scratch install (tests only).
+- Connectors: they start with `npx`. The code folder now holds node, npm and the npm/npx links of one Node distribution (copied and hash-checked like the rest) and its `bin` leads the daemon's PATH. A Node that loads libraries from outside macOS is refused for a real install: **the Homebrew Node is one** (it loads `/opt/homebrew/...`, a folder the person's user can write). The install needs the official Node from nodejs.org. Dry run and scratch install only warn.
+- Increment 4 (channel without the touch, without a signing identity): `native/macos/suveren-broker.swift` checks every peer on the socket against `identifier + cdhash` from the root-owned pin file (`agent-pin.json`, written by the installer from `codesign -dvvv`) and passes only verified messages to the daemon (`lib/agent-channel.mjs`, JSON lines over its stdin/stdout). Tested on this Mac as a normal user with real signed binaries: the genuine build is served; a re-signed copy with the same identifier, another signed program, `python3` and the genuine build with one byte changed are refused and never reach the handler; the socket goes when the daemon goes. The plan writes the pin and copies the broker when given them. **Not wired yet:** the CLI install does not pass the broker or an agent (none is built before increment 5), and the daemon does not start the channel (needs the agent's unlock messages).
+- **Only the VM run can show:** section 14.
+
+## 14. VM test script (increments 2 to 4)
+
+For a macOS VM with a snapshot taken first. Two accounts: the VM's admin account is "the
+person" (use `sudo` only where written); `_suveren` is made by the install. Every command is
+meant to be pasted as written. Ports 3400 and 3430 are the defaults inside the VM, which has no
+live lane. Expected output follows each block; anything else is a finding to report, not to
+work around.
+
+**P0. Prepare (as the person).**
+```
+# official Node from nodejs.org (the .pkg installer), then:
+node -v; otool -L "$(which node)" | grep -v "/usr/lib/\|/System/" | wc -l      # expect: 1 (only the header line)
+git clone <the repository>; cd suveren-gateway; git checkout feat/s1-own-user
+pnpm install && node bundle/build.mjs --build-apps && (cd bundle/dist && npm install)
+```
+Expect the last count to be `1` (the file name line only). If it is more, this Node cannot
+be used for the install: that is the finding.
+
+**P1. Increment 2, plan and install.**
+```
+cd bundle/dist
+node bin/suveren-gateway.js install --system --dry-run | head -30     # expect: 19+ lines, "dscl", "mkdir", "copy", "symlink", "launchctl bootstrap"
+node bin/suveren-gateway.js install --system                          # as the person: expect "must run as root" and exit 2
+sudo node bin/suveren-gateway.js install --system                     # expect: Done.
+id _suveren                                                           # expect: uid=2xx(_suveren) gid=2xx(_suveren) groups=2xx(_suveren)
+dscl . -read /Users/_suveren UserShell NFSHomeDirectory IsHidden      # expect: /usr/bin/false, /var/empty, 1
+ls -ld /usr/local/libexec/suveren/* /usr/local/etc/suveren /var/lib/suveren
+                                                                      # expect: code and settings root wheel; data drwx------ _suveren _suveren
+ls -l /usr/local/libexec/suveren/current                              # expect: -> <version>
+sudo launchctl print system/ai.suveren.gateway | grep -E "state|pid|user"   # expect: state = running
+```
+
+**P2. Increment 3, the daemon and the person's refusals (as the person, no sudo).**
+```
+ps -o user=,pid=,command= -p "$(pgrep -f 'current/node/bin/node' | head -1)"    # expect: user _suveren
+curl -s localhost:3400/health                                         # expect: JSON with "vaultUnlocked":false (locked)
+node /usr/local/libexec/suveren/current/bin/suveren-gateway.js status          # expect: running (under its own account)
+node /usr/local/libexec/suveren/current/bin/suveren-gateway.js stop            # expect: needs an administrator + the sudo command, exit 2
+ls /var/lib/suveren                                                   # expect: Permission denied
+cat /var/lib/suveren/vault.enc.json                                   # expect: Permission denied (or No such file: still no content)
+touch /usr/local/libexec/suveren/current/x                            # expect: Permission denied
+echo '{}' > /usr/local/etc/suveren/gateway.json                       # expect: Permission denied
+kill "$(pgrep -f 'current/node/bin/node' | head -1)"                  # expect: Operation not permitted
+lldb -p "$(pgrep -f 'current/node/bin/node' | head -1)" -b -o quit    # expect: refused (attach not permitted); note exact text
+sudo -u _suveren env PATH=/usr/local/libexec/suveren/current/node/bin:/usr/bin:/bin /usr/local/libexec/suveren/current/node/bin/npx --version
+                                                                      # expect: an npm version number, no error (the connectors' launcher)
+sudo tail -n 20 /var/log/suveren/gateway.log                          # expect: gateway start lines, no EACCES
+```
+Then, in a browser as the person, open `http://localhost:3400`, set up with a test account,
+add one connector (needs the VM's network) and check it shows "running". If it fails, copy the
+line from the log: this is the connector-start question left open in 13.
+
+**P3. Increment 3, restart, reboot, update.**
+```
+sudo launchctl kickstart -k system/ai.suveren.gateway; sleep 6
+curl -s localhost:3400/health                                         # expect: locked again, new pid
+# reboot the VM, log in as the person, open nothing:
+curl -s localhost:3400/health                                         # expect: answers, locked (it started at boot)
+# update: change the version first
+sed -i '' 's/"version": "[^"]*"/"version": "9.9.9-vmtest"/' bundle/dist/package.json
+sudo node bundle/dist/bin/suveren-gateway.js update --system          # expect: Done.
+ls /usr/local/libexec/suveren; ls -l /usr/local/libexec/suveren/current        # expect: two versions, current -> 9.9.9-vmtest
+curl -s localhost:3400/health                                         # expect: version 9.9.9-vmtest (or the old one: finding), locked
+```
+
+**P4. Increment 4, the channel.**
+```
+cd apps/control-plane && npx vitest run src/__tests__/agent-channel.test.ts      # expect: 7 passed (same account; as on the Mac)
+```
+Across accounts (the one fact only this run shows): the broker runs as `_suveren`, the agent
+as the person.
+```
+W=/tmp/s1vm; rm -rf $W; mkdir $W && chmod 755 $W
+swiftc -O native/macos/suveren-broker.swift -o $W/broker && swiftc -O native/macos/test/agent-stub.swift -o $W/stub
+for n in agent other; do cp $W/stub $W/$n; done
+codesign --force -s - -i ai.suveren.agent -o runtime $W/agent
+codesign --force -s - -i com.example.other -o runtime $W/other
+H=$(codesign -dvvv $W/agent 2>&1 | sed -n 's/^CDHash=//p'); echo "{\"identifier\":\"ai.suveren.agent\",\"cdhash\":\"$H\"}" > $W/pin.json
+chmod 644 $W/pin.json; chmod 755 $W/*
+sudo mkdir -p /var/run/s1test && sudo chown _suveren /var/run/s1test
+(sleep 120 | sudo -u _suveren $W/broker --socket /var/run/s1test/a.sock --pin $W/pin.json > $W/broker.log 2>&1 &)
+sleep 2; cat $W/broker.log                                            # expect: {"event":"ready"}
+perl -e 'alarm 4; exec @ARGV' $W/other /var/run/s1test/a.sock '{"op":"hello"}'   # expect: {"error":"refused"}
+perl -e 'alarm 4; exec @ARGV' $W/agent /var/run/s1test/a.sock '{"op":"hello"}'   # expect: no reply (nothing answers on the broker's stdin), then killed after 4 s
+cat $W/broker.log                                                     # expect: a "refused" line for `other`, "open" and a "msg" line with {"op":"hello"} for `agent`
+```
+If `agent` is refused as well, the cross-account check does not work: report the broker log
+line. Clean up: `sudo pkill -u _suveren -f $W/broker; sudo rm -rf /var/run/s1test $W`.
+
+**P5. Uninstall.**
+```
+sudo node bundle/dist/bin/suveren-gateway.js uninstall --system       # expect: Done.
+ls /usr/local/libexec/suveren /Library/LaunchDaemons/ai.suveren.gateway.plist   # expect: No such file (both)
+id _suveren; ls -ld /var/lib/suveren                                  # expect: both still exist (data is kept)
+sudo node bundle/dist/bin/suveren-gateway.js uninstall --system --remove-data
+id _suveren; ls /var/lib/suveren                                      # expect: no such user; No such file
+sudo launchctl print system/ai.suveren.gateway                        # expect: could not find service
+```
+Revert the snapshot afterwards. Report: each "expect" line that did not hold, with the exact output.
