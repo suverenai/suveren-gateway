@@ -24,8 +24,8 @@ export const S13 = {
   giveApproverUnconfirmed: 'not confirmed by your admin yet', // 330
   giveYou: 'You', // 245
   giveYouNote: 'Someone else must approve your AI\'s actions above this limit.', // 245
-  giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. She cannot approve until ${admin} confirms her.`, // 214
-  giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm her.`, // 215
+  giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. They cannot approve until ${admin} confirms them.`, // 214
+  giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm them.`, // 215
   /** DRAFT: shown until the check can read confirmations before the touch (DEC-73 member list). */
   giveApproversChecked: 'Checking with the team settings…', // DRAFT: shown only until the gateway has answered
   giveDone: (area: string, end: string): string => `Done. The mandate for ${area} is active until ${end}.`, // 217
@@ -46,11 +46,11 @@ export const S13 = {
   heldNotReceived: 'This device has not received this mandate yet. Your AI cannot use it until it does.', // 252
   heldCheckAgain: 'Check again', // 253
   heldNoCheck: (owner: string): string => `${owner} did not confirm this mandate with Touch ID. Your AI cannot use it.`, // 254
-  heldNoCheckStep: 'Ask her to give it again on one of her devices.', // 255
-  heldNotOnList: (owner: string): string => `${owner} is not on the list your admin confirmed. Your AI cannot use her mandate.`, // 256
-  heldNotOnListStep: (admin: string): string => `Ask ${admin}, your admin, to confirm her.`, // 257
+  heldNoCheckStep: 'Ask them to give it again on one of their devices.', // 255
+  heldNotOnList: (owner: string): string => `${owner} is not on the list your admin confirmed. Your AI cannot use their mandate.`, // 256
+  heldNotOnListStep: (admin: string): string => `Ask ${admin}, your admin, to confirm them.`, // 257
   heldChanged: (owner: string): string => `This mandate does not match what ${owner} confirmed. It may have been changed since. Your AI cannot use it.`, // 258
-  heldChangedStep: 'Ask her to give it again.', // 259
+  heldChangedStep: 'Ask them to give it again.', // 259
   heldEnded: (owner: string): string => `${owner} ended this mandate. This is final.`, // 260
   heldEndedStep: 'If the work still needs it, ask for a new mandate.', // 261
   heldOwnNoCheck: 'Touch ID was not confirmed for this mandate. Your AI cannot use it.', // 262
@@ -112,16 +112,16 @@ export const S13 = {
 
   // Screen 2: identity codes at the join (option B; the AS and hap-core part is not built, see interface.ts)
   joinAdminTitle: (member: string, team: string): string => `Confirm ${member} to join ${team}`, // 310
-  joinAdminIntro: (member: string): string => `${member} asked to join your team. Compare codes with her first. You do this once.`, // 311
+  joinAdminIntro: (member: string): string => `${member} asked to join your team. Compare codes with them first. You do this once.`, // 311
   joinYourCode: 'Your code', // 312
   joinTheirCode: (name: string): string => `${name}'s code`, // 313
-  joinCompareHint: 'Both codes are on both screens. Check that they are the same on both. Ask her in person, or by a way you trust.', // 314
+  joinCompareHint: 'Both codes are on both screens. Check that they are the same on both. Ask them in person, or by a way you trust.', // 314
   joinMatch: (member: string): string => `The codes match. Confirm ${member}`, // 315
   joinDiffer: 'The codes are different', // 316
-  joinAdminDone: (member: string): string => `${member} has joined. Your colleagues now trust her because you confirmed her.`, // 317
+  joinAdminDone: (member: string): string => `${member} has joined. Your members now trust them because you confirmed them.`, // 317
   joinDifferResult: (member: string): string => `${member} is not added. Nothing changed. Do not go on until you know why the codes differ: suveren.ai may have shown one of you the wrong code.`, // 318
   joinMemberTitle: (admin: string): string => `Compare codes with ${admin}`, // 320
-  joinMemberIntro: (team: string, admin: string): string => `You asked to join ${team}. ${admin} confirms it. Compare codes with her first. You do this once.`, // 321
+  joinMemberIntro: (team: string, admin: string): string => `You asked to join ${team}. ${admin} confirms it. Compare codes with them first. You do this once.`, // 321
   joinMemberHint: 'Both codes are on both screens. Check that they are the same on both.', // 324
   joinMemberMatch: 'The codes match', // 325
   joinMemberDiffer: 'The codes are different', // 326
@@ -136,7 +136,7 @@ export const S13 = {
   joinUnavailable: 'Comparing codes is not available on this gateway yet.',
 } as const;
 
-/** Sentences that need "her"/"she" in the signed-off mockup keep it; the gateway knows no gender, so a later pass may reword them. */
+/** Never a gendered pronoun for a named person: them, their. */
 
 /** Group a code of digits in fours for the eye: "73142208556109423375" -> "7314 2208 5561 0942 3375". */
 export function groupCode(digits: string): string {

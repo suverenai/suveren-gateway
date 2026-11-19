@@ -25,7 +25,7 @@ describe('screen 3: held back', () => {
     expect(text(<HeldBackList mandates={[held({ reason: 'check_required' })]} />)).toContain(S13.heldNoCheckStep);
     expect(html).not.toContain('<button');
   });
-  it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm her.'));
+  it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm them.'));
   it('changed and ended', () => {
     expect(t({ reason: 'changed' })).toContain(S13.heldChangedStep);
     const e = t({ reason: 'revoked' });
@@ -198,7 +198,7 @@ describe('screen 1: give a mandate (review step, chain accounts)', () => {
     expect(s).toContain(S13.giveYouNote);
   });
   it('an unconfirmed approver blocks with the reason and one next step', () => {
-    expect(view(['u2'])).toContain('Carla Weiss is not confirmed by your admin yet. She cannot approve until Anna Muster confirms her. Ask Anna Muster to confirm her.');
+    expect(view(['u2'])).toContain('Carla Weiss is not confirmed by your admin yet. They cannot approve until Anna Muster confirms them. Ask Anna Muster to confirm them.');
     expect(giveBlocked(list(['u2']), 'me')).toBe(true);
     expect(giveBlocked(list([]), 'me')).toBe(false);
     expect(giveBlocked(list(['me']), 'me')).toBe(false);
