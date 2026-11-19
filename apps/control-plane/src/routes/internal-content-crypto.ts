@@ -34,7 +34,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /** The card context the MCP server hands over: the gateway's own four members, nothing else (plan 5). */
 function cardContextOf(v: unknown): CardContext | null {
   if (!isObj(v) || typeof v.gateway_version !== 'string' || !('display' in v) || !('execution_mapping' in v) || !('linked_record' in v)) return null;
-  return { display: v.display, execution_mapping: v.execution_mapping, linked_record: v.linked_record, gateway_version: v.gateway_version };
+  return { display: v.display, execution_mapping: v.execution_mapping, ...('static_execution' in v ? { static_execution: v.static_execution } : {}), linked_record: v.linked_record, gateway_version: v.gateway_version };
 }
 
 /** The wire contract's cap (PE1 brief): ≤ 50 recipients per proposal. */

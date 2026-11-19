@@ -152,14 +152,17 @@ function unreadableReadersNote(readers: Array<{ did: string; code: string }> | u
  */
 function cardContextOf(
   integrationManager: IntegrationManager,
-  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown } | null },
-): { display: unknown; execution_mapping: unknown; linked_record: unknown; gateway_version: string } | undefined {
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown; staticExecution?: unknown } | null },
+): { display: unknown; execution_mapping: unknown; static_execution: unknown; linked_record: unknown; gateway_version: string } | undefined {
   // The context is optional (the Authority Server may drop it; the card then says so): reading a connector's display
   // rules must never stop a proposal from being filed.
   try {
     return {
       display: getToolDisplayHints(integrationManager, tool.integrationId, tool.originalName) ?? null,
       execution_mapping: tool.gating?.executionMapping ?? {},
+      // The manifest's static fields, exactly what the wire execution context starts from (`{ ...staticExecution }`): with the
+      // mapping, a phone can rebuild the whole execution context.
+      static_execution: tool.gating?.staticExecution ?? {},
       linked_record: null,
       gateway_version: GATEWAY_VERSION,
     };
@@ -170,7 +173,7 @@ function cardContextOf(
 
 function cardContextArg(
   integrationManager: IntegrationManager,
-  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown } | null },
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown; staticExecution?: unknown } | null },
 ): { cardContext?: NonNullable<ReturnType<typeof cardContextOf>> } {
   const c = cardContextOf(integrationManager, tool);
   return c ? { cardContext: c } : {};

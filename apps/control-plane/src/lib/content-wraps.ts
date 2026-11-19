@@ -34,6 +34,8 @@ export interface CardContext {
   display: unknown;
   /** The mapping from arguments to `executionContext`. */
   execution_mapping: unknown;
+  /** The manifest's static execution fields; with `execution_mapping` a phone rebuilds the whole execution context. Absent in older contexts. */
+  static_execution?: unknown;
   /** The AU10 snapshot (a record the gateway read itself), or null. */
   linked_record: unknown;
   gateway_version: string;

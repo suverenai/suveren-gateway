@@ -153,7 +153,7 @@ const deps = (g: Gateway) => ({
   spUrl: 'https://as.example', cookie: 'Bearer test-token', dataDir: '/tmp/x', selfUserId: 'u-me', selfDid: g.me.root.did,
   selfPublicKey: g.dev.read.publicKey, device: { readers: g.readers, selfPrivateKey: g.dev.read.privateKey },
 });
-const CONTEXT: CardContext = { display: { title: 'Send' }, execution_mapping: { to: 'recipients' }, linked_record: null, gateway_version: '9.9.9' };
+const CONTEXT: CardContext = { display: { title: 'Send' }, execution_mapping: { to: 'recipients' }, static_execution: { action_type: 'send' }, linked_record: null, gateway_version: '9.9.9' };
 
 beforeEach(() => { legacy.length = 0; });
 
