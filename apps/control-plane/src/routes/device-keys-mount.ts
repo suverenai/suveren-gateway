@@ -41,6 +41,8 @@ import { DeviceReaders } from '../lib/device-readers';
 import { ProposalRewrap } from '../lib/proposal-rewrap';
 import { DeviceApprovals } from '../lib/device-approvals';
 import { TeamJoin } from '../lib/team-join';
+import { DevicePairing } from '../lib/device-pairing';
+import { createDevicePairingRouter } from './device-pairing';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -127,7 +129,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; readers: DeviceReaders; rewrap: ProposalRewrap } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -179,7 +181,13 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       vault: o.vault, store, grants, trust: grants.teamTrustPort(), now: o.device.now,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, readers, rewrap };
+    // Pairing with the phone app (step 11, gateway part): "Add a phone" and "Add this computer". Never beside a set-up or a recovery.
+    const pairing = new DevicePairing({
+      vault: o.vault, store, client, signin, checkAs: o.device.checkAs, now: o.device.now,
+      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+      otherFlowPending: () => setup.status().setupPending || setup.isBusy() || recovery.status().recoveryPending,
+    });
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, readers, rewrap, pairing };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -218,6 +226,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   if (device) {
     app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin, alarm: device.alarm, recovery: device.recovery }));
     app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
+    app.use('/auth', json, createDevicePairingRouter({ vault: o.vault, pageSession: o.pageSession, pairing: device.pairing }));
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
