@@ -7,7 +7,7 @@
  * as every other hook in this codebase.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { decryptProposalArgs, missingRecipients, contentHashForDecision, decisionButtonsVisible, noteRecipients } from './use-proposal-content';
+import { decryptProposalArgs, openProposalArgs, missingRecipients, contentHashForDecision, decisionButtonsVisible, noteRecipients } from './use-proposal-content';
 import { computeContentHashBrowser } from './content-hash';
 import type { Proposal } from '../types';
 import { configureApprovalHost, type ApprovalHost } from '../host';
@@ -171,5 +171,38 @@ describe('contentHashForDecision', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'No key wrap' }), { status: 403 })));
     const hash = await contentHashForDecision({ toolArgs: undefined, content: { v: 1, alg: 'x', ciphertext: 'ct', keys: {}, hash: 'sha256:x' } });
     expect(hash).toBeUndefined();
+  });
+});
+
+describe('plain toolArgs beside sealed content (H1: a server that shows one thing and seals another)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const sealed = { v: 1, alg: 'x', ciphertext: 'ct', keys: {}, hash: 'sha256:x' } as never;
+  const open = (real: object) => vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ plaintext: JSON.stringify(real) }), { status: 200 })));
+
+  it('sealed content wins: the server\'s plain copy is never what is shown or hashed when it is the same, and never returned when it differs', async () => {
+    open({ to: 'anna@example.com', amount: 10 });
+    expect(await openProposalArgs({ toolArgs: { to: 'anna@example.com', amount: 10 }, content: sealed })).toEqual({ args: { to: 'anna@example.com', amount: 10 }, mismatch: false });
+    // key order does not matter (the fingerprint is over the canonical form)
+    expect((await openProposalArgs({ toolArgs: { amount: 10, to: 'anna@example.com' }, content: sealed })).mismatch).toBe(false);
+    // the server shows "10 EUR to Anna" while the sealed content says another amount to another person
+    open({ to: 'mallory@example.com', amount: 10000 });
+    expect(await openProposalArgs({ toolArgs: { to: 'anna@example.com', amount: 10 }, content: sealed })).toEqual({ args: null, mismatch: true });
+  });
+
+  it('with the sealed content unreadable, the plain copy is NOT used as a fallback', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403 })));
+    expect(await openProposalArgs({ toolArgs: { to: 'anna@example.com' }, content: sealed })).toEqual({ args: null, mismatch: false });
+  });
+
+  it('the decision\'s fingerprint follows: nothing is hashed for a mismatching row, and the opened content (not the plain copy) is hashed otherwise', async () => {
+    open({ to: 'mallory@example.com' });
+    expect(await decryptProposalArgs({ toolArgs: { to: 'anna@example.com' }, content: sealed })).toBeNull();
+    expect(await contentHashForDecision({ toolArgs: { to: 'anna@example.com' }, content: sealed })).toBeUndefined();
+    open({ to: 'anna@example.com' });
+    expect(await contentHashForDecision({ toolArgs: { to: 'anna@example.com' }, content: sealed })).toBe(await computeContentHashBrowser('jcs', { to: 'anna@example.com' }));
+  });
+
+  it('a legacy row (no sealed content) still uses its plain toolArgs', async () => {
+    expect(await openProposalArgs({ toolArgs: { to: 'x@example.com' }, content: undefined })).toEqual({ args: { to: 'x@example.com' }, mismatch: false });
   });
 });

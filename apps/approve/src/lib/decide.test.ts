@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { b64uDecode, jcs, sha256Hash, utf8 } from '@hap/core/device-keys';
 import { checkCard, type ReadyCard } from './card-checks';
 import { DecideError } from './decide';
-import { cardWorld, PROPOSAL_ID, MANDATE_ID } from './card-world';
+import { cardWorld, PROPOSAL_ID, MANDATE_ID, AUTHZ } from './card-world';
 import { IDLE_LIMIT } from './session';
-import { errorText } from '../texts';
+import { errorText, blockedText } from '../texts';
 
 type World = Awaited<ReturnType<typeof cardWorld>>;
 
@@ -13,7 +13,8 @@ async function ready(w: World): Promise<ReadyCard> {
   if (!c.ok) throw new Error(`not ready: ${c.reason}`);
   return c.ready;
 }
-const row = (w: World) => w.as.byId.get(PROPOSAL_ID) as never;
+/** The request as the card holds it: a copy, so the server's row can change under it. */
+const row = (w: World) => ({ ...(w.as.byId.get(PROPOSAL_ID) as object) }) as never;
 
 describe('approve and reject on the phone (step 12, phone part; DEC-47)', () => {
   it('approve inside the session: a tap, no check, a decision the server verified under the phone\'s key', async () => {
@@ -75,10 +76,36 @@ describe('approve and reject on the phone (step 12, phone part; DEC-47)', () => 
     (w.as.byId.get(PROPOSAL_ID) as { contentHash: string }).contentHash = 'sha256:' + '3'.repeat(64);
     const e = await w.rt.decider.decide(row(w), r, 'approve').catch((x: Error) => x);
     expect(e).toBeInstanceOf(DecideError);
-    expect((e as DecideError).code).toBe('content_changed');
-    expect((e as DecideError).message).toBe(errorText('content_changed'));
+    // the fresh copy no longer hashes to its own fingerprint: the checks refuse it before anything is signed
+    expect((e as DecideError).code).toBe('content_mismatch');
     expect(w.as.decisions.length).toBe(0);
     expect(w.as.calls.some((c) => c.method === 'POST' && c.path.includes('/resolve'))).toBe(false);
+  });
+
+  it('every check runs again on the fresh copy before anything is signed (the mandate ended, the numbers or the target changed after the person looked)', async () => {
+    const posted = (w: World) => w.as.calls.some((c) => c.method === 'POST' && /\/(resolve|approve|reject)$/.test(c.path));
+    // the mandate was revoked meanwhile
+    const a = await cardWorld();
+    const ra = await ready(a);
+    a.as.mandates.set(AUTHZ, { blobs: a.as.mandates.get(AUTHZ)!.blobs, revoked: true });
+    const ea = await a.rt.decider.decide(row(a), ra, 'approve').catch((x: Error) => x);
+    expect((ea as DecideError).code).toBe('mandate_ended');
+    expect(posted(a)).toBe(false);
+    // the execution context the server holds changed
+    const b = await cardWorld();
+    const rb = await ready(b);
+    (b.as.byId.get(PROPOSAL_ID) as { executionContext: object }).executionContext = { amount: 9999 };
+    expect(((await b.rt.decider.decide(row(b), rb, 'approve').catch((x: Error) => x)) as DecideError).code).toBe('context_mismatch');
+    expect(posted(b)).toBe(false);
+    // the request now names another authorization or tool
+    const c = await cardWorld();
+    const rc = await ready(c);
+    const shownC = row(c);
+    (c.as.byId.get(PROPOSAL_ID) as { tool: string }).tool = 'email__delete_everything';
+    expect(((await c.rt.decider.decide(shownC, rc, 'approve').catch((x: Error) => x)) as DecideError).code).toBe('content_changed');
+    expect(posted(c)).toBe(false);
+    // a message the person can read, never a code
+    expect((ea as Error).message).toBe(blockedText('mandate_ended'));
   });
 
   it('a request that was decided meanwhile (by another device) is not decided again', async () => {

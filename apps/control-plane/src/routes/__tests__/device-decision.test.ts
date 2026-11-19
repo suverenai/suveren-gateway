@@ -184,6 +184,27 @@ describe('what this computer must be able to show', () => {
     expect(sentDecision(w).decision.proposal_content_hash).toBe(proposalContentHash);
   });
 
+  it('plain toolArgs served BESIDE sealed content never stand in for it: nothing is signed, whatever fingerprint the row carries (H1)', async () => {
+    const w = await world();
+    const kp = await loadOrGenerateKeyPair(w.gw.vault);
+    const { content, proposalContentHash } = await encryptProposalContent(ARGS, [{ did: w.rootDid, publicKey: kp.publicKey }]);
+    const lie = { ...ARGS, subject: 'Ten euro to Anna' };
+    // (a) the row carries the sealed content's fingerprint and a plain copy that says something else
+    w.props.add({ id: 'p1', tool: 'email__send', toolArgs: lie, content: content as unknown as Record<string, unknown>, contentHash: proposalContentHash });
+    // (b) the row carries a fingerprint that fits the plain copy, beside content sealed for something else
+    w.props.add({ id: 'p2', tool: 'email__send', toolArgs: lie, content: content as unknown as Record<string, unknown>, contentHash: computeProposalContentHash(lie) });
+    // a commit is refused for both; a reject of content this computer cannot open is allowed by design (it names the row's own fingerprint and claims nothing about having seen it)
+    for (const route of ['approve', 'reject']) {
+      const r = await w.decide('p1', route, { content_hash: proposalContentHash });
+      expect(r.status, `p1 ${route}`).toBe(409);
+      expect(r.body.code).toBe('content_mismatch');
+    }
+    const c2 = await w.decide('p2', 'approve', { content_hash: computeProposalContentHash(lie) });
+    expect(c2.status).toBe(409);
+    expect(['content_mismatch', 'content_unreadable']).toContain(c2.body.code);
+    expect(w.props.posts).toEqual([]);
+  });
+
   it('content that does not match the proposal\'s fingerprint is never signed, not even as a reject', async () => {
     const w = await world();
     w.props.add({ id: 'p1', tool: 'email__send', toolArgs: { ...ARGS, subject: 'Changed' }, contentHash: HASH });

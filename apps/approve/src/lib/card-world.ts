@@ -20,7 +20,7 @@ export const PROFILE = {
     fields: { amount_max: { boundType: { kind: 'per_transaction', of: 'amount' } } },
     actionTypes: ['send'],
   },
-  executionContextSchema: { amount: { type: 'number' } },
+  executionContextSchema: { fields: { amount: { source: 'declared', constraint: { type: 'number' } } } },
 } as unknown as AgentProfile;
 
 export const ARGS = { to: ['anna@example.com', 'ben@example.com'], amount: '12.50', currency: 'EUR', body: 'Hello Anna' };
@@ -38,6 +38,8 @@ export interface WorldOptions {
   actionType?: string | null;
   profile?: unknown;
   mandate?: Record<string, unknown>;
+  /** Plain `toolArgs` the (hostile) server serves BESIDE the sealed content. */
+  servedToolArgs?: Record<string, unknown>;
   ownerDid?: string;
   pendingApprovers?: string[];
   pendingDomains?: string[];
@@ -73,7 +75,7 @@ export async function cardWorld(o: WorldOptions = {}) {
   const profile = o.profile ?? PROFILE;
   as.profiles.set(PROFILE_ID, profile);
   const payload = {
-    mandate_id: MANDATE_ID, version: '0.8', profile_id: PROFILE_ID, profile_hash: computeProfileHash(PROFILE), bounds_hash: 'sha256:' + 'a'.repeat(64),
+    mandate_id: MANDATE_ID, version: '0.8', profile_id: PROFILE_ID, profile_hash: computeProfileHash(profile as never), bounds_hash: 'sha256:' + 'a'.repeat(64),
     scope_hash: 'sha256:' + 'b'.repeat(64), execution_context_hash: 'sha256:' + 'c'.repeat(64), issuer: didKeyOf(hexDecode(as.keyHex)),
     mandate_owners: [{ did: o.ownerDid ?? account.root_did }], gate_content_hashes: {}, commitment_mode: 'review',
     issued_at: as.now() - 3600, expires_at: as.now() + 86400, ...(o.mandate ?? {}),
@@ -88,6 +90,7 @@ export async function cardWorld(o: WorldOptions = {}) {
     tool: 'email__send_message', content, contentHash: content.proposalContentHash, executionContext: o.executionContext ?? { amount: 12.5 }, status: 'pending',
     executionResult: null, createdAt: as.now() - 60, expiresAt: as.now() + 86400, ...(o.pendingApprovers ? { pendingApprovers: o.pendingApprovers } : {}),
     ...(o.actionType === null ? {} : { actionType: o.actionType ?? 'send' }), deviceDecisions: [],
+    ...(o.servedToolArgs ? { toolArgs: o.servedToolArgs } : {}),
   };
   as.byId.set(PROPOSAL_ID, proposal);
   as.pending = [proposal];

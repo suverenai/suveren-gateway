@@ -12,17 +12,24 @@
  *   5. profile       the profile bytes the server gives hash to the mandate's `profile_hash`
  *   6. owner         the mandate's owner is this person's own identity (a colleague's mandate needs the owner's chain: stage B)
  *   7. action type   the request carries its action type, and the profile's registry (when it has one) contains it
- *   8. execution     the execution context rebuilt from the decrypted arguments with the mapping in the sealed context equals what the
- *                    request carries, for every field a bound reads
+ *   8. execution     the execution context rebuilt from the decrypted arguments with the mapping in the sealed context (numeric strings of
+ *                    declared numeric fields parsed as the gateway parses them), reduced to the fields a bound reads, equals what the
+ *                    request carries reduced the same way: the SAME fields with the SAME values. The card then draws the rebuilt values,
+ *                    never the server's copy.
  *
- * What it does NOT check (hand-over, open questions): the owner's grant of the mandate (needs a browser-safe hap-core; the gateway that
- * runs the action checks it), a pin of the highest grant version, and the manifest's static execution fields (the sealed context
- * carries the mapping only).
+ * KNOWN GAPS (not checked here; decided, listed so nobody assumes them):
+ *   - the owner's grant of the mandate (plan 4.4): needs a browser-safe hap-core. The gateway that runs the action checks it (step 13).
+ *   - a pin of the highest grant version (a rollback to an older grant is not noticed here).
+ *   - M3: the proposal's profile id is compared with the mandate's, but nothing ties the request's `path`/`pendingDomains` to the mandate.
+ *   - L2: the newest mandate is chosen by `issued_at` among those that verify, as the AS does; an older still-valid one is not asked about.
+ *   - L3: a bound-read field produced by the manifest's STATIC execution (not by an argument) cannot be rebuilt: the sealed context
+ *     carries the mapping only. Such a request shows `context_mismatch` and no buttons until the context carries those fields.
+ *   - a colleague's mandate (needs the owner's chain): `owner_not_you`.
  *
  * Nothing here is stored. Content, context and arguments live in the returned object, which the screen drops with the card.
  */
 import { jcs, sha256Hash, utf8 } from '@hap/core/device-keys';
-import { mapExecutionArgs, type MappingValue } from '@hap/core/execution-mapping';
+import { mapExecutionArgs, coerceNumericFields, type MappingValue } from '@hap/core/execution-mapping';
 import { readProposalHead } from '@hap/core/decision-input';
 import type { Proposal } from '@suveren/approval-card/types';
 import type { ToolDisplay, ApprovalView } from '@suveren/approval-card/lib/approval-view';
@@ -52,6 +59,8 @@ export interface ReadyCard {
   contentHash: string;
   /** The opened arguments, kept in memory for the card's lifetime only. */
   args: Record<string, unknown>;
+  /** The execution context rebuilt from the arguments (bound-read fields only): what the card draws as "in the ticket". */
+  executionContext: Record<string, string | number>;
   /** What the card shows the arguments with (labels, order, money), from the gateway's own sealed context. */
   display: ToolDisplay;
   route: DecisionRoute;
@@ -76,16 +85,6 @@ function readFailure(r: { status: number; code: string }, session: DeviceSession
   return 'reads_failed';
 }
 
-/** A number compared as a number (`"0.10"` and `0.1` are the same amount); anything else exactly. */
-function sameValue(a: unknown, b: unknown): boolean {
-  if (typeof a === 'number' || typeof b === 'number') {
-    const x = Number(a);
-    const y = Number(b);
-    return Number.isFinite(x) && Number.isFinite(y) && x === y;
-  }
-  return a === b;
-}
-
 /** A mapping value the shared mapper may run on: a field name, an entry, or a list of entries; anything else is not a mapping. */
 function isMapping(v: unknown): v is Record<string, MappingValue> {
   if (!isObj(v)) return false;
@@ -95,13 +94,14 @@ function isMapping(v: unknown): v is Record<string, MappingValue> {
 
 /**
  * The card's layout from the display hints the gateway sealed (a connector's `display`, AU8): labels, order and money of top-level
- * arguments, and the AI-text argument. Hints about the preview's read data (nested paths, attached reads) are ignored: this phone has
- * no preview (hand-over). A hint never hides an argument: everything the proposal carries is shown.
+ * arguments, and the AI-text argument. A hint that names an argument the request does not carry is dropped, and so is an `aiText` that
+ * is not a non-empty string argument (that argument would otherwise leave the table and show nowhere). Hints about the preview's read
+ * data (nested paths, attached reads) are ignored: this phone has no preview. A hint never hides an argument.
  */
-export function toolDisplayOf(display: unknown, executionMapping: Record<string, MappingValue>): ToolDisplay {
+export function toolDisplayOf(display: unknown, executionMapping: Record<string, MappingValue>, args: Record<string, unknown> = {}): ToolDisplay {
   const out: ToolDisplay = { executionMapping: executionMapping as ToolDisplay['executionMapping'] };
   if (!isObj(display)) return out;
-  const top = (k: unknown): k is string => typeof k === 'string' && k.length > 0 && !/[.[\]]/.test(k);
+  const top = (k: unknown): k is string => typeof k === 'string' && k.length > 0 && !/[.[\]]/.test(k) && Object.prototype.hasOwnProperty.call(args, k);
   const labels = isObj(display.labels) ? display.labels : {};
   const order = Array.isArray(display.order) ? display.order.filter(top) : [];
   const money = new Set(Array.isArray(display.money) ? display.money.filter(top) : []);
@@ -115,7 +115,7 @@ export function toolDisplayOf(display: unknown, executionMapping: Record<string,
     };
   }
   if (Object.keys(view).length) out.approvalView = view;
-  if (top(display.aiText)) out.aiTextArg = display.aiText;
+  if (top(display.aiText) && typeof args[display.aiText] === 'string' && (args[display.aiText] as string).length > 0) out.aiTextArg = display.aiText;
   return out;
 }
 
@@ -193,20 +193,22 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
   const registry = (profile.data as { boundsSchema?: { actionTypes?: unknown } } | null)?.boundsSchema?.actionTypes;
   if (Array.isArray(registry) && registry.length > 0 && !registry.includes(actionType)) return no('action_type_unknown');
 
-  // 8. the execution context, rebuilt
-  let rebuilt: Record<string, unknown>;
+  // 8. the execution context, rebuilt exactly as the gateway builds it, and reduced to what a bound reads on both sides
+  let rebuilt: Record<string, string | number>;
   try {
-    rebuilt = wireFilter(mapExecutionArgs(context.execution_mapping, args), profile.data);
+    const mapped = mapExecutionArgs(context.execution_mapping, args);
+    coerceNumericFields(profile.data, mapped);
+    rebuilt = wireFilter(mapped, profile.data) as Record<string, string | number>;
   } catch {
     return no('context_unreadable');
   }
-  const carried = isObj(proposal.executionContext) ? proposal.executionContext : {};
-  for (const [field, value] of Object.entries(rebuilt)) {
-    if (!(field in carried) || !sameValue(carried[field], value)) return no('context_mismatch');
-  }
+  const carried = wireFilter(isObj(proposal.executionContext) ? proposal.executionContext : {}, profile.data);
+  const rk = Object.keys(rebuilt).sort();
+  const ck = Object.keys(carried).sort();
+  if (rk.length !== ck.length || rk.some((k, i) => k !== ck[i] || carried[k] !== rebuilt[k])) return no('context_mismatch');
 
   return {
     ok: true,
-    ready: { facts: { mandateId: payload.mandate_id, actionType }, contentHash: head.head.contentHash, args, display: toolDisplayOf(context.display, context.execution_mapping), route },
+    ready: { facts: { mandateId: payload.mandate_id, actionType }, contentHash: head.head.contentHash, args, executionContext: rebuilt, display: toolDisplayOf(context.display, context.execution_mapping, args), route },
   };
 }

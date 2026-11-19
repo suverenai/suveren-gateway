@@ -10,7 +10,7 @@
  * manifest, never from this file.
  */
 
-/** The list transforms: the only ones several arguments may share a field through. */
+/** The list transforms: the only ones several arguments may share a field through. THE one copy (the manifest types re-export it). */
 export const LIST_TRANSFORMS: readonly string[] = ['length', 'join', 'join_domains'];
 
 /** One entry of a mapping (a manifest's `executionMapping` value is a field name, one entry or a list of entries). */
@@ -109,4 +109,38 @@ export function mapExecutionArgs(
   }
   for (const [field, { transform, items }] of lists) applyMapping({ field, transform }, items, out);
   return out;
+}
+
+// ─── numeric fields that arrive as a string ───────────────────────────────────────────────────
+
+/**
+ * Parse a numeric string for a numeric execution-context field. Accepts only a PLAIN decimal: optional leading "-", digits, optional
+ * "." + digits. Rejects exponents, hex, empty or padded strings, thousands separators and the non-finite literals. `undefined` on
+ * anything that fails, so the caller leaves the original string in place.
+ */
+export function parseNumericString(value: string): number | undefined {
+  if (!/^-?\d+(\.\d+)?$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** The field names a profile's own `executionContextSchema` declares as `source: 'declared'` and `constraint.type: 'number'`. */
+export function declaredNumericFields(profile: unknown): Set<string> {
+  const out = new Set<string>();
+  const fields = (profile as { executionContextSchema?: { fields?: Record<string, { source?: string; constraint?: { type?: string } }> } } | null | undefined)?.executionContextSchema?.fields;
+  if (!fields) return out;
+  for (const [name, def] of Object.entries(fields)) {
+    if (def?.source === 'declared' && def.constraint?.type === 'number') out.add(name);
+  }
+  return out;
+}
+
+/** In place: a string in a declared numeric field becomes the number it plainly is; anything else is left as it is. */
+export function coerceNumericFields(profile: unknown, execution: Record<string, string | number>): void {
+  for (const field of declaredNumericFields(profile)) {
+    const value = execution[field];
+    if (typeof value !== 'string') continue;
+    const parsed = parseNumericString(value);
+    if (parsed !== undefined) execution[field] = parsed;
+  }
 }

@@ -420,6 +420,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           </p>
         </div>
       )}
+      {content.mismatch && (
+        <div className="av3-note" style={{ order: 5 }} role="alert" data-testid="proposal-content-mismatch">
+          <strong>The content does not match.</strong>
+          <p>What the server shows for this request is not what was sealed for you. Nothing can be approved here. Tell whoever runs your account.</p>
+        </div>
+      )}
       {content.sealed && content.loading && (
         <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">Decrypting…</div>
       )}

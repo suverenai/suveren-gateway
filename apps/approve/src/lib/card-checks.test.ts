@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkCard, routeFor, toolDisplayOf, type CardReason } from './card-checks';
-import { cardWorld, AUTHZ, PROFILE, PROPOSAL_ID, MANDATE_ID, MAPPING } from './card-world';
+import { argRows } from '@suveren/approval-card/lib/approval-view';
+import { cardWorld, AUTHZ, PROFILE, PROPOSAL_ID, MANDATE_ID, MAPPING, ARGS } from './card-world';
 import { didKeyOf } from './mandate-check';
 import { BLOCKED_REASONS, blockedText } from '../texts';
 
@@ -66,9 +67,27 @@ describe('the checks before a decision is offered (plan 8; step 12)', () => {
     expect(await reason(await cardWorld({ executionContext: { amount: 125 } }))).toBe('context_mismatch');
     // a missing field is a mismatch too
     expect(await reason(await cardWorld({ executionContext: {} }))).toBe('context_mismatch');
-    // "12.50" and 12.5 are the same amount
     expect(await reason(await cardWorld({ executionContext: { amount: 12.5 } }))).toBe('ok');
-    expect(await reason(await cardWorld({ executionContext: { amount: '12.50' } }))).toBe('ok');
+  });
+
+  it('numbers: the arguments are parsed the way the gateway parses them (a plain decimal string of a declared numeric field), and the compare is exact', async () => {
+    // the gateway sends 12.5 for the argument "12.50": that is what must be carried
+    expect(await reason(await cardWorld({ executionContext: { amount: '12.50' } }))).toBe('context_mismatch'); // a string is not the number
+    // "1e1" is not a plain decimal: the gateway leaves it a string, so a carried 10 is NOT the same amount
+    expect(await reason(await cardWorld({ args: { ...ARGS, amount: '1e1' }, executionContext: { amount: 10 } }))).toBe('context_mismatch');
+    expect(await reason(await cardWorld({ args: { ...ARGS, amount: '1e1' }, executionContext: { amount: '1e1' } }))).toBe('ok');
+    expect(await reason(await cardWorld({ args: { ...ARGS, amount: ' 5' }, executionContext: { amount: 5 } }))).toBe('context_mismatch');
+  });
+
+  it('the SAME fields: a bound-read field the server carries and the arguments do not produce is a mismatch, and the card draws the rebuilt values', async () => {
+    const profile = { ...(PROFILE as object), boundsSchema: { ...(PROFILE as { boundsSchema: object }).boundsSchema, fields: { amount_max: { boundType: { kind: 'per_transaction', of: 'amount' } }, spend_daily: { boundType: { kind: 'cumulative_sum', of: 'spend' } } } } };
+    expect(await reason(await cardWorld({ profile, executionContext: { amount: 12.5, spend: 5 } }))).toBe('context_mismatch');
+    const w = await cardWorld({ profile, executionContext: { amount: 12.5 } });
+    const c = await check(w);
+    expect(c.ok && c.ready.executionContext).toEqual({ amount: 12.5 });
+    // a field the server carries that no bound reads is dropped from both sides, never drawn
+    const x = await check(await cardWorld({ executionContext: { amount: 12.5, recipients: 99, _hint: 1 } }));
+    expect(x.ok && x.ready.executionContext).toEqual({ amount: 12.5 });
   });
 
   it('a mapping that produces a field no bound reads asks nothing of the server\'s copy', async () => {
@@ -162,10 +181,36 @@ describe('which route decides a request, and how the card is laid out', () => {
   });
 
   it('display hints become labels, order and money of top-level arguments only; nothing is hidden', () => {
-    const d = toolDisplayOf({ labels: { 'a.b': 'x', subject: 'Subject' }, order: ['subject', 'lines[].qty'], hidden: ['body'], percent: ['p'] }, MAPPING);
+    const d = toolDisplayOf({ labels: { 'a.b': 'x', subject: 'Subject' }, order: ['subject', 'lines[].qty'], hidden: ['body'], percent: ['p'] }, MAPPING, { subject: 's', body: 'b' });
     expect(d.approvalView).toEqual({ subject: { label: 'Subject' } });
     expect(toolDisplayOf(null, MAPPING).approvalView).toBeUndefined();
+    // hints that name no argument of this request are dropped (nothing invented), and an aiText that is not a string argument is dropped
+    const args = { subject: 'Hi', body: 'Hello', n: 3 };
+    const e = toolDisplayOf({ labels: { subject: 'Subject', ghost: 'Ghost' }, order: ['ghost', 'subject'], money: ['ghost'], aiText: 'ghost' }, MAPPING, args);
+    expect(e.approvalView).toEqual({ subject: { label: 'Subject' } });
+    expect(e.aiTextArg).toBeUndefined();
+    expect(toolDisplayOf({ aiText: 'n' }, MAPPING, args).aiTextArg).toBeUndefined(); // not a string
+    expect(toolDisplayOf({ aiText: 'body' }, MAPPING, { body: '' }).aiTextArg).toBeUndefined(); // empty
+    expect(toolDisplayOf({ aiText: 'body' }, MAPPING, args).aiTextArg).toBe('body');
     expect(toolDisplayOf('nonsense', MAPPING).executionMapping).toEqual(MAPPING);
   });
 });
 
+describe('every bound argument is visible', () => {
+  it('whatever hints the sealed context carries, every argument of the request is a row or the AI-text box', async () => {
+    const hostile = [
+      { hidden: ['to', 'amount', 'currency', 'body'], aiText: 'to' },
+      { aiText: 'ghost', labels: { ghost: 'x' }, order: ['ghost'], money: ['ghost'] },
+      { aiText: 'amount' },
+      {},
+    ];
+    for (const display of hostile) {
+      const w = await cardWorld({ display });
+      const c = await check(w);
+      expect(c.ok).toBe(true);
+      if (!c.ok) continue;
+      const rows = argRows(c.ready.args, c.ready.display).map((r) => r.key);
+      for (const k of Object.keys(ARGS)) expect(rows.includes(k) || c.ready.display.aiTextArg === k, k).toBe(true);
+    }
+  });
+});

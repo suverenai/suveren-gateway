@@ -7,8 +7,9 @@
  * limit needs the check first, because the session itself needs it: the app asks for Face ID, opens a new session, and carries on.
  *
  * Every member is rebuilt here, at the moment of signing, never taken from the card or the button:
- *   - the proposal is read again with the phone's own session and must still wait, with the SAME fingerprint the person was shown
- *   - the mandate id and the action type are the ones the checks verified (card-checks.ts)
+ *   - the proposal is read again with the phone's own session and ALL the checks before a decision run again on that fresh copy; it must be
+ *     the same request (tool, authorization, action type, fingerprint, mandate) the person was shown
+ *   - the mandate id and the action type are the ones those checks verified (card-checks.ts)
  *   - the chain head is the one this phone verified at sign-in
  *
  * Nothing is optimistic: the card shows its stamp only after the Authority Server answered the call.
@@ -24,13 +25,13 @@ import type { AccountStore } from './account-store';
 import type { DeviceKeyStore } from './key-store';
 import type { DeviceSession } from './session';
 import type { ProposalReader } from './proposals';
-import type { ReadyCard } from './card-checks';
-import { errorText } from '../texts';
+import { checkCard, type ReadyCard } from './card-checks';
+import { blockedText, errorText } from '../texts';
 
 /** A decision that did not go through. `code` has a text of its own (texts.ts); `message` is that text, never the server's. */
 export class DecideError extends Error {
-  constructor(readonly code: string) {
-    super(errorText(code));
+  constructor(readonly code: string, text?: string) {
+    super(text ?? errorText(code));
     this.name = 'DecideError';
   }
 }
@@ -72,8 +73,9 @@ export class PhoneDecider {
     }
   }
 
-  private async attempt(proposal: Proposal, ready: ReadyCard, what: PhoneDecision, extras: { shownHash?: string }): Promise<DecisionResult | 'session_ended'> {
+  private async attempt(proposal: Proposal, shown: ReadyCard, what: PhoneDecision, extras: { shownHash?: string }): Promise<DecisionResult | 'session_ended'> {
     const d = this.d;
+    let ready = shown;
     const bearer = d.session.bearer();
     const open = d.session.current();
     const account = await d.accounts.read();
@@ -89,7 +91,17 @@ export class PhoneDecider {
     }
     const head = readProposalHead(fresh.data, proposal.id);
     if (!head.ok) throw new DecideError(head.code === 'proposal_not_pending' ? 'not_pending' : 'as_answer_invalid');
-    if (head.head.contentHash !== ready.contentHash || head.head.actionType !== ready.facts.actionType) throw new DecideError('content_changed');
+    if (head.head.tool !== proposal.tool || head.head.authorizationId !== proposal.authorizationId) throw new DecideError('content_changed');
+    // every check again, on the fresh copy (the mandate may have ended, the content or the context may have changed)
+    const again = await checkCard({ api: d.api, session: d.session, keys: d.keys, accounts: d.accounts, now: d.now }, fresh.data);
+    if (!again.ok) {
+      if (again.reason === 'session_ended') return 'session_ended';
+      throw new DecideError(again.reason, blockedText(again.reason));
+    }
+    const now = again.ready;
+    if (now.contentHash !== ready.contentHash || now.facts.actionType !== ready.facts.actionType || now.facts.mandateId !== ready.facts.mandateId
+      || now.route.kind !== ready.route.kind) throw new DecideError('content_changed');
+    ready = now;
 
     // 2. the decision, named against the head this phone verified at sign-in, signed with the device key
     const kind: DecisionKind = what === 'approve' ? 'commit' : 'reject';

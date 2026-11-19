@@ -55,12 +55,17 @@ export interface RequestDetailProps {
  */
 export function RequestDetail({ proposal, userId, check, decide, onBack, onDecided }: RequestDetailProps) {
   const blocked = check !== null && !check.ok;
+  // What the card draws is what this phone checked: the arguments only from the sealed content (the shared card never shows the server's plain
+  // `toolArgs` beside sealed content, and here it is dropped as well), and the execution context only as REBUILT from them.
+  const shown: Proposal = check && check.ok
+    ? { ...proposal, toolArgs: undefined, executionContext: check.ready.executionContext }
+    : { ...proposal, toolArgs: undefined, executionContext: {} };
   const refuse = async (): Promise<never> => { throw new Error(P.cardBlockedNothing); };
   return (
     <div className="device-screen">
       <button type="button" className="av3-back" onClick={onBack}>{P.listBack}</button>
       <ApprovalCard
-        proposal={proposal}
+        proposal={shown}
         currentUserId={userId}
         // Until the checks are done, and when one failed, no buttons.
         alreadyDecided={check === null || blocked}

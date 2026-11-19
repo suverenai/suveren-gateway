@@ -215,17 +215,21 @@ export class DeviceDecisions {
   }
 
   private async openContent(p: ProposalRead): Promise<Record<string, unknown> | null> {
-    if (isObj(p.toolArgs)) return p.toolArgs;
-    if (!isObj(p.content)) return null;
+    // A row with sealed content is read from the sealed content ONLY. Plain `toolArgs` served beside it is the server's word: when it
+    // differs from what the sealed content opens to, the server shows one thing and seals another, and nothing is signed.
+    if (!isObj(p.content)) return isObj(p.toolArgs) ? p.toolArgs : null;
     const me = this.d.vault.getSessionUser();
     if (!me) return null;
+    let opened: Record<string, unknown> | null = null;
     try {
       const kp = await loadOrGenerateKeyPair(this.d.vault);
       const text = await decryptProposalContent({ ...(p.content as ProposalContentWire), proposalContentHash: p.contentHash }, me.id, kp.privateKey, me.did);
       const parsed: unknown = JSON.parse(text);
-      return isObj(parsed) ? parsed : null;
+      opened = isObj(parsed) ? parsed : null;
     } catch {
       return null;
     }
+    if (opened && isObj(p.toolArgs) && computeProposalContentHash(p.toolArgs) !== computeProposalContentHash(opened)) throw new DecisionRefusal(409, 'content_mismatch');
+    return opened;
   }
 }
