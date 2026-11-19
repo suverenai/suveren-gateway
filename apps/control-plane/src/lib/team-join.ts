@@ -133,10 +133,10 @@ export interface AdminView {
 
 export class TeamJoin {
   private readonly now: () => number;
-  private readonly memberGate: CodeGate;
-  private readonly adminGate: CodeGate;
+  readonly memberGate: CodeGate;
+  readonly adminGate: CodeGate;
 
-  constructor(private readonly d: TeamJoinDeps) {
+  constructor(readonly d: TeamJoinDeps) {
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
     this.memberGate = new CodeGate(d.nowMs);
     this.adminGate = new CodeGate(d.nowMs);
@@ -149,26 +149,26 @@ export class TeamJoin {
 
   // ─── shared ──────────────────────────────────────────────────────────────
 
-  private async session(): Promise<Session> {
+  async session(): Promise<Session> {
     try { return await this.d.grants.approvalSession(); } catch (e) { throw asJoinRefusal(e); }
   }
 
-  private async call(s: Session, method: string, path: string, body?: unknown) {
+  async call(s: Session, method: string, path: string, body?: unknown) {
     try { return await this.d.grants.asCall(s, method, path, body); } catch (e) { throw asJoinRefusal(e); }
   }
 
-  private teamId(v: unknown): string {
+  teamId(v: unknown): string {
     if (typeof v !== 'string' || !TEAM_ID.test(v)) return refuse('bad_request', 400);
     return v;
   }
 
-  private userId(v: unknown): string {
+  userId(v: unknown): string {
     if (typeof v !== 'string' || !USER_ID.test(v)) return refuse('bad_request', 400);
     return v;
   }
 
   /** Sign `object` with this computer's device key and its check: one touch. `focus` picks the member a list's prompt names. */
-  private async signWithCheck(s: Session, object: object, focus?: string): Promise<{ sig: string; check: { signature: string } }> {
+  async signWithCheck(s: Session, object: object, focus?: string): Promise<{ sig: string; check: { signature: string } }> {
     const { d } = this;
     const dk = await deviceKeys();
     if (!d.checks || !d.checkStore) return refuse('no_check_key');
@@ -180,7 +180,7 @@ export class TeamJoin {
     if (!signing || (await dk.keyIdOf(signing.publicKey)) !== s.stored.keyId) return refuse('key_mismatch');
     const sig = await dk.signObject(object, signing.privateSeed);
     try {
-      const check = await d.checks.sign(checkKey, dk.signedBytes(object), focus);
+      const check = await d.checks.sign(checkKey, dk.signedBytes(object), focus, previous ? dk.signedBytes(previous) : undefined);
       return { sig, check: platformCheckProof(check.signature) };
     } catch (e) {
       if (e instanceof CheckError) return refuse('check_failed', 422, { reason: e.helperCode ?? e.code });
@@ -285,7 +285,7 @@ export class TeamJoin {
   }
 
   /** The member's anchor as the Authority Server carries it, verified here against the member's own chain. */
-  private async anchorState(s: Session, teamId: string, userId: string, memberDid: string): Promise<'none' | 'ok' | 'invalid'> {
+  async anchorState(s: Session, teamId: string, userId: string, memberDid: string): Promise<'none' | 'ok' | 'invalid'> {
     const dk = await deviceKeys();
     const r = await this.call(s, 'GET', `/api/teams/${encodeURIComponent(teamId)}/anchors/${encodeURIComponent(userId)}`);
     if (r.status !== 200 || !isObj(r.body)) return refuse('as_answer_invalid', 502);
@@ -344,7 +344,7 @@ export class TeamJoin {
   }
 
   /** The newest verified list, from step 3's port (the pinned head; no other verifier exists). */
-  private async headList(s: Session, teamId: string): Promise<{ list: MemberList; hash: string }> {
+  async headList(s: Session, teamId: string): Promise<{ list: MemberList; hash: string }> {
     let head;
     try { head = await this.d.trust.head(teamId, s); } catch (e) {
       if (e instanceof TeamTrustUnavailable) return refuse('trust_unavailable', 422, { reason: e.code });

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
 import { JoinRequestsHost } from '../components/device/JoinHosts';
+import { TeamChangesHost } from '../components/device/TeamChangesHost';
 import { useDeviceChain } from '../lib/use-device-chain';
 import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 
@@ -151,6 +152,11 @@ export function GroupsPage() {
           {/* DEC-73: the admin of a team with device keys compares identity codes with each person who asks to join, then adds them with Touch ID. */}
           {deviceChain && activeTeam.isAdmin === true && (
             <JoinRequestsHost teamId={activeTeam.id} teamName={activeTeam.name} onAdded={() => { void refreshGroups(); }} />
+          )}
+
+          {/* DEC-73 step 5: someone left, a new identity, a signer device gone, a hand-over, a take-over. Every touch builds on the list this gateway verified. */}
+          {deviceChain && (
+            <TeamChangesHost teamId={activeTeam.id} teamName={activeTeam.name} onChanged={() => { void refreshGroups(); }} />
           )}
 
           <ObFold

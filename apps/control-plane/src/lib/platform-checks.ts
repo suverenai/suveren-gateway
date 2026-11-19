@@ -120,11 +120,16 @@ export class PlatformChecks {
    * half and the hash of the object, before it is used: a helper that answers with anything else (a
    * wrong key, a signature over other bytes) is a refusal, not a check.
    */
-  async sign(key: StoredCheckKey, object: Uint8Array, focus?: string): Promise<{ signature: string; reason: string }> {
+  /**
+   * `previous` is the signed bytes of the list before this one: for a member list that does not ADD someone (removal, replacement,
+   * re-sign, hand-over) the helper derives what the touch is for by comparing the two, so the person is told the truth. A helper that
+   * does not know `previous` refuses such a list (it needs a focus it is not given): fail closed.
+   */
+  async sign(key: StoredCheckKey, object: Uint8Array, focus?: string, previous?: Uint8Array): Promise<{ signature: string; reason: string }> {
     const digest = sha256Hash(object);
     let signed;
     try {
-      signed = await this.host.use((c: UnlockHelperClient) => c.signCheck({ keyBlob: key.keyBlob, digest, object, ...(focus !== undefined ? { focus } : {}) }));
+      signed = await this.host.use((c: UnlockHelperClient) => c.signCheck({ keyBlob: key.keyBlob, digest, object, ...(focus !== undefined ? { focus } : {}), ...(previous !== undefined ? { previous } : {}) }));
     } catch (err) {
       const f = failure(err);
       if (f.helperCode === 'key_invalid') this.invalidSeen = true;

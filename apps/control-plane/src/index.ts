@@ -89,6 +89,7 @@ import { createInternalEventsRouter } from './routes/internal-events';
 import { createInternalMandateRouter } from './routes/internal-mandate';
 import { createMandateRouter } from './routes/mandate';
 import { createTeamJoinRouter } from './routes/team-join';
+import { createTeamChangesRouter } from './routes/team-changes';
 import type { CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
@@ -253,7 +254,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals, teamJoin: deviceTeamJoin, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals, teamJoin: deviceTeamJoin, teamChanges: deviceTeamChanges, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -606,6 +607,7 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremonyDeps, { heldBack: getHeldBack, signedMandate: getSignedMandate }));
 // The join screens (DEC-73 step 4): a gateway with a device chain only; without one the path stays the proxy's, unchanged.
 if (deviceTeamJoin) app.use('/api/team-join', jsonParser, authGuard, createTeamJoinRouter(deviceTeamJoin));
+if (deviceTeamChanges) app.use('/api/team-changes', jsonParser, authGuard, createTeamChangesRouter(deviceTeamChanges));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)

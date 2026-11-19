@@ -10,7 +10,7 @@ import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
 import { T, textForCode, isDecisionCode } from './device-texts';
 import { queueDomains, mergeProposals } from './my-queue';
-import type { MemberJoinApi, AdminJoinApi, JoinResult } from '@suveren/approval-card/mandate-screens';
+import type { MemberJoinApi, AdminJoinApi, JoinResult, TeamChangesApi, TeamChangesView } from '@suveren/approval-card/mandate-screens';
 import type { AttachmentPreviewResult } from '@suveren/approval-card/lib/attachment-sealed';
 import type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcome, ToolDisplayHints, CheckStatus, CheckResult, PreviewReadSection, PreviewResponse, OutcomeResponse, RequestChainItem, RequestResult, HistoryItem, ConnectorHistoryMatch, HistoryResult, RequestContextResponse, ShownSnapshotPayload, ShownHashEntry, ShownHashes, AuthTemplate, ModeOptionDecl, SignInGroup, IntegrationManifest, GateContentEntry, EnrichedAuthorizationEntry, ProposalOutcome, ProposalContentWire, NoteEncryptedWire, Proposal, CumulativeUsageEntry, ExecutionReceipt, ReceiptPage, CapKind, ProfileConfig } from '@suveren/approval-card/types';
 
@@ -1114,6 +1114,35 @@ class SPClient {
     view: (teamId) => this.joinCall('GET', `/admin/${encodeURIComponent(teamId)}`),
     check: (teamId, userId, code) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/check`, { code }),
     add: (teamId, userId) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/add`, {}),
+  };
+
+  private async changesCall<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<JoinResult<T>> {
+    let res: Response;
+    try {
+      res = await this.fetch(`/api/team-changes${path}`, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    } catch { return { ok: false, code: 'as_unreachable' }; }
+    const data = await res.json().catch(() => null) as ({ ok?: boolean; code?: string; triesLeft?: number } & Record<string, unknown>) | null;
+    if (data && data.ok === true) return data as unknown as JoinResult<T>;
+    return { ok: false, code: typeof data?.code === 'string' ? data.code : 'other', ...(typeof data?.triesLeft === 'number' ? { triesLeft: data.triesLeft } : {}) };
+  }
+
+  /** Changes of the team's member list after the join (DEC-73 step 5): remove, new identity, re-sign, hand-over, take-over. */
+  readonly teamChanges: TeamChangesApi = {
+    view: async (teamId) => {
+      const r = await this.changesCall<Record<string, unknown>>('GET', `/${encodeURIComponent(teamId)}`);
+      if (!r.ok) return r;
+      const { ok: _ok, ...rest } = r as Record<string, unknown>;
+      return { ok: true, changes: rest as unknown as TeamChangesView };
+    },
+    remove: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/remove`, { did }),
+    replaceCheck: (teamId, userId, code) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}/check`, { code }),
+    replace: (teamId, userId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}`, {}),
+    resign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/resign`, {}),
+    handoverOffer: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover`, { did }),
+    handoverBuild: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/build`, {}),
+    handoverSign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/sign`, {}),
+    handoverWithdraw: (teamId) => this.changesCall('DELETE', `/${encodeURIComponent(teamId)}/handover`),
+    takeOver: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/take-over`, {}),
   };
 
   /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */

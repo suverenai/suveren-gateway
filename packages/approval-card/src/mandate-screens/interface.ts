@@ -80,3 +80,40 @@ export interface AdminJoinApi {
   /** The touch: signs member list version n+1. Only after a match and with the member's anchor verified. */
   add(teamId: string, userId: string): Promise<JoinResult<{ version: number }>>;
 }
+
+/**
+ * Changes of a team's member list after the join (DEC-73 step 5): remove, new identity, re-sign, hand-over, take-over.
+ * The control plane (apps/control-plane/src/lib/team-changes.ts) answers these shapes; the phone app can use the same.
+ */
+export type RemoveReason = 'left' | 'removed' | 'not_member';
+export interface RemoveOfferView { did: string; name: string; reason: RemoveReason }
+export interface ReplaceOfferView { oldDid: string; newDid: string | null; name: string; userId: string; triesLeft: number; compared: boolean; anchor: 'none' | 'ok' | 'invalid' }
+export interface HandoverStateView { you: 'old_admin' | 'new_admin'; stage: 'named' | 'signed'; newAdminName: string | null }
+export interface AdminChangesView {
+  role: 'admin'; version: number; yourCode: string;
+  remove: RemoveOfferView[]; replace: ReplaceOfferView[]; resign: boolean; handover: HandoverStateView | null;
+  candidates: Array<{ did: string; name: string }>;
+}
+export interface MemberChangesView { role: 'member'; adminChanged: boolean; adminGone: boolean; handover: HandoverStateView | null }
+export type TeamChangesView = AdminChangesView | MemberChangesView;
+
+export interface TeamChangesApi {
+  view(teamId: string): Promise<{ ok: true; changes: TeamChangesView } | { ok: false; code: string }>;
+  /** The touch: list without that person. */
+  remove(teamId: string, did: string): Promise<JoinResult<{ version: number }>>;
+  /** The NEW identity's code as typed; compared by the gateway. */
+  replaceCheck(teamId: string, userId: string, code: string): Promise<JoinResult<JoinCheck>>;
+  /** The touch: the list with the old DID replaced by the new one. */
+  replace(teamId: string, userId: string): Promise<JoinResult<{ version: number }>>;
+  /** The touch: the same members again, signed by a device that stays. */
+  resign(teamId: string): Promise<JoinResult<{ version: number }>>;
+  /** The old admin names the new admin (no touch). */
+  handoverOffer(teamId: string, did: string): Promise<JoinResult>;
+  /** The new admin builds and signs the list (touch). */
+  handoverBuild(teamId: string): Promise<JoinResult<{ version: number }>>;
+  /** The old admin adds her signature (touch). */
+  handoverSign(teamId: string): Promise<JoinResult<{ version: number }>>;
+  handoverWithdraw(teamId: string): Promise<JoinResult>;
+  /** The touch: a member takes over because the admin took a new identity. */
+  takeOver(teamId: string): Promise<JoinResult<{ version: number }>>;
+}
