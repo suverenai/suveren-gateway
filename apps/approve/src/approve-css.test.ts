@@ -21,8 +21,9 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
     }
   });
 
-  it('draws for both widths: a narrow phone is the default and a wider screen adds one rule', () => {
-    expect(code).toMatch(/@media \(min-width: 40rem\)/);
+  it('keeps only what is phone-specific: full height with safe areas, the QR, the scan frame, the code grid, the background blank', () => {
+    expect([...code.matchAll(/^\.([a-z-]+)/gm)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i)).toEqual(['ap-shell', 'ap-qr', 'ap-scan', 'ap-scan-frame', 'ap-scan-line', 'ap-choices']);
+    expect(code).toMatch(/safe-area-inset-top/);
     expect(code).toMatch(/max-width: 40rem/);
   });
 

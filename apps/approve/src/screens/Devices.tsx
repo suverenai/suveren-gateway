@@ -1,25 +1,30 @@
+import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';
+import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
 import type { DeviceRow } from '../lib/chain-view';
 import { P } from '../texts';
-import { whenText } from './Frame';
+import { Notice, whenText } from './Frame';
 
-/** The list of devices, from a chain this phone verified itself. Labels are plain text. */
+/** The list of devices, from a chain this phone verified itself: the gateway's member rows (TileList), one per device. Labels are plain text. */
 export function DeviceList({ rows, nowSeconds }: { rows: Array<DeviceRow & { adding?: boolean }>; nowSeconds: number }) {
   return (
-    <ul className="ap-devices" data-testid="device-list">
+    <TileList testid="device-list">
       {rows.map((r) => (
-        <li key={r.keyId} className="ap-device" data-testid="device-row" data-new={r.adding ? 'true' : undefined}>
-          <div className="ap-device-name">{r.label}</div>
-          <div className="ap-device-meta">
-            {r.thisDevice && <b>{P.devThisPhone}</b>}
-            {r.adding && <b>{P.admitNew}</b>}
-            <span>{r.kind === 'gateway' ? P.devKindComputer : P.devKindPhone}</span>
-            {r.canGrant && <span>{P.devCanConfirm}</span>}
-            {!r.adding && <span>{P.devAdded(whenText(r.addedAt, nowSeconds))}</span>}
-            {r.recent && !r.adding && <span>{P.devRecent}</span>}
-          </div>
-        </li>
+        <TileRow
+          key={r.keyId}
+          testid="device-row"
+          mark={(r.label.trim()[0] ?? '?').toUpperCase()}
+          name={r.label}
+          detail={[
+            r.kind === 'gateway' ? P.devKindComputer : P.devKindPhone,
+            r.canGrant ? P.devCanConfirm : null,
+            r.adding ? null : P.devAdded(whenText(r.addedAt, nowSeconds)),
+            r.recent && !r.adding ? P.devRecent : null,
+          ].filter(Boolean).join(' · ')}
+          tag={r.adding ? P.admitNew : r.thisDevice ? P.devThisPhone : undefined}
+          strongTag
+        />
       ))}
-    </ul>
+    </TileList>
   );
 }
 
@@ -42,21 +47,15 @@ export function DevicesScreen(p: DevicesScreenProps) {
   return (
     <div className="device-screen">
       <h1>{P.devicesTitle}</h1>
-      {p.updated && <div className="alert alert-info" role="status">{P.appUpdated}</div>}
-      {p.error && <div className="alert alert-error" role="alert">{p.error}</div>}
+      {p.updated && <Notice kind="info">{P.appUpdated}</Notice>}
+      {p.error && <Notice kind="error">{p.error}</Notice>}
       <DeviceList rows={p.rows} nowSeconds={p.nowSeconds} />
-      {p.identityCode && (
-        <>
-          <div style={{ color: 'var(--text-secondary)' }}>{P.devIdentity}</div>
-          <div className="ap-code" data-testid="identity-code">{p.identityCode}</div>
-        </>
-      )}
+      {p.identityCode && <CodeBlock label={P.devIdentity} code={p.identityCode} testid="identity-code" />}
       <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onAddComputer} disabled={p.busy}>{P.devAddComputer}</button>
       <button type="button" className="btn btn-ghost btn-full" onClick={p.onRefresh} disabled={p.busy}>{P.devRefresh}</button>
-      <p className="ap-foot" data-testid="second-icon">{P.secondIcon}</p>
-      {p.persistent !== null && <p className="ap-foot">{p.persistent ? P.storagePersistent : P.storageNotPersistent}</p>}
-      <p className="ap-foot" data-testid="app-version">{P.appVersion(p.version, p.build)}</p>
+      <p className="form-hint" data-testid="second-icon">{P.secondIcon}</p>
+      {p.persistent !== null && <p className="form-hint">{p.persistent ? P.storagePersistent : P.storageNotPersistent}</p>}
+      <p className="form-hint" data-testid="app-version">{P.appVersion(p.version, p.build)}</p>
     </div>
   );
 }
-

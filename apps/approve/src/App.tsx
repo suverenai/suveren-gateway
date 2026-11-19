@@ -15,6 +15,7 @@ import { deviceRows, type DeviceRow } from './lib/chain-view';
 import { identityCodeOf } from './lib/identity-code';
 import { bindPhoneHost } from './lib/app-host';
 import { openContext, type ContentWire } from './lib/content';
+import { Tabs } from '@suveren/approval-card/components/Tabs';
 import { P, errorText } from './texts';
 import { NeedsScreen, WelcomeScreen } from './screens/Start';
 import { RegisterScreen } from './screens/Register';
@@ -176,10 +177,8 @@ function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
 }) {
   return (
     <div className="ap-shell">
-      <nav className="ap-nav" aria-label="App">
-        <button type="button" className="btn btn-ghost" aria-current={tab === 'requests' ? 'page' : undefined} onClick={() => setTab('requests')}>{P.navRequests}</button>
-        <button type="button" className="btn btn-ghost" aria-current={tab !== 'requests' ? 'page' : undefined} onClick={() => setTab('devices')}>{P.navDevices}</button>
-      </nav>
+      <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => setTab(t)}
+        items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
       {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
       {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} />}
       {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}

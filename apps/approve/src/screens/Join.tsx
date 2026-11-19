@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { JoinState } from '../lib/join-driver';
 import { P } from '../texts';
+import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';
 import { DeviceList } from './Devices';
 import { Notice, Screen, whenText } from './Frame';
 import { ScanView } from './ScanView';
@@ -45,8 +46,7 @@ export function JoinScreen(p: JoinScreenProps) {
     case 'review':
       return (
         <Screen title={P.reviewTitle}>
-          <div style={{ color: 'var(--text-secondary)' }}>{P.reviewIdentity}</div>
-          <div className="ap-code" data-testid="review-identity">{st.facts.identityCode}</div>
+          <CodeBlock label={P.reviewIdentity} code={st.facts.identityCode} testid="review-identity" />
           <p>{P.reviewIdentityNote}</p>
           {st.facts.origin && <p data-testid="review-made">{P.reviewMade(st.facts.origin.label, whenText(st.facts.origin.at, p.nowSeconds))}</p>}
           <p>{P.reviewDevices}</p>
@@ -84,7 +84,7 @@ export function JoinScreen(p: JoinScreenProps) {
     case 'compare':
       return (
         <Screen title={P.compareTitle}>
-          <div className="ap-code" data-testid="compare-code">{st.code}</div>
+          <CodeBlock code={st.code} testid="compare-code" grouped={false} />
           <p>{P.compareBody(st.admitterLabel)}</p>
           <Notice kind="info">{P.compareWaiting(st.admitterLabel)}</Notice>
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.cancel}</button>

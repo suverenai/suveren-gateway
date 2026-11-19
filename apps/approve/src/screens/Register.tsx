@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { PrintScope, RecoveryCodeBox, CodeInput } from '@suveren/approval-card/components/DeviceFrame';
 import type { RegisterState } from '../lib/register-driver';
 import { qrMatrix } from '../lib/qr-matrix';
 import { P } from '../texts';
@@ -18,15 +19,6 @@ export interface RegisterScreenProps {
   onDone: () => void;
   /** Drawn with the scan view already open (tests and screenshots). */
   scanning?: boolean;
-}
-
-/** While a recovery code is on screen, printing prints only the code (same rule as the gateway page). */
-function PrintScope() {
-  useEffect(() => {
-    document.body.classList.add('print-recovery-code');
-    return () => document.body.classList.remove('print-recovery-code');
-  }, []);
-  return null;
 }
 
 /** The recovery code as a QR code: SVG rects, so no image and no inline style. */
@@ -67,8 +59,7 @@ export function RegisterScreen(p: RegisterScreenProps) {
               <form onSubmit={(e) => { e.preventDefault(); if (typed.trim()) p.onCode(typed); }}>
                 <div className="form-group" style={{ marginTop: 'var(--space-6)' }}>
                   <label className="form-label" htmlFor="setup-code">{P.setupCodeLabel}</label>
-                  <input id="setup-code" className="form-input" type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off"
-                    data-1p-ignore="true" data-lpignore="true" value={typed} onChange={(e) => setTyped(e.target.value)} disabled={st.busy} />
+                  <CodeInput id="setup-code" value={typed} onChange={setTyped} disabled={st.busy} />
                 </div>
                 <button type="submit" className="btn btn-secondary btn-full" disabled={st.busy || !typed.trim()}>{P.setupCodeButton}</button>
               </form>
@@ -95,10 +86,7 @@ export function RegisterScreen(p: RegisterScreenProps) {
           <PrintScope />
           {st.error && <Notice kind="error">{st.error}</Notice>}
           <p>{P.codeWhy}</p>
-          <div className="recovery-code-print">
-            <div className="recovery-code" data-testid="recovery-code">{p.code ?? ''}</div>
-            {p.code && <RecoveryQr text={p.code} />}
-          </div>
+          <RecoveryCodeBox code={p.code ?? ''}>{p.code && <RecoveryQr text={p.code} />}</RecoveryCodeBox>
           <p><strong>{P.codeOnce}</strong></p>
           <p>{P.codePaper}</p>
           <p style={{ fontSize: 'var(--text-body-sm)' }}>{P.codeNever}</p>

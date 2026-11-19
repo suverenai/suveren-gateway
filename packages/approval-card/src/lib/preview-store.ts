@@ -24,7 +24,9 @@ function subscribe(l: () => void): () => void {
 }
 
 export function useProposalPreview(proposalId: string): PreviewResponse | undefined {
-  return useSyncExternalStore(subscribe, () => previews.get(proposalId));
+  const get = () => previews.get(proposalId);
+  // The third argument is what a server render (the phone app's mockup and tests) reads: nothing is cached there.
+  return useSyncExternalStore(subscribe, get, get);
 }
 
 /**

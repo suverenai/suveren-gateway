@@ -1,14 +1,12 @@
-/* The phone app's own few rules. Tokens only (no literal colour, radius, spacing or size): the same tokens.css and design-system.css
-   as the gateway page are loaded first (main.tsx), so the card and the buttons are drawn by the same rules on every device. */
+/* The phone app's own rules: only what is phone-specific. Everything else (frames, alerts, buttons, tabs, rows, member list, codes, the
+   approval card) is the gateway page's design system, loaded first by main.tsx. Tokens only (approve-css.test.ts). */
 
-.ap-shell { width: 100%; max-width: 40rem; margin: 0 auto; padding-bottom: var(--space-12); }
-.ap-nav { display: flex; gap: var(--space-2); justify-content: center; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
-.ap-nav .btn { flex: 1; max-width: 14rem; }
-.ap-nav .btn[aria-current='page'] { background: var(--accent-subtle); }
-.ap-foot { margin: var(--space-8) auto 0; max-width: 28rem; padding: 0 var(--space-4); font-size: var(--text-caption); color: var(--text-muted); text-align: center; }
+/* Full-height layout and the notch / home-bar safe areas of an installed app. */
+.ap-shell { width: 100%; max-width: 40rem; min-height: 100dvh; margin: 0 auto; padding: env(safe-area-inset-top) env(safe-area-inset-right) calc(env(safe-area-inset-bottom) + var(--space-8)) env(safe-area-inset-left); box-sizing: border-box; }
+.ap-shell .ftabs { margin: var(--space-3) var(--space-4) 0; }
 
-/* The recovery code's QR: SVG rects, no image, no inline style. */
-/* A QR code is dark on light whatever the theme: `color-scheme: light` makes the system colours Canvas and CanvasText light and dark. */
+/* The recovery code's QR (the gateway's sheet has none): SVG rects, no image, no inline style.
+   A QR is dark on light whatever the theme: `color-scheme: light` makes the system colours Canvas and CanvasText light and dark. */
 .ap-qr { display: block; width: 100%; max-width: 14rem; height: auto; margin: var(--space-4) auto; color-scheme: light; background: Canvas; }
 .ap-qr rect { fill: CanvasText; }
 
@@ -18,26 +16,9 @@
 .ap-scan-frame { position: absolute; inset: var(--space-8); border: 3px dashed var(--text-primary); border-radius: var(--radius-md); pointer-events: none; }
 .ap-scan-line { text-align: center; margin: 0 0 var(--space-3); }
 
-/* Codes. */
-.ap-code { font-family: var(--font-mono); font-size: var(--text-h2); letter-spacing: 0.08em; text-align: center; padding: var(--space-4); margin: var(--space-4) 0; border: 2px solid var(--border-strong); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+/* Three codes to tap on one row. */
 .ap-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin: var(--space-4) 0; }
 .ap-choices .btn { font-family: var(--font-mono); font-size: var(--text-lead); padding: var(--space-4) var(--space-2); }
 
-/* The device list. */
-.ap-devices { list-style: none; margin: 0 0 var(--space-4); padding: 0; display: grid; gap: var(--space-3); }
-.ap-device { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); }
-.ap-device[data-new='true'] { border: 2px dashed var(--border-strong); }
-.ap-device-name { font-weight: 600; overflow-wrap: anywhere; }
-.ap-device-meta { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); margin-top: var(--space-1); font-size: var(--text-body-sm); color: var(--text-muted); }
-.ap-device-meta b { color: var(--text-primary); font-weight: 600; }
-
-/* Requests. */
-.ap-list { display: grid; gap: var(--space-3); margin: 0 0 var(--space-4); }
-.ap-detail { padding: var(--space-4); }
-
 /* When the app goes to the background its content is hidden (plan 8, DEC-24; iOS 18.7 shows the content in the switcher anyway: 12.2 line 14). */
 body.ap-blank #root { visibility: hidden; }
-
-@media (min-width: 40rem) {
-  .ap-detail { padding: var(--space-6); }
-}

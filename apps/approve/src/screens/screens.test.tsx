@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { P, errorText } from '../texts';
+import { configurePhoneHost } from '../lib/app-host';
 import { NeedsScreen, WelcomeScreen } from './Start';
 import { RegisterScreen, type RegisterScreenProps } from './Register';
 import { JoinScreen } from './Join';
@@ -13,6 +14,7 @@ import { ScanView } from './ScanView';
 import { PHONE_FIRST_SETUP } from '../lib/config';
 import type { DeviceRow } from '../lib/chain-view';
 
+configurePhoneHost();
 const html = (el: ReactElement): string => renderToStaticMarkup(el);
 const text = (s: string): string => s.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ');
 const noop = () => {};
@@ -130,7 +132,6 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect((m.match(/data-testid="code-choice"/g) ?? []).length).toBe(3);
       expect(text(m)).toContain(P.admitChooseTitle('New Mac'));
       expect(text(m)).toContain(P.admitChooseBody);
-      expect(m).toContain('data-new="true"');
       expect(text(m)).toContain(P.admitNew);
     });
 
@@ -167,7 +168,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
   });
 
   describe('requests (read-only)', () => {
-    const prop = (id: string, tool: string) => ({ id, tool, createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending' }) as never;
+    const prop = (id: string, tool: string) => ({ id, tool, profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending' }) as never;
 
     it('says what is loading, what is empty, and that approving is on the computer', () => {
       expect(text(html(<RequestsScreen proposals={null} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />))).toContain(P.listLoading);
@@ -179,9 +180,10 @@ describe('the phone screens (both widths use the same markup and the same tokens
     it('a row is the gateway page\'s row markup, with the action name and its age', () => {
       const m = html(<RequestsScreen proposals={[prop('p1', 'email__send_message')]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />);
       expect(m).toContain('data-testid="approval-row"');
+      expect(m).toContain('dash-rows');
       expect(m).toContain('av3-row');
       expect(text(m)).toContain('Send message');
-      expect(text(m)).toContain('10 min');
+      expect(text(m)).toContain('Email'); // the gateway row's own area line, from the proposal's profile
     });
 
     it('a failed read is said, not hidden behind an empty list', () => {
