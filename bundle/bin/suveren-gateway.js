@@ -21,6 +21,7 @@ import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile,
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
 import { buildInstallPlan, buildUpdatePlan, buildUninstallPlan, renderPlan, parseDsclIds, pickFreeId, checkPreconditions } from '../lib/system-install-mac.mjs';
+import { detectSystemInstall, systemMarkers, thinCliRefusal } from '../lib/system-mode.mjs';
 import { executePlan } from '../lib/system-install-exec.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
 import { readPolicy, isPolicyLocked } from '../lib/policy.mjs';
@@ -45,6 +46,17 @@ const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
 // see and fix it.
 const COMMAND = process.argv[2] ?? 'help';
 const TOLERANT = ['config', 'help', '--help', '-h'].includes(COMMAND);
+// S1: when the gateway runs under its own account, this CLI is a thin client.
+// Ports and data folder then come from the root-owned settings file, never from
+// this person's environment. SUVEREN_SYSTEM_PREFIX is for tests only.
+const SYSTEM_PREFIX = process.env.SUVEREN_SYSTEM_PREFIX ?? '';
+const SYSTEM_MODE = platform() === 'darwin' && detectSystemInstall({ prefix: SYSTEM_PREFIX });
+if (SYSTEM_MODE) {
+  process.env.SUVEREN_INSTALL_SETTINGS_FILE = systemMarkers(SYSTEM_PREFIX).settings;
+  delete process.env.SUVEREN_CP_PORT;
+  delete process.env.SUVEREN_MCP_PORT;
+  delete process.env.SUVEREN_DATA_DIR;
+}
 let INSTALL;
 try {
   INSTALL = resolveInstallSettings({ tolerant: TOLERANT });
@@ -475,7 +487,7 @@ async function stop() {
 }
 
 async function status() {
-  const pid = readPid();
+  const pid = SYSTEM_MODE ? null : readPid();
   if (!pid) {
     // No PID file does NOT mean not running: when the login service owns the
     // gateway, launchd/systemd/Task Scheduler spawn server.js directly and
@@ -487,7 +499,9 @@ async function status() {
       });
       if (res.ok) {
         const body = await res.json();
-        console.log('suveren-gateway: running (managed by the login service)');
+        console.log(SYSTEM_MODE
+          ? 'suveren-gateway: running (under its own account)'
+          : 'suveren-gateway: running (managed by the login service)');
         console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
         console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
         console.log(`  Simulation:   ${body.simulation ? 'on — real systems are blocked' : 'off'}`);
@@ -498,7 +512,9 @@ async function status() {
     } catch {
       /* nothing listening — genuinely not running */
     }
-    console.log('suveren-gateway: not running (no PID file).');
+    console.log(SYSTEM_MODE
+      ? `suveren-gateway: not answering on port ${SUVEREN_PORT} (it runs under its own account; an administrator can check: sudo launchctl print system/ai.suveren.gateway).`
+      : 'suveren-gateway: not running (no PID file).');
     process.exit(3);
   }
   if (!isPidAlive(pid)) {
@@ -1743,6 +1759,14 @@ saved as-url (\`config set as-url\`) > default (${DEFAULT_AS_URL}).
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] ?? 'help';
+
+  if (SYSTEM_MODE) {
+    const refusal = thinCliRefusal(argv, { prefix: SYSTEM_PREFIX });
+    if (refusal) {
+      for (const line of refusal.lines) console.error(line);
+      process.exit(refusal.code);
+    }
+  }
 
   switch (cmd) {
     case 'start':   await start(argv.slice(1)); break;
