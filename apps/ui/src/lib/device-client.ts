@@ -73,6 +73,34 @@ export interface RecoverFinished { rootDid: string; deviceKeyId: string; signedI
 export interface RotateStarted { rotateId: string; recoveryCode: string; expiresAt: number }
 export interface ChangeRequest { request_id: string; kind: 'replace' | 'remove'; name: string; change_hash: string; expires_at: number }
 
+// ─── Pairing with the phone app (control plane routes/device-pairing.ts; plan 4.3) ──────────────────────
+
+export interface PairingDeviceRow {
+  keyId: string; label: string; kind: 'gateway' | 'approve-app'; thisDevice: boolean; canGrant: boolean; addedAt: number; recent: boolean;
+  /** Only in the list an admitter shows before it appends: the device being added. */
+  adding?: boolean;
+}
+export interface PairingOrigin { label: string; kind: 'gateway' | 'approve-app'; at: number }
+
+/** What the control plane's `DevicePairing.view()` says; the page only draws it. */
+export type PairingView =
+  | { flow: 'none' }
+  | { flow: 'admit'; step: 'qr'; qr: string; expiresAt: number }
+  | { flow: 'admit'; step: 'connected' }
+  | { flow: 'admit'; step: 'choose'; label: string; kind: 'gateway' | 'approve-app'; codes: string[]; rows: PairingDeviceRow[] }
+  | { flow: 'admit'; step: 'checking' }
+  | { flow: 'admit'; step: 'done'; label: string; rows: PairingDeviceRow[] }
+  | { flow: 'admit'; step: 'failed'; code: string }
+  | { flow: 'join'; step: 'qr'; qr: string; expiresAt: number; canGrant: boolean }
+  | { flow: 'join'; step: 'review'; identityCode: string; origin: PairingOrigin | null; devices: PairingDeviceRow[]; admitterLabel: string; suggestedLabel: string; canGrant: boolean; error?: string }
+  | { flow: 'join'; step: 'working'; doing: 'check' | 'send' }
+  | { flow: 'join'; step: 'waiting'; admitterLabel: string }
+  | { flow: 'join'; step: 'compare'; code: string; admitterLabel: string }
+  | { flow: 'join'; step: 'done'; signedIn: boolean; signinCode?: string }
+  | { flow: 'join'; step: 'failed'; code: string };
+
+export interface DevicesAnswer { rows: PairingDeviceRow[]; identityCode: string; origin: PairingOrigin | null; canGrant: boolean; hasRoom: boolean }
+
 export class DeviceClient {
   constructor(private readonly send: Transport = (p, i) => spClient.request(p, i)) {}
 
@@ -113,6 +141,15 @@ export class DeviceClient {
   rotateStatus(recoveryId: string) { return this.go<HandoffStatus>(`/auth/device/rotate-root/status?recoveryId=${encodeURIComponent(recoveryId)}`); }
   rotateFinish(recoveryId: string) { return this.go<{ rootDid: string }>('/auth/device/rotate-root/finish', json({ recoveryId })); }
   identityResetCancel(requestId: string) { return this.go<{ cancelled: true; requestId: string }>('/auth/device/identity-reset/cancel', json({ requestId })); }
+
+  // Pairing with the phone app: the list, "Add a phone" (admit), "Add this computer" (join)
+  devices() { return this.go<DevicesAnswer>('/auth/device/devices'); }
+  pairingStatus() { return this.go<{ view: PairingView }>('/auth/device/pairing/status'); }
+  admitStart() { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/start', json({})); }
+  admitChoose(code: string) { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/choose', json({ code })); }
+  joinStart() { return this.go<{ view: PairingView }>('/auth/device/pairing/join/start', json({})); }
+  joinConfirm(label: string) { return this.go<{ view: PairingView }>('/auth/device/pairing/join/confirm', json({ label })); }
+  pairingCancel() { return this.go<{ view: PairingView }>('/auth/device/pairing/cancel', json({})); }
 
   // Confirming a change to a stored login
   confirmRequest(kind: 'replace' | 'remove', name: string, change: unknown) { return this.go<{ request: ChangeRequest }>('/auth/confirm/request', json({ kind, name, change })); }

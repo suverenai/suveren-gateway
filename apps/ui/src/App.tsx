@@ -30,6 +30,7 @@ import { SetupPage } from './components/device/SetupScreens';
 import { SetPasswordPage } from './components/device/PasswordScreen';
 import { RecoverPage } from './components/device/RecoverScreens';
 import { ConfirmationHost } from './components/device/ConfirmChange';
+import { AddPhonePage, DevicesPage } from './components/device/PairingPages';
 import { offerSetUp } from './lib/access';
 import { spClient } from './lib/sp-client';
 
@@ -119,6 +120,9 @@ export function AppRoutes() {
         <Route path="/proposals" element={<Forward to="/approvals" />} />
         <Route path="/agent-brief" element={<AgentBriefPage />} />
         <Route path="/settings" element={<SettingsServicesPage />} />
+        {/* Pairing with the phone app (device keys): the list of devices and "Add a phone". Both leave for / with the switch off. */}
+        <Route path="/devices" element={<DevicesPage />} />
+        <Route path="/devices/add-phone" element={<AddPhonePage />} />
         {/* Redirect old routes */}
         <Route path="/settings/services" element={<Navigate to="/settings" replace />} />
         <Route path="/deploy" element={<Navigate to="/integrations" replace />} />

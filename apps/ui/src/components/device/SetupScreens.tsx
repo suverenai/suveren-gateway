@@ -9,6 +9,8 @@ import { LoginPage } from '../../pages/LoginPage';
 import { RecoveryCodeBox } from '@suveren/approval-card/components/DeviceFrame';
 import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
+import { AddThisComputer } from './PairingPages';
+import { PT } from '../../lib/pairing-texts';
 
 export interface SetupScreenProps {
   state: SetupState;
@@ -165,13 +167,15 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
  * key (today's sign-in, inside the page session) or, on a computer that is not set up, uses the recovery code.
  */
 export function NotSetUpScreen() {
-  const [view, setView] = useState<'choose' | 'key' | 'recover'>('choose');
+  const [view, setView] = useState<'choose' | 'key' | 'recover' | 'add'>('choose');
   if (view === 'key') return <LoginPage />;
   if (view === 'recover') return <RecoverPage kind="reset" onBack={() => setView('choose')} />;
+  if (view === 'add') return <AddThisComputer onBack={() => setView('choose')} />;
   return (
     <DeviceScreen title={T.unlockTitle}>
       <Notice kind="info">{T.deviceNotSetUp}</Notice>
       <button className="btn btn-primary btn-full btn-lg" onClick={() => setView('key')}>Sign In</button>
+      <button className="btn btn-secondary btn-full" onClick={() => setView('add')}>{PT.addComputerLink}</button>
       <button className="btn btn-ghost btn-full" onClick={() => setView('recover')}>{DRAFT.recoverLink}</button>
     </DeviceScreen>
   );
