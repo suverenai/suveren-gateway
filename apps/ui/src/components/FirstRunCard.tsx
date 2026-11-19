@@ -146,7 +146,7 @@ export function FirstRunCard({
           </span>
           {state.step2.status === 'done' ? (
             <span className="flow-step-title flow-done-title">
-              First mandate given &middot; <Link to="/mandates">review or revoke under Mandates</Link>
+              First mandate given &middot; <Link to="/mandates">review or end under Mandates</Link>
             </span>
           ) : (
             <StepTitle todo={state.step2.status === 'todo'} onOpen={() => setChosen(1)}>

@@ -773,7 +773,7 @@ function proposalRefusalText(notes: ProposalRefusalNote[]): string {
     ? `Refused: ${reasons[0]}.`
     : `Refused: none of the ${notes.length} mandates that fit could carry this: ${reasons.join('; ')}.`;
   const tail = notes.every((n) => n.kind === 'dead-mandate')
-    ? ' Ask the person to grant a new mandate.'
+    ? ' Ask the person to give a new mandate.'
     : ' The limit counts everything done under it today, so trying again will not help; the person decides whether to raise it.';
   return `${head} No proposal was created and nothing ran.${tail}`;
 }
@@ -1215,7 +1215,7 @@ function createGatedToolHandlerInner(
         if (readMaxAge === null) {
           return denyRead(state, tool, 'unset_age',
             `no read-age window is set for this integration${ageBoundField ? ` (or on your authorization's ${ageBoundField})` : ''}. ` +
-            `Reads are not permitted with an unbounded window — set how far back the agent may ` +
+            `Reads are not permitted with an unbounded window — set how far back the AI may ` +
             `read under the integration's Read policy, then try again. Nothing was read.`);
         }
       }
@@ -1253,7 +1253,7 @@ function createGatedToolHandlerInner(
             ? 'no container was resolved for this read'
             : `not in your permitted set (${denied.join(', ')})`;
           return denyRead(state, tool, 'resource',
-            `${tool.originalName} may only read the containers your authorization permits ` +
+            `${tool.originalName} may only read the containers your mandate permits ` +
             `(${readAdapter.resourceBound}); the requested one is ${why}. Nothing was read.`,
             denied.length > 0 ? denied.join(', ') : undefined);
         }
@@ -1309,7 +1309,7 @@ function createGatedToolHandlerInner(
           const conflictDays = detectAgeConflict(base, readAdapter.ageConflictPattern, readMaxAge);
           if (conflictDays !== null) {
             return denyRead(state, tool, 'age_window',
-              `you asked for items older than ${conflictDays} days, but this authorization allows ` +
+              `you asked for items older than ${conflictDays} days, but this mandate allows ` +
               `${readMaxAge} days. Nothing outside that window can be read, so the search was not ` +
               `run — it would have returned an empty result that looks like "none exist". Items ` +
               `may well exist beyond ${readMaxAge} days; widen read_max_age_days if you need them.`);
@@ -1336,7 +1336,7 @@ function createGatedToolHandlerInner(
         const blocked = new Set(readAdapter.blockResultValues);
         if (parsed !== undefined && hasBlockedValue(parsed, readAdapter.resultValuesPath, blocked)) {
           return denyRead(state, tool, 'spam',
-            `this item is in a container your authorization excludes (e.g. spam/trash). ` +
+            `this item is in a container your mandate excludes (e.g. spam/trash). ` +
             `Its contents were not returned.`);
         }
       }
@@ -1355,7 +1355,7 @@ function createGatedToolHandlerInner(
           : firstParsableDate(parsed, readAdapter.resultDatePath);
         if (isOlderThanMaxAge(itemDate, readMaxAge, Date.now())) {
           return denyRead(state, tool, 'age',
-            `this item is older than the ${readMaxAge}-day read window your authorization grants ` +
+            `this item is older than the ${readMaxAge}-day read window your mandate allows ` +
             `(read_max_age_days). Its contents were not returned.`);
         }
       }
@@ -1844,7 +1844,7 @@ function createGatedToolHandlerInner(
           type: 'text',
           text: `Tool call rejected by Gatekeeper. Tried ${matchingAuths.length} authorization(s):\n` +
             errors.map(e => `  - ${e}`).join('\n') +
-            '\nNothing ran. Tell the person which limit or scope stopped it. To change it they edit the mandate (**Mandates**, open it, **Edit**, sign again); or ask for something smaller. Do not retry the same call.',
+            '\nNothing ran. Tell the person which limit or scope stopped it. To change it they change the mandate (**Mandates**, open it, **Change**, give again); or ask for something smaller. Do not retry the same call.',
         }],
         isError: true,
       };
@@ -1954,7 +1954,7 @@ function createGatedToolHandlerInner(
               text: `Refusing to execute ${tool.originalName}: the signed authorization requires review ` +
                 `(commitment_mode="${auth.signedCommitmentMode}") but the Authority Server returned no pending ` +
                 `approvers. This inconsistency (a possible commitment-mode downgrade) is rejected fail-closed. ` +
-                `Nothing ran. Tell the person: they open the mandate under **Mandates** and sign it again, or contact the Authority Server operator.`,
+                `Nothing ran. Tell the person: they open the mandate under **Mandates** and give it again, or contact the suveren.ai operator.`,
             }],
             isError: true,
           };
@@ -2328,9 +2328,9 @@ function createGatedToolHandlerInner(
               return {
                 content: [{
                   type: 'text',
-                  text: `Blocked: mandate ${auth.authorizationId} must be signed again — the Authority Server ` +
-                    `no longer accepts its protocol version. Ask the mandate owner to sign it again ` +
-                    `(Mandates page → Sign again; see list-authorizations). ${err.message}`,
+                  text: `Blocked: mandate ${auth.authorizationId} must be given again — suveren.ai ` +
+                    `no longer accepts its protocol version. Ask the mandate owner to give it again ` +
+                    `(Mandates page → Give again; see list-authorizations). ${err.message}`,
                 }],
                 isError: true,
               };
@@ -2584,7 +2584,7 @@ function createGatedToolHandlerInner(
           }
           // SP unreachable — fail closed
           return {
-            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''} Nothing ran. Tell the person the Authority Server cannot be reached; they check their connection and the gateway's sign-in on the page, then you try again.` }],
+            content: [{ type: 'text', text: `SP unavailable — tool call blocked. ${err instanceof Error ? err.message : ''} Nothing ran. Tell the person suveren.ai cannot be reached; they check their connection and the gateway's sign-in on the page, then you try again.` }],
             isError: true,
           };
         }
@@ -2716,7 +2716,7 @@ export function noMandateRefusal(toolName: string, profile: string, builtinText?
     ? `**Mandates → + New mandate →** card **${card}** → **Give a mandate**`
     : '**Mandates → + New mandate**';
   return `Refused: no mandate covers ${toolName} (${area}). Nothing was done. ` +
-    `Tell the person to grant a ${area} mandate in the gateway: ${where}. list-authorizations(domain: "${shortProfile(stepsArea)}") gives the exact steps and says whether you can propose it for them. ` +
+    `Tell the person to give a ${area} mandate in the gateway: ${where}. list-authorizations(domain: "${shortProfile(stepsArea)}") gives the exact steps and says whether you can propose it for them. ` +
     'Then try again. No ticket was requested.';
 }
 

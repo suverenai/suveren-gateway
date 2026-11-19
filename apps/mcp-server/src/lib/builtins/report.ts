@@ -99,7 +99,7 @@ function listTicketsTool(deps: BuiltinDeps): BuiltinTool {
   return {
     name: 'list_tickets',
     description:
-      'List tickets (signed executions) from the local receipt archive inside your reporting window ' +
+      'List tickets (signed executions) from the local ticket archive inside your reporting window ' +
       '(the number of days back your reporting mandate allows): id, time, action, action type, ' +
       'profile, the limits used, and whether an approval was archived for it. Older tickets are not ' +
       'shown and cannot be used in the report. Optionally narrow further by since/until (unix seconds). ' +

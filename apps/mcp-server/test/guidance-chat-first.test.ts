@@ -97,13 +97,13 @@ describe('what a chat trusts, and what an intent holds', () => {
 describe('the intent of the first mandate, and what is connected', () => {
   it('the Setup intent is pre-filled: the person is not asked to write one', async () => {
     const t = firstMandateText({ card: 'Setup', area: 'delegation', form: true });
-    expect(t).toContain('**Intent** is already filled in; they leave it as it is.');
+    expect(t).toContain('**Why** is already filled in; they leave it as it is.');
     expect(t).not.toMatch(/in their own words/);
   });
 
   it('the AI writes the intent of a mandate it proposes', async () => {
     const { BEFORE_PROPOSING } = await import('../src/lib/guidance');
-    expect(BEFORE_PROPOSING).toContain('You write the intent of a mandate you propose, in plain words');
+    expect(BEFORE_PROPOSING).toContain('You write the why of a mandate you propose, in plain words');
   });
 
   it('says briefly what is connected, and where the rest is set up', async () => {

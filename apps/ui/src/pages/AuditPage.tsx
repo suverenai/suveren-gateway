@@ -419,7 +419,7 @@ export function AuditPage() {
         <div className="page-header-text">
           <h1 className="page-title">Tickets</h1>
           <p className="page-subtitle">
-            Execution history for agent actions.
+            Execution history for AI actions.
             {newCount > 0 && <> <b data-testid="tickets-new-count">{newCount} new since your last visit</b></>}
           </p>
         </div>
@@ -609,7 +609,7 @@ export function AuditPage() {
           icon={'\u2315'}
           title={receipts.length === 0 ? 'No tickets in the last 30 days' : 'No matching tickets'}
           text={receipts.length === 0
-            ? 'Tickets appear here after an agent uses an authorized tool. Older tickets can be loaded below.'
+            ? 'Tickets appear here after an AI uses a tool a mandate covers. Older tickets can be loaded below.'
             : 'Try adjusting your search or filters.'}
         />
       ) : (

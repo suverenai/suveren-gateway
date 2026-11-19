@@ -15,9 +15,9 @@ import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/cor
  *  disabled until the text differs from this template. */
 const INTENT_TEMPLATE = `Why — What's the situation? Why does this need to happen?
 
-Goal — What should the agent try to achieve?
+Goal — What should your AI try to achieve?
 
-Watch out — What should the agent avoid or be careful about?`;
+Watch out — What should your AI avoid or be careful about?`;
 
 interface AuthData {
   profileId: string;
@@ -181,7 +181,7 @@ export function GateWizardPage() {
     intent.trim() !== INTENT_TEMPLATE.trim() && intent.trim() !== '';
 
   const handleApplyDraft = (text: string) => {
-    if (intentChanged && !confirm('Replace your current intent with the AI draft?')) return;
+    if (intentChanged && !confirm('Replace your current why with the AI draft?')) return;
     setIntent(text);
   };
 
@@ -288,10 +288,10 @@ export function GateWizardPage() {
 
           {/* RIGHT — the document, the centerpiece */}
           <div className="card intent-pane document">
-            <h3 className="card-title">What should your agent know?</h3>
+            <h3 className="card-title">What should your AI know?</h3>
 
             <div className="field-editable" style={{ marginBottom: 0 }}>
-              <div className="field-label"><span className="pen">✎</span> Intent — your words, signed with the grant</div>
+              <div className="field-label"><span className="pen">✎</span> Why — your words, given with the mandate</div>
               <textarea
                 className="intent-textarea"
                 value={intent}
@@ -315,7 +315,7 @@ export function GateWizardPage() {
                 onClick={handleCheckIntent}
                 disabled={reviewLoading || !intentChanged}
               >
-                {reviewLoading ? 'Checking…' : 'Check against my other grants'}
+                {reviewLoading ? 'Checking…' : 'Check against my other mandates'}
               </button>
 
               {reviewError && (
@@ -334,7 +334,7 @@ export function GateWizardPage() {
                 <div className="hint-box" role="note" style={{ marginTop: '0.5rem' }}>
                   <span className="hint-icon" aria-hidden="true">i</span>
                   <div className="hint-body">
-                    <div className="hint-head">Intent review (advisory)</div>
+                    <div className="hint-head">Why review (advisory)</div>
                     <div style={{ whiteSpace: 'pre-wrap' }}>{renderAdvisory(reviewResult, reviewGrants, setPopupGrants, profileDisplayName(authData.profileId))}</div>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.4rem' }}>
                       Checked with your configured assistant. AI surfaces reality — you decide.
@@ -363,9 +363,9 @@ export function GateWizardPage() {
                   <div className="hint-head">
                     Visible to {approverNames.length > 0 ? approverNames.join(', ') : 'the configured approvers'}
                   </div>
-                  Your intent will be encrypted and shared with{' '}
+                  Your why will be encrypted and shared with{' '}
                   {approverNames.length > 0 ? approverNames.join(', ') : 'this profile\'s required approvers'}.
-                  Only they can decrypt it &mdash; your Authority Server cannot.
+                  Only they can decrypt it &mdash; suveren.ai cannot.
                   Each approver stores a copy as their accountability record.
                 </div>
               </div>
@@ -378,15 +378,15 @@ export function GateWizardPage() {
             type="button"
             className="floating-help"
             onClick={() => setChatOpenMobile(true)}
-            aria-label="Open intent assistant"
+            aria-label="Open why assistant"
           >
-            Get help with intent
+            Get help with the why
           </button>
 
           <BottomSheet
             open={chatOpenMobile}
             onClose={() => setChatOpenMobile(false)}
-            ariaLabel="Intent assistant"
+            ariaLabel="Why assistant"
           >
             <AssistantChatPanel
               target={{
@@ -433,8 +433,8 @@ export function GateWizardPage() {
                       <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Scope</div>
                       <div style={{ marginBottom: '0.75rem' }}>{g.scope}</div>
 
-                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Intent</div>
-                      <div style={{ whiteSpace: 'pre-wrap', marginBottom: '0.75rem' }}>{g.intent?.trim() || '(no intent recorded)'}</div>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.25rem' }}>Why</div>
+                      <div style={{ whiteSpace: 'pre-wrap', marginBottom: '0.75rem' }}>{g.intent?.trim() || '(no why recorded)'}</div>
 
                       {Object.entries(g.bounds).filter(([k]) => k !== 'profile' && k !== 'path').length > 0 && (
                         <>

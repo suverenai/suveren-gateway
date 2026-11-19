@@ -195,7 +195,7 @@ async function delegationWorkspace<G extends { id: string; name: string; isPerso
   if (found.length === 0) return personal;
   if (found.length === 1) return found[0];
   const names = found.map(g => (g.isPersonal ? 'the personal workspace' : `"${g.name}"`)).join(', ');
-  refuse(`Setup mandates exist in several workspaces (${names}): say which in \`team\` — a team's name, or "personal".`);
+  refuse(`Setup mandates exist in several teams (${names}): say which in \`team\` — a team's name, or "personal".`);
 }
 
 /** The workspace, the profile and the person's right to give it — everything before limits and scope. */
@@ -214,7 +214,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
     : req.team
       ? groups.find(g => !g.isPersonal && (g.id === req.team || g.name === req.team))
       : await delegationWorkspace(deps, groups, req.workspaceOf);
-  if (!group) refuse(req.team && req.team !== 'personal' ? `You are not a member of a team "${req.team}".` : 'No personal workspace found.');
+  if (!group) refuse(req.team && req.team !== 'personal' ? `You are not a member of a team "${req.team}".` : 'No personal team found.');
   const isPersonal = !!group.isPersonal;
 
   const profile = await resolveProfile(deps.as, req.profile);
@@ -388,7 +388,7 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     ...(req.discloseIdentity !== undefined ? { disclose_identity: req.discloseIdentity } : {}),
   });
   if (res.status >= 300) {
-    refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
+    refuse(`suveren.ai refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
 
   try {
@@ -404,9 +404,9 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     // Same rule as the sign page: a mandate whose intent never reached the
     // gateway must not stay active.
     await deps.as('POST', `/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
-      reason: 'Auto-revoked: gate content delivery failed',
+      reason: 'Auto-ended: gate content delivery failed',
     }).catch(() => {});
-    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
+    refuse(`The mandate was given but its why could not be delivered to the gateway, so it was ended. (${err instanceof Error ? err.message : String(err)})`);
   }
   const retired = req.replaces ? await retireReplaced(req.replaces, authorizationId, deps) : {};
   return { authorizationId, plan, ...retired };
@@ -451,7 +451,7 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
     commitment_mode: req.mode,
     ttl: req.ttlSeconds,
   });
-  if (res.status >= 300) refuse(`The Authority Server refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  if (res.status >= 300) refuse(`suveren.ai refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
   await deps.deliverGateContent({
     authorizationId: req.authorizationId,
     boundsHash: res.body?.bounds_hash ?? boundsHash,
@@ -558,7 +558,7 @@ export async function planMandateChange(req: MandateChangeRequest, deps: Ceremon
 
   const groups = (await deps.as('GET', '/api/groups')).body?.groups as Array<{ id: string; isPersonal?: boolean }> | undefined;
   const group = groups?.find(g => g.id === old.groupId);
-  if (!group) refuse('This mandate belongs to a workspace you are not in.');
+  if (!group) refuse('This mandate belongs to a team you are not in.');
 
   const request: MandateRequest = {
     team: group.isPersonal ? 'personal' : old.groupId,
@@ -607,7 +607,7 @@ function diffForCompare(d: MandateDiff): string {
 export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
   const { diff, request } = await planMandateChange(req, deps);
   if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
-    refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
+    refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be given. Nothing was given. Ask for the change again.', 'changed_since_proposal');
   }
   return createMandate(request, deps);
 }

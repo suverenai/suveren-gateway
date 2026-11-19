@@ -216,7 +216,7 @@ export function ApprovalCard({
   const dismiss = onDismissResult && dismissLabel ? (
     <button type="button" className="av3-btn av3-btn-primary av3-result-act" data-testid="result-dismiss" onClick={onDismissResult}>{dismissLabel}</button>
   ) : null;
-  const approveWord = isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
+  const approveWord = isChange ? 'Approve' : isMandate ? 'Give the mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
   return (

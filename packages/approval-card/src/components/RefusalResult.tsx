@@ -28,7 +28,7 @@ export function RefusalResult({ proposal, manifests }: { proposal: Pick<Proposal
       <div>
         <div className="refusal-result-w" data-testid="refusal-sentence">{sentence}</div>
         <div className="refusal-result-m">
-          Refused by the Authority Server at {clock(proposal.refusal.at)}. No ticket was issued; nothing left your gateway.
+          Refused by suveren.ai at {clock(proposal.refusal.at)}. No ticket was issued; nothing left your gateway.
         </div>
       </div>
     </div>

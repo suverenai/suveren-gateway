@@ -18,7 +18,7 @@ export function ContextStrip({ profileId, bounds, groupName, domain, onSwitch }:
         </>
       )}
       {profileId && <span><strong>Profile:</strong> {profileDisplayName(profileId)}</span>}
-      {bounds && <span><strong>Bounds:</strong> {bounds}</span>}
+      {bounds && <span><strong>Limits:</strong> {bounds}</span>}
       {onSwitch && (
         <button
           className="btn btn-ghost btn-sm"

@@ -122,7 +122,7 @@ describe('1. the first mandate', () => {
   it('the form, when the Setup mandate itself is asked for', () => {
     const t = firstMandateText({ card: 'Setup', area: 'delegation', form: true });
     expect(t).toContain('Scope & Limits');
-    expect(t).toMatch(/\*\*Sign\*\*: a \*\*Title\*\* \(required\), how it runs and for how long, then \*\*Sign mandate\*\*/);
+    expect(t).toMatch(/\*\*Give\*\*: a \*\*Title\*\* \(required\), how it runs and for how long, then \*\*Give the mandate\*\*/);
     expect(t).toContain('Ask them first whether it should run automatically or ask each time.');
     expect(t).not.toContain('Only if they ask how to fill in the form');
   });
@@ -158,7 +158,7 @@ describe('4. attachments, built from the manifests', () => {
       const t = attachmentNotAllowedText({ ...base, candidates: [{ profileId: 'email@0.9', context: { allowed_attachment_sources: 'ledger:invoice-pdf' } }], profileOf: () => emailProfile });
       expect(t).toContain('Refused: no Email mandate lets post__send attach Saved files (files:file).');
       expect(t).toContain('Nothing was sent and no ticket was requested.');
-      expect(t).toContain('**Mandates**, open the Email mandate, press **Edit**, tick Saved files (files:file) under **What the AI may attach**, and sign it again.');
+      expect(t).toContain('**Mandates**, open the Email mandate, press **Change**, tick Saved files (files:file) under **What the AI may attach**, and give it again.');
       expect(t).toMatch(/stop and ask\.$/);
     });
     it('only the missing source is named when another is ticked', () => {
@@ -221,9 +221,9 @@ describe('2. what is needed for a goal — the connector overview', () => {
     expect(t).toContain('mandate for Memo: yes (review: each action needs approval)');
   });
 
-  it('a mandate that must be signed again is not "none"', () => {
+  it('a mandate that must be given again is not "none"', () => {
     const t = connectorOverview(input({ running: ['notes'], auths: [auth('memo@0.1', { needsReapproval: true })] }));
-    expect(t).toContain('mandate for Memo: must be signed again. A person opens **Mandates** and presses **Sign again**');
+    expect(t).toContain('mandate for Memo: must be given again. A person opens **Mandates** and presses **Give again**');
     expect(t).not.toContain('mandate for Memo: none');
   });
 
@@ -240,7 +240,7 @@ describe('2. what is needed for a goal — the connector overview', () => {
     }));
     expect(t).toContain('its documents (Saved files) can be attached to messages if the sending mandate ticks them under **What the AI may attach**');
     expect(t).toMatch(/may attach: Saved files \(save the file first with files__save_file\) — allowed; Issued invoice — not ticked in the mandate; Quote — not ticked in the mandate/);
-    expect(t).toContain('A source that is not ticked needs the person to edit that mandate: **Mandates**, open it, **Edit**, tick it under **What the AI may attach**, sign again.');
+    expect(t).toContain('A source that is not ticked needs the person to change that mandate: **Mandates**, open it, **Change**, tick it under **What the AI may attach**, give again.');
   });
 
   it('with the sender not yet under a mandate, sources are listed without a verdict', () => {
@@ -288,13 +288,13 @@ describe('2. how to get a missing mandate', () => {
 
   it('no Setup mandate: the person signs it on the page, with the card name', () => {
     const t = howToGetMandate('email', 'Post', args(noSetup));
-    expect(t).toBe('A person signs it: **Mandates → + New mandate**, card **Post**, **Give a mandate**. Ask them first whether it should run automatically or ask each time. On the **Sign** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Sign mandate**. (With a Setup mandate you could prepare it for them.)');
+    expect(t).toBe('A person gives it: **Mandates → + New mandate**, card **Post**, **Give a mandate**. Ask them first whether it should run automatically or ask each time. On the **Give** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Give the mandate**. (With a Setup mandate you could prepare it for them.)');
   });
 
   it('the team has not enabled the profile: says what an admin does, and that nothing else helps', () => {
     const t = howToGetMandate('email', 'Post', args(heldSetup('email', 'review'), new Map([['email', { teamCode: 'profile_not_enabled', teamName: 'Sales Vienna' }]])));
     expect(t).toContain('Blocked: the team "Sales Vienna" has not enabled Email');
-    expect(t).toContain('ask an admin of "Sales Vienna" to open **Team → Manage this team in your Authority Server**, enable Email and name who may give its mandates');
+    expect(t).toContain('ask an admin of "Sales Vienna" to open **Team → Manage this team on suveren.ai**, enable Email and name who may give its mandates');
     expect(t).toContain('Nothing else helps until then.');
     expect(t).not.toContain('Propose it with');
   });
@@ -368,7 +368,7 @@ describe('7 more cases from the real-AI test', () => {
   });
   it('an area that had a mandate before says so; otherwise nothing is claimed', () => {
     const had = connectorOverview(input({ manifests: [NOTES], running: ['notes'], hadMandate: (a) => a === 'memo' }));
-    expect(had).toContain('mandate for Memo: none. An earlier one has ended (revoked or expired).');
+    expect(had).toContain('mandate for Memo: none. An earlier one has ended or expired.');
     const never = connectorOverview(input({ manifests: [NOTES], running: ['notes'] }));
     expect(never).not.toContain('earlier one');
   });
@@ -447,7 +447,7 @@ describe('7 more cases from the real-AI test', () => {
 describe('5. refusal endings', () => {
   it('"no mandate covers" ends with where the person goes, the card, and a way to find out more', () => {
     expect(noMandateRefusal('post__send', 'email', undefined, 'Post')).toBe(
-      'Refused: no mandate covers post__send (email). Nothing was done. Tell the person to grant a email mandate in the gateway: ' +
+      'Refused: no mandate covers post__send (email). Nothing was done. Tell the person to give a email mandate in the gateway: ' +
       '**Mandates → + New mandate →** card **Post** → **Give a mandate**. list-authorizations(domain: "email") gives the exact steps and says whether you can propose it for them. ' +
       'Then try again. No ticket was requested.',
     );
@@ -456,9 +456,9 @@ describe('5. refusal endings', () => {
   });
 
   it.each([
-    ['MANDATE_REVOKED', /no longer valid.*Sign again/s],
+    ['MANDATE_REVOKED', /no longer valid.*Give again/s],
     ['MANDATE_EXPIRED', /no longer valid/],
-    ['BOUND_EXCEEDED', /limit stopped it.*\*\*Edit\*\*/s],
+    ['BOUND_EXCEEDED', /limit stopped it.*\*\*Change\*\*/s],
     ['CUMULATIVE_LIMIT_EXCEEDED', /wait until the period ends/],
     ['PROFILE_NOT_ENABLED_FOR_GROUP', /team admin opens \*\*Team → Manage this team/],
     ['RATE_LIMITED', /Wait a minute/],
@@ -611,7 +611,7 @@ describe('through the gateway\'s own entry points', () => {
     expect(text).toContain('An AI can never create the first one');
     expect(text).toContain('Connectors, in the order to act');
     expect(text).toMatch(/- Files .* — running\./);
-    expect(text).toMatch(/mandate for Files: none\. A person signs it: \*\*Mandates → \+ New mandate\*\*, card \*\*Files\*\*/);
+    expect(text).toMatch(/mandate for Files: none\. A person gives it: \*\*Mandates → \+ New mandate\*\*, card \*\*Files\*\*/);
     // Only that area: no other connector's steps.
     expect(text).not.toContain('- Email');
   });
@@ -658,7 +658,7 @@ describe('through the gateway\'s own entry points', () => {
       (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
       const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
       expect(text).toContain('Blocked: the team "Sales Vienna" has not enabled Files');
-      expect(text).toContain('Team → Manage this team in your Authority Server');
+      expect(text).toContain('Team → Manage this team on suveren.ai');
       // Only the rights are asked for, for the active team, and only for a connector that runs.
       expect(calls.length).toBeGreaterThan(0);
       expect(calls.every(c => c.dryRun === true && c.request.rightsOnly === true && c.request.team === 'g_team')).toBe(true);
@@ -677,7 +677,7 @@ describe('through the gateway\'s own entry points', () => {
       (st.spClient as unknown as { getActiveTeamGroupId: () => Promise<string> }).getActiveTeamGroupId = async () => 'g_team';
       const text = (await listAuthorizationsHandler(st, im({ running: ['files'] }))({ domain: 'files' })).content[0].text;
       expect(text).not.toContain('Blocked: the team');
-      expect(text).toContain('mandate for Files: none. A person signs it');
+      expect(text).toContain('mandate for Files: none. A person gives it');
     } finally {
       fetchSpy.mockRestore();
       delete process.env.SUVEREN_INTERNAL_SECRET;
@@ -774,7 +774,7 @@ describe('through the gateway\'s own entry points', () => {
       const { live } = everyMode([]);
       const facts = sectionOf(live, 'FACTS YOU CAN DRAW ON');
       expect(facts).toContain('A mandate is a permission the person gives their AI, with limits they choose, for one kind of work');
-      expect(facts).toContain('They can change or revoke it at any time.');
+      expect(facts).toContain('They can change or end it at any time.');
       expect(facts).toContain('The Setup mandate allows no work itself.');
       expect(facts).toContain('it exists only once they approve it');
     });
@@ -885,9 +885,9 @@ describe('through the gateway\'s own entry points', () => {
       expect(t).toContain('The one next step: The Notes connector is not running, so its mandate does nothing yet. The steps: list-authorizations(domain: "memo").');
     });
 
-    it('a mandate that must be signed again comes first', () => {
+    it('a mandate that must be given again comes first', () => {
       const t = shortAnswer({ ...input({ manifests: [NOTES], running: ['notes'], auths: [auth('memo@0.1', { needsReapproval: true })] }), url: 'u' });
-      expect(t).toContain('The one next step: A person signs these again: Memo. They open **Mandates** and press **Sign again**.');
+      expect(t).toContain('The one next step: A person gives these again: Memo. They open **Mandates** and press **Give again**.');
     });
 
     it('a team that blocks the first mandate is the one next step, with "nothing else helps"', () => {

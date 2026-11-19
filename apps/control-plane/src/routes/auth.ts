@@ -82,14 +82,14 @@ async function fetchAsPublicKey(
     if (!body || typeof body.publicKey !== 'string' || !body.publicKey) {
       return {
         ok: false,
-        message: `The Authority Server at ${asUrl} returned a malformed signing key. Refusing to sign in.`,
+        message: `suveren.ai at ${asUrl} returned a malformed signing key. Refusing to sign in.`,
       };
     }
     return { ok: true, publicKeyHex: body.publicKey };
   } catch (err) {
     return {
       ok: false,
-      message: `Could not reach the Authority Server at ${asUrl} to read its signing key — ` +
+      message: `Could not reach suveren.ai at ${asUrl} to read its signing key — ` +
         `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
     };
   }
@@ -186,7 +186,7 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
           ok: false,
           error: 'as_key_mismatch',
           message:
-            `The Authority Server at ${asUrl} does not match the one pinned when this gateway last ` +
+            `suveren.ai at ${asUrl} does not match the one pinned when this gateway last ` +
             `signed in (pinned fingerprint ${fingerprintOf(pinnedKey)}) — its signing-key challenge did ` +
             `not verify (${err.message}). Refusing to sign in. If the AS's key changed intentionally, ` +
             `an operator must clear the old pairing before signing in again.`,
@@ -196,7 +196,7 @@ async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<As
         ok: false,
         error: 'as_unverified',
         message:
-          `The Authority Server at ${asUrl} could not prove it holds the signing key it presented — ` +
+          `suveren.ai at ${asUrl} could not prove it holds the signing key it presented — ` +
           `${err.message}. Refusing to sign in.`,
       };
     }
@@ -343,7 +343,7 @@ export function createAuthRouter(
         // gives the caller no machine-readable reason to retry on).
         res.status(502).json({
           error: 'as_unreachable',
-          message: `Could not reach the Authority Server at ${SP_URL} to sign in — ` +
+          message: `Could not reach suveren.ai at ${SP_URL} to sign in — ` +
             `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
         });
         return;
@@ -407,7 +407,7 @@ export function createAuthRouter(
         } catch (err) {
           res.status(502).json({
             error: 'as_unreachable',
-            message: `Could not confirm your team membership with the Authority Server — ` +
+            message: `Could not confirm your team membership with suveren.ai — ` +
               `${err instanceof Error ? err.message : String(err)}. Refusing to sign in.`,
           });
           return;

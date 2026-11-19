@@ -84,7 +84,7 @@ describe('blockedView — one generic sentence per kind, never per-action advice
   it('cumulative: X of Y used', () => {
     const v = blockedView(base({ kind: 'cumulative', value: 7, limit: 6, who: 'authority-server', code: 'CUMULATIVE_LIMIT_EXCEEDED' }));
     expect(v.sentence).toBe('7 of 6 used — the limit is reached.');
-    expect(sourceLineText(v.sourceLine)).toContain('Authority Server');
+    expect(sourceLineText(v.sourceLine)).toContain('suveren.ai');
     expect(sourceLineText(v.sourceLine)).toContain('CUMULATIVE_LIMIT_EXCEEDED');
     expect(v.whatYouCanDo).toMatch(/resets/);
   });
@@ -98,12 +98,12 @@ describe('blockedView — one generic sentence per kind, never per-action advice
   it('not_authorized: fixed sentence', () => {
     const v = blockedView(base({ kind: 'not_authorized' }));
     expect(v.sentence).toBe('No mandate currently covers this action.');
-    expect(v.whatYouCanDo).toMatch(/Grant a mandate/);
+    expect(v.whatYouCanDo).toMatch(/Give a mandate/);
   });
 
   it('read (no kind on disk): falls back to the stored detail, unchanged from before AU2', () => {
     const v = blockedView(base({ detail: 'older than your 90-day read window' }));
-    expect(v.title).toBe('Read blocked');
+    expect(v.title).toBe('Read refused');
     expect(v.sentence).toBe('older than your 90-day read window');
   });
 
@@ -278,6 +278,6 @@ describe('card wording (UI spec §18.4)', () => {
   });
   it('refusedByLine says who refused, always "before anything ran"', () => {
     expect(refusedByLine({})).toBe('Refused by this gateway before anything ran.');
-    expect(refusedByLine({ who: 'authority-server' })).toBe('Refused by the Authority Server before anything ran.');
+    expect(refusedByLine({ who: 'authority-server' })).toBe('Refused by suveren.ai before anything ran.');
   });
 });

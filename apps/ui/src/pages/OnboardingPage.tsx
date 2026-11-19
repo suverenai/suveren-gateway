@@ -134,7 +134,7 @@ export function OnboardingPage() {
       await refreshGroups();
       setScreen('join-waiting');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to join group');
+      setError(e instanceof Error ? e.message : 'Failed to join team');
     } finally {
       setLoading(false);
     }
@@ -177,7 +177,7 @@ export function OnboardingPage() {
       await refreshGroups();
       navigate('/');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create group');
+      setError(e instanceof Error ? e.message : 'Failed to create team');
     } finally {
       setLoading(false);
     }

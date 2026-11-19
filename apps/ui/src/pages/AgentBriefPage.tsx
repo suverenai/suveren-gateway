@@ -7,23 +7,23 @@ import { BottomSheet } from '../components/BottomSheet';
 // how to behave under bounded authority, when to pull intent details on
 // demand, and a few example rules. Intentionally generic — the
 // user tailors it for their actual workflow.
-const STARTER_TEMPLATE = `# Agent Brief
+const STARTER_TEMPLATE = `# AI brief
 
 You act on my behalf through Suveren — the gateway that gates every
-privileged tool call you make. Suveren implements the bounded-authority
-model from the open Human Agency Protocol (HAP): each mandate
-describes an area of authority, a set of numeric limits, and a scope.
-Operate inside those bounds or the Gatekeeper will reject your action.
+privileged tool call you make. Suveren implements the open Human Agency
+Protocol (HAP): each mandate describes an area of work, a set of numeric
+limits, and a scope.
+Operate inside those limits or the Gatekeeper will refuse your action.
 
 ## Before you act in a domain
 
 1. Call \`list-authorizations(domain: "<domain>")\` to load the full
-   intent, scope, and usage for that area. The session brief shows only
-   a one-line summary per mandate — the Intent paragraph lives behind
+   why, scope, and usage for that area. The session brief shows only
+   a one-line summary per mandate — the why paragraph lives behind
    that call, and often contains soft rules you MUST honor (e.g. "never
    publish on weekends", "only reply in English").
-2. If the action would exceed a bound or fall outside the scope, stop
-   and explain what would be blocked instead of trying.
+2. If the action would exceed a limit or fall outside the scope, stop
+   and explain what would be refused instead of trying.
 3. If you're not sure whether an action is covered, ask me first.
 
 ## How to handle reviews
@@ -101,7 +101,7 @@ export function AgentBriefPage() {
       }
       if (url.origin !== window.location.origin) return;
       if (url.pathname === window.location.pathname) return; // same-page anchors
-      if (!confirm('You have unsaved changes to your agent brief. Leave anyway?')) {
+      if (!confirm('You have unsaved changes to your AI brief. Leave anyway?')) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -126,7 +126,7 @@ export function AgentBriefPage() {
       })
       .catch(err => {
         if (cancelled) return;
-        setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to load context' });
+        setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Failed to load the AI brief' });
       })
       .finally(() => { if (!cancelled) setLoadingContext(false); });
     return () => { cancelled = true; };
@@ -152,14 +152,14 @@ export function AgentBriefPage() {
   };
 
   const handleStarter = () => {
-    if (context.trim() && !confirm('Replace current context with the starter template?')) return;
+    if (context.trim() && !confirm('Replace the current AI brief with the starter template?')) return;
     setContext(STARTER_TEMPLATE);
   };
 
   return (
     <div className="su-page is-wide">
       <div className="page-header">
-        <h1 className="page-title">Agent Brief</h1>
+        <h1 className="page-title">AI brief</h1>
         <p className="page-subtitle">What every connected AI reads first, at the start of each session.</p>
       </div>
 
@@ -176,10 +176,10 @@ export function AgentBriefPage() {
             target={{ kind: 'context' }}
             currentText={context}
             onApply={(text) => {
-              if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
+              if (context.trim() && !confirm('Replace the current AI brief with the applied draft?')) return;
               setContext(text);
             }}
-            greeting="Tell me what your agent should know — I'll help you write the brief."
+            greeting="Tell me what your AI should know — I'll help you write the brief."
             placeholder="Ask for help with your brief…"
           />
         </article>}
@@ -188,7 +188,7 @@ export function AgentBriefPage() {
         <article className="ob-card su-card su-brief intent-pane document">
           <textarea
             className="su-editor"
-            aria-label="Agent brief"
+            aria-label="AI brief"
             value={context}
             onChange={e => setContext(e.target.value)}
             placeholder={loadingContext ? 'Loading…' : 'Write what every AI should know — or start from a template.'}
@@ -251,11 +251,11 @@ export function AgentBriefPage() {
             target={{ kind: 'context' }}
             currentText={context}
             onApply={(text) => {
-              if (context.trim() && !confirm('Replace the current context with the applied draft?')) return;
+              if (context.trim() && !confirm('Replace the current AI brief with the applied draft?')) return;
               setContext(text);
               setChatOpenMobile(false);
             }}
-            greeting="Tell me what your agent should know — I'll help you write the brief."
+            greeting="Tell me what your AI should know — I'll help you write the brief."
             placeholder="Ask for help with your brief…"
           />
         </BottomSheet>

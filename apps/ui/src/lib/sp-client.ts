@@ -682,7 +682,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(asErrorMessage(err, `Signing failed: ${res.status}`));
+      throw new Error(asErrorMessage(err, `Giving the mandate failed: ${res.status}`));
     }
     return res.json();
   }
@@ -697,7 +697,7 @@ class SPClient {
   async getMyAttestations(status?: string): Promise<PendingItem[]> {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
     const res = await this.fetch(`/api/mandates/mine${qs}`);
-    if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch mandates: ${res.status}`);
     const data = await res.json();
     // Normalize mine response to PendingItem shape
     return (data.mandates ?? []).map((a: Record<string, unknown>) => ({
@@ -741,7 +741,7 @@ class SPClient {
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const res = await this.fetch(`/api/tickets/mine${qs ? '?' + qs : ''}`);
-    if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch tickets: ${res.status}`);
     const data = await res.json();
     return data.tickets ?? [];
   }
@@ -852,17 +852,17 @@ class SPClient {
   async revokeAttestation(authorizationId: string, reason?: string): Promise<void> {
     const res = await this.fetch(`/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
       method: 'POST',
-      body: JSON.stringify({ reason: reason ?? 'Revoked by user' }),
+      body: JSON.stringify({ reason: reason ?? 'Ended by user' }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
-      throw new Error(asErrorMessage(err, `Revoke failed: ${res.status}`));
+      const err = await res.json().catch(() => ({ error: 'Failed to end' }));
+      throw new Error(asErrorMessage(err, `End failed: ${res.status}`));
     }
   }
 
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
     const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
-    if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch mandates: ${res.status}`);
     // v0.7: the response key is `mandates` (was `attestations`) — map onto
     // this client's own stable field name at the boundary.
     const body = await res.json();
@@ -1185,7 +1185,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-      return { success: false, error: asErrorMessage(err, 'AI request failed'), disclaimer: 'AI surfaces reality. You supply intent.' };
+      return { success: false, error: asErrorMessage(err, 'AI request failed'), disclaimer: 'AI surfaces reality. You supply the why.' };
     }
     return res.json();
   }
@@ -1870,7 +1870,7 @@ class SPClient {
    */
   async listTeamAuthorizations(groupId: string): Promise<Array<PendingItem & { owner: { userId: string; name?: string; email?: string } }>> {
     const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/mandates`);
-    if (!res.ok) throw new Error(`Failed to fetch team authorizations: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch team mandates: ${res.status}`);
     const data = await res.json();
     return (data.mandates ?? []).map((a: Record<string, unknown>) => {
       const owner = (a.owner as { userId: string; name?: string; email?: string }) ?? { userId: '' };
@@ -1909,7 +1909,7 @@ class SPClient {
    */
   async listTeamReceipts(groupId: string): Promise<ExecutionReceipt[]> {
     const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/tickets`);
-    if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch team tickets: ${res.status}`);
     const data = await res.json();
     return data.tickets ?? [];
   }
@@ -1927,7 +1927,7 @@ class SPClient {
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const res = await this.fetch(`/api/tickets/mine${qs ? '?' + qs : ''}`);
-    if (!res.ok) throw new Error(`Failed to fetch receipts: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch tickets: ${res.status}`);
     const data = await res.json();
     return { receipts: data.tickets ?? [], nextBefore: data.nextBefore ?? null };
   }
@@ -1939,7 +1939,7 @@ class SPClient {
     if (options?.limit) params.set('limit', String(options.limit));
     const qs = params.toString();
     const res = await this.fetch(`/api/groups/${encodeURIComponent(groupId)}/tickets${qs ? '?' + qs : ''}`);
-    if (!res.ok) throw new Error(`Failed to fetch team receipts: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch team tickets: ${res.status}`);
     const data = await res.json();
     return { receipts: data.tickets ?? [], nextBefore: data.nextBefore ?? null };
   }
@@ -2085,7 +2085,7 @@ class SPClient {
    */
   async getEnrichedAuthorizations(): Promise<EnrichedAuthorizationEntry[]> {
     const res = await this.fetch('/active-authorizations');
-    if (!res.ok) throw new Error(`Failed to fetch authorizations: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to fetch mandates: ${res.status}`);
     const data = await res.json();
     return data.authorizations ?? [];
   }
@@ -2106,7 +2106,7 @@ class SPClient {
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    if (!res.ok) throw new Error(asErrorMessage(body, `Giving the mandate failed: ${res.status}`));
     return body as { authorizationId: string; revokeError?: string };
   }
 

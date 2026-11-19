@@ -113,7 +113,7 @@ export function ReceiptCompleteDialog({ receipt, onClose }: Props) {
               ? 'Loading…'
               : source === 'local'
                 ? 'Held on this device — the signed ticket, the mandate it ran under, and the issuer key. Anyone with this file and that key can verify it offline, without Suveren.'
-                : 'No local copy of this ticket (it predates local archiving, or ran on another device). Shown from the Authority Server — complete and signed, but it needs the server to retrieve.'}
+                : 'No local copy of this ticket (it predates local archiving, or ran on another device). Shown from suveren.ai — complete and signed, but it needs a connection to suveren.ai to load.'}
           </p>
 
           <pre

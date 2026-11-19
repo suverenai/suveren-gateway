@@ -765,7 +765,7 @@ function renderFieldCapNote(
     return (
       <span className="cap-note hard" data-testid={`cap-note-${key}`}>
         Team limit {String(state.cap)}
-        {isReadLimit ? ' — read limits are always hard, no approval path exists for this cap.' : ''}
+        {isReadLimit ? ' — read limits are always hard, no approval path exists for this team limit.' : ''}
       </span>
     );
   }
@@ -1036,7 +1036,7 @@ export function BoundsEditor({
         </div>
         <div>
           No caps are set on this profile, so {names} won&apos;t gate any
-          action under this mandate. Your intent will still be encrypted
+          action under this mandate. Your why will still be encrypted
           and shared with them as an accountability record &mdash; they can
           read what you authorised, even though they aren&apos;t reviewing
           individual actions.
@@ -1062,11 +1062,11 @@ export function BoundsEditor({
       }}>
         <div className="msg-error" style={{ marginBottom: '0.25rem' }}>Hard team ceiling.</div>
         <div style={{ marginBottom: '0.75rem' }}>
-          Lower the bound(s) above, or ask {admin} to add an approver path above the cap.
+          Lower the limit(s) above, or ask {admin} to add an approver path above the team limit.
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button type="button" className="btn btn-secondary btn-sm" onClick={handleSaveBelowCap}>
-            Save below cap
+            Save below the team limit
           </button>
           {onCancel && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
@@ -1099,7 +1099,7 @@ export function BoundsEditor({
             <span className="bounds-section-icon">&#x1F6E1;</span>
             <div>
               <div className="bounds-section-title">Allowed scope</div>
-              <div className="bounds-section-subtitle">Encrypted on your device, never sent to the Authority Server</div>
+              <div className="bounds-section-subtitle">Encrypted on your device, never sent to suveren.ai</div>
             </div>
           </div>
           {contextFields.map(([key, fieldDef]) => {
@@ -1133,7 +1133,7 @@ export function BoundsEditor({
             <span className="bounds-section-icon">&#x1F512;</span>
             <div>
               <div className="bounds-section-title">Limits</div>
-              <div className="bounds-section-subtitle">Enforced by the Authority Server</div>
+              <div className="bounds-section-subtitle">Enforced by suveren.ai</div>
             </div>
           </div>
           <div className="bounds-fields-grid">
@@ -1189,7 +1189,7 @@ export function BoundsEditor({
               {localBoundNames.join(', ')}{' '}
               {localBoundNames.length === 1 ? 'is' : 'are'} set on the integration, not here — reads are
               checked on this device, so the limit applies immediately and can be changed any time under{' '}
-              <Link to="/integrations">Integrations</Link>.
+              <Link to="/integrations">Connectors</Link>.
             </div>
           )}
         </div>

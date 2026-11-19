@@ -53,7 +53,7 @@ export function createEvidenceExportRouter(
     let asError: string | undefined;
     const cookie = getSpCookie();
     if (!cookie) {
-      asError = 'No Authority Server session — sign in to include the full account history.';
+      asError = 'No suveren.ai session — sign in to include the full account history.';
     } else {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), AS_FETCH_TIMEOUT_MS);
@@ -72,14 +72,14 @@ export function createEvidenceExportRouter(
         if (asRes.ok) {
           authorityServer = await asRes.json();
         } else {
-          asError = `Authority Server export failed: ${asRes.status}`;
+          asError = `suveren.ai export failed: ${asRes.status}`;
         }
       } catch (err) {
         if (err instanceof AsTlsMismatchError) {
           lockAsTlsMismatch();
           asError = err.message;
         } else {
-          asError = `Authority Server unreachable: ${err instanceof Error ? err.message : String(err)}`;
+          asError = `suveren.ai unreachable: ${err instanceof Error ? err.message : String(err)}`;
         }
       } finally {
         clearTimeout(timeout);

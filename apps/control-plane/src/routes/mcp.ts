@@ -75,7 +75,7 @@ export function createMCPRouter(): Router {
       const manifestsData = await getManifests() as { manifests: Array<{ id: string; name: string; mcp: { command: string; args: string[] }; credentials: { envMapping: Record<string, string> }; profile: string; toolGating?: unknown }> };
       const manifest = manifestsData.manifests.find((m: { id: string }) => m.id === req.params.id);
       if (!manifest) {
-        res.status(404).json({ error: `No manifest found for integration "${req.params.id}"` });
+        res.status(404).json({ error: `No manifest found for connector "${req.params.id}"` });
         return;
       }
       const data = await activateIntegration(manifest as Parameters<typeof activateIntegration>[0]);

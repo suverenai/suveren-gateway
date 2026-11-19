@@ -104,7 +104,7 @@ export function DiscoveredScopeField({ integrationId, field, value, onChange, di
               color: readOnly ? 'var(--text-tertiary)' : 'var(--text-primary)',
               cursor: disabled || readOnly ? 'not-allowed' : 'pointer',
             }}
-            title={readOnly ? 'Read-only — you can authorize list/read but not writes' : undefined}
+            title={readOnly ? 'Read-only — a mandate can allow listing and reading, but not writing' : undefined}
           >
             <input
               type="checkbox"

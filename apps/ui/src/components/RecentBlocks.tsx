@@ -32,7 +32,7 @@ const REASON: Record<DenialReason, { chip: string; sev: Severity; fixTo?: string
   spam:         { chip: 'Spam / Trash', sev: 'info' },
   age:          { chip: 'Too old',      sev: 'warn' },
   unset_age:    { chip: 'Needs setup',  sev: 'act', fixTo: '/integrations' },
-  read_gate:    { chip: 'Not granted',  sev: 'act', fixTo: '/mandates' },
+  read_gate:    { chip: 'No mandate',  sev: 'act', fixTo: '/mandates' },
   ungoverned:   { chip: 'Unconfigured', sev: 'act' },
   query_unsafe: { chip: 'Unsafe search', sev: 'info' },
 };
@@ -53,8 +53,8 @@ function lineFor(r: DenialRecord, manifests: SourceManifestLike[] | undefined): 
         : <>Tried to read a restricted location in {src}</>;
     case 'spam':         return <>Tried to open a message in <b>spam or trash</b></>;
     case 'age':          return <>Tried to read {src} older than your read window</>;
-    case 'unset_age':    return <>Your {src} has <b>no read window set</b>, so reads are blocked</>;
-    case 'read_gate':    return <>Read access isn't granted on your {src} mandate</>;
+    case 'unset_age':    return <>Your {src} has <b>no read window set</b>, so reads are refused</>;
+    case 'read_gate':    return <>Your {src} mandate does not allow reading</>;
     case 'ungoverned':   return <>A {src} tool isn't configured for safe reading</>;
     case 'query_unsafe': return <>A search couldn't be safely limited and was refused</>;
     default:             return <>{r.detail}</>;
@@ -148,7 +148,7 @@ export function RecentBlocks() {
         <span className="pill-count">{unseen.length}</span>
       </div>
       <div className="dash-rows">{shown.map(row)}</div>
-      {unseen.length > shown.length && <Link className="ob-btn dash-btn" to="/blocked">All blocked</Link>}
+      {unseen.length > shown.length && <Link className="ob-btn dash-btn" to="/blocked">All refused</Link>}
     </section>
   );
 }

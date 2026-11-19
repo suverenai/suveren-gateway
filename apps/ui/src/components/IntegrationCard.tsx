@@ -643,11 +643,11 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             <div className="ob-sent-h">{manifest.name} stopped accepting the stored credentials</div>
             <p className="ob-lbl">
               {authHealth?.error === 'invalid_grant'
-                ? <>The refresh token was revoked (<code>invalid_grant</code>) — this usually follows a password change or a security checkup on the provider's side.</>
+                ? <>Your access to {manifest.name} was withdrawn (<code>invalid_grant</code>) — this usually follows a password change or a security checkup on the provider's side.</>
                 : authHealth?.error
                   ? <>The provider reported <code>{authHealth.error}</code>.</>
-                  : <>The provider rejected the stored authentication.</>}{' '}
-              Your agent's {manifest.name} actions are <b>blocked</b>, not failing silently.
+                  : <>The provider refused the stored login.</>}{' '}
+              Your AI's {manifest.name} actions are <b>refused</b>, not failing silently.
             </p>
           </section>
         )}
@@ -715,11 +715,11 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
         )}
 
         {/* Read window — local, live, one place. Read enforcement never reaches the Authority Server, so this
-            needs no re-authorization and applies to the next read. Only for connectors whose manifest declares
+            needs no new login and applies to the next read. Only for connectors whose manifest declares
             an age-bounded read. */}
         {cardState === 'running' && hasReadAge && readAge !== undefined && editingReadAge && (
           <div className="su-edit">
-            <div className="ob-sent-h">How far back may your agent read?</div>
+            <div className="ob-sent-h">How far back may your AI read?</div>
             <p className="ob-lbl">Applies immediately — no Save, no new mandate.</p>
             <div className="ob-btns is-tight">
               {READ_AGE_PRESETS.map(days => {
@@ -749,9 +749,9 @@ export function IntegrationCard({ manifest, areas, integration, state, onStatusC
             <p className="ob-lbl ob-gap">
               {readAgeError ? <span className="ob-bold">{readAgeError}</span>
                 : savingReadAge ? 'Saving…'
-                : readAge === null ? 'Using the window from your mandate. If none is set there, reads are blocked.'
-                : readAge === 0 ? 'Your agent cannot read any mail.'
-                : `Anything older than ${readAge} days is blocked, whoever it is from.`}
+                : readAge === null ? 'Using the window from your mandate. If none is set there, reads are refused.'
+                : readAge === 0 ? 'Your AI cannot read any mail.'
+                : `Anything older than ${readAge} days is refused, whoever it is from.`}
             </p>
             <div className="ob-btns is-inline is-tight">
               <button className="ob-btn" onClick={() => setEditingReadAge(false)}>Done</button>

@@ -31,6 +31,16 @@ import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 type StatusFilter = AuthView;
 type ViewTab = 'mine' | 'team';
 
+// What the person reads for a state. The state value 'revoked' is the wire
+// name; on screen the mandate was "ended", and a mandate taken off the list
+// is "removed".
+const VIEW_LABEL: Record<AuthView, string> = {
+  active: 'Active', pending: 'Pending', expired: 'Expired', revoked: 'Ended', archived: 'Removed',
+};
+function viewLabel(view: string): string {
+  return VIEW_LABEL[view as AuthView] ?? view.charAt(0).toUpperCase() + view.slice(1);
+}
+
 type TeamItem = PendingItem & { owner: { userId: string; name?: string; email?: string } };
 
 function sortItems(items: PendingItem[], statusOpts: AuthStatusOptions, highlightHash?: string | null): PendingItem[] {
@@ -181,25 +191,25 @@ function AuthCard({
     mode === 'team' && approverListDrifted(item.approvers_frozen ?? [], itemConfig);
 
   const escalationSummary = Array.from(aboveCapByKey.entries())
-    .map(([k, r]) => `${k}: ${r.authorized} (cap ${r.cap})`)
+    .map(([k, r]) => `${k}: ${r.authorized} (team limit ${r.cap})`)
     .join(', ');
   const reducedSummary = Array.from(aboveCapByKey.entries())
-    .map(([k, r]) => `${k}: ${r.authorized} → ${r.cap}`)
+    .map(([k, r]) => `${k}: ${r.authorized} → team limit ${r.cap}`)
     .join(', ');
   const capPillText = !isAboveCap
     ? ''
     : hasApprovers
       ? aboveCapByKey.size === 1
-        ? `Above team cap: ${escalationSummary} — actions require approval`
-        : `Above team cap (${aboveCapByKey.size}): ${escalationSummary} — actions require approval`
+        ? `Above the team limit: ${escalationSummary} — actions require approval`
+        : `Above the team limit (${aboveCapByKey.size}): ${escalationSummary} — actions require approval`
       : aboveCapByKey.size === 1
-        ? `Reduced by hard cap: ${reducedSummary}`
-        : `Reduced by hard cap (${aboveCapByKey.size}): ${reducedSummary}`;
+        ? `Reduced by hard team limit: ${reducedSummary}`
+        : `Reduced by hard team limit (${aboveCapByKey.size}): ${reducedSummary}`;
   const capPillTooltip = !isAboveCap
     ? undefined
     : hasApprovers
-      ? `Above-cap actions under this mandate require per-action approval from the profile's approvers. Bounds remain authorized at their original values.`
-      : `No approvers are configured for this profile, so the team cap is a hard ceiling. Bounds above the cap are effectively reduced to the cap. Ask the admin to raise the cap or add approvers, or copy this mandate to reissue within the cap.`;
+      ? `Actions above the team limit under this mandate need approval each time from the profile's approvers. The limits in the mandate stay as they were given.`
+      : `No approvers are configured for this profile, so the team limit is a hard ceiling. Limits above the team limit are cut down to it. Ask the admin to raise the team limit or add approvers, or change this mandate to stay within the team limit.`;
 
   const identity = profileIdentity(item.profile_id);
   const profileShortName = identity.name;
@@ -254,8 +264,8 @@ function AuthCard({
           parts={[
             area,
             since,
-            <span className="ob-st" key="st">{status.charAt(0).toUpperCase() + status.slice(1)}{expiredOn ? ` ${new Date(expiredOn.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}</span>,
-            needsReapproval ? <span className="ob-st" key="re" title="The Authority Server no longer accepts mandates signed under this protocol version (since v0.8 every mandate is signed again). Sign it again to keep using it.">Sign again</span> : null,
+            <span className="ob-st" key="st">{viewLabel(status)}{expiredOn ? ` ${new Date(expiredOn.iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}</span>,
+            needsReapproval ? <span className="ob-st" key="re" title="suveren.ai no longer accepts mandates given under this protocol version (since v0.8 every mandate has to be given again). Give it again to keep using it.">Give again</span> : null,
             identity.testSetup ? 'Test setup' : null,
           ]}
         />
@@ -283,9 +293,9 @@ function AuthCard({
             className="ob-link"
             onClick={() => onCopy(item)}
             disabled={copyingHash === item.authorization_id}
-            title="The approver list for this profile has changed since this mandate was created. Copy to reissue with the current approvers."
+            title="The approver list for this profile has changed since this mandate was given. Change the mandate to use the current approvers."
           >
-            {copyingHash === item.authorization_id ? 'Copying...' : 'Approver list updated · Copy with new approvers'}
+            {copyingHash === item.authorization_id ? 'Copying...' : 'Approver list updated · Change with the new approvers'}
           </button>
         </p>
       )}
@@ -293,17 +303,17 @@ function AuthCard({
       {isExpanded && (
         <div ref={foldsRef} className="ob-open" data-testid="mandate-open">
           <section className="ob-tile" data-testid="mandate-signed">
-            <div className="ob-tile-h"><ObLock />You signed this</div>
+            <div className="ob-tile-h"><ObLock />You gave this</div>
             <div className="ob-part">
               <div className="ob-lbl">
-                Intent — your words{item.created_at ? `, signed ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
+                Why — your words{item.created_at ? `, given ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
               </div>
               {gateLoading === item.authorization_id ? (
-                <p className="ob-quiet">Loading gate content...</p>
+                <p className="ob-quiet">Loading the why...</p>
               ) : gateEntry ? (
                 <p className="ob-intent" data-testid="mandate-intent">{gateEntry.gateContent.intent}</p>
               ) : (
-                <p className="ob-quiet">Gate content not available.</p>
+                <p className="ob-quiet">The why is not available.</p>
               )}
             </div>
             <dl className="ob-kv ob-part">
@@ -313,10 +323,10 @@ function AuthCard({
                   <dt>Valid</dt>
                   <dd>
                     {status === 'revoked'
-                      ? 'revoked'
+                      ? 'ended'
                       : status === 'expired'
                         ? `until ${new Date(item.earliest_expiry!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })} — expired`
-                        : `until ${new Date(item.earliest_expiry!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, or until you revoke it`}
+                        : `until ${new Date(item.earliest_expiry!).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}, or until you end it`}
                   </dd>
                 </>
               )}
@@ -371,7 +381,7 @@ function AuthCard({
 
           <div className="ob-btns">
             {/* Edit = replace: grants are content-immutable, so the wizard opens
-                pre-filled and signing the new grant auto-revokes this one. Only
+                pre-filled and giving the new mandate ends this one. Only
                 for live grants — an expired one has nothing to revoke (use Copy). */}
             {!ownerLabel && (status === 'active' || status === 'pending') && (
               <button
@@ -381,11 +391,11 @@ function AuthCard({
                 disabled={copyingHash === item.authorization_id}
                 title={
                   needsReapproval
-                    ? 'The Authority Server no longer accepts mandates signed under this protocol version. Sign again opens the signing pre-filled with the same bounds, scope, and intent; signing it revokes this one.'
-                    : 'Adjust intent, bounds, or scope: opens the ceremony pre-filled; signing the new mandate revokes this one'
+                    ? 'suveren.ai no longer accepts mandates given under this protocol version. Give again opens the mandate pre-filled with the same limits, scope, and why; giving the new mandate ends this one.'
+                    : 'Adjust why, limits, or scope: opens the ceremony pre-filled; giving the new mandate ends this one'
                 }
               >
-                {needsReapproval ? 'Sign again' : 'Edit'}
+                {needsReapproval ? 'Give again' : 'Change'}
               </button>
             )}
             {/* Extend only in Mine tab */}
@@ -399,7 +409,7 @@ function AuthCard({
                 className="ob-btn"
                 onClick={() => onCopy(item)}
                 disabled={copyingHash === item.authorization_id}
-                title="Start a new mandate pre-filled with these bounds, scope, and intent"
+                title="Start a new mandate pre-filled with these limits, scope, and why"
               >
                 {copyingHash === item.authorization_id ? 'Copying…' : 'Copy'}
               </button>
@@ -412,7 +422,7 @@ function AuthCard({
                 onClick={() => onRevoke(item.authorization_id, ownerLabel, profileShortName)}
                 disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
+                {revokingHash === item.authorization_id ? 'Ending…' : 'End'}
               </button>
             ) : !ownerLabel && (status === 'active' || status === 'pending') ? (
               <button
@@ -421,7 +431,7 @@ function AuthCard({
                 onClick={() => onRevoke(item.authorization_id)}
                 disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
+                {revokingHash === item.authorization_id ? 'Ending…' : 'End'}
               </button>
             ) : null}
             {/* Archive: a local display flag for finished mandates. Deletes
@@ -434,12 +444,12 @@ function AuthCard({
                 onClick={() => onArchive!(item.authorization_id, !archived)}
                 disabled={archivingHash === item.authorization_id}
                 title={archived
-                  ? 'Move back to the Expired or Revoked list'
+                  ? 'Move back to the Expired or Ended list'
                   : 'Hide from the list and the nav badge. Nothing is deleted: the mandate and its tickets stay stored and verifiable.'}
               >
                 {archivingHash === item.authorization_id
-                  ? (archived ? 'Unarchiving…' : 'Archiving…')
-                  : (archived ? 'Unarchive' : 'Archive')}
+                  ? (archived ? 'Putting back…' : 'Removing…')
+                  : (archived ? 'Put back on the list' : 'Remove from list')}
               </button>
             )}
           </div>
@@ -498,11 +508,11 @@ function MandateLimits({ item, manifests, boundsEntries, limitLines, limitLabel,
             <dd>
               {r ? (
                 hasApprovers ? (
-                  <span title={`Team cap on ${k} is ${r.cap}. Actions exceeding the cap require per-action approval. Bound remains authorized at ${r.authorized}.`}>
+                  <span title={`Team limit on ${k} is ${r.cap}. Actions above the team limit need approval each time. The limit in the mandate stays at ${r.authorized}.`}>
                     {limitValue(k, v)} <span className="ob-quiet-inline">↑ approval at {r.cap}</span>
                   </span>
                 ) : (
-                  <span title={`Team cap on ${k} is ${r.cap} with no approvers configured (hard cap). Authorized for ${r.authorized}; effective ${r.cap}.`}>
+                  <span title={`Team limit on ${k} is ${r.cap} with no approvers configured (hard team limit). The mandate says ${r.authorized}; in effect ${r.cap}.`}>
                     <s>{limitValue(k, v)}</s> → {r.cap}
                   </span>
                 )
@@ -529,7 +539,7 @@ function MandateTickets({ item, manifests }: { item: PendingItem; manifests: Int
     : `${mine.length} recent${today > 0 ? ` · ${today} today` : ''}`;
   return (
     <ObFold title="Tickets under this mandate" summary={summary} testId="mandate-tickets">
-      <p className="ob-lbl">From the latest tickets signed on this account.</p>
+      <p className="ob-lbl">From the latest tickets of this account.</p>
       {res.state === 'failed' && <p>Tickets could not be loaded. Try again shortly.</p>}
       {res.state === 'ok' && mine.length === 0 && <p>No action has run under this mandate in the latest tickets.</p>}
       {mine.slice(0, 5).map(r => (
@@ -648,7 +658,7 @@ export function AuthorizationsPage() {
       setArchivedSet(new Set(ids));
       window.dispatchEvent(new Event('suveren:archived-changed'));
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to update archive');
+      alert(err instanceof Error ? err.message : 'Failed to update the list');
     } finally {
       setArchivingHash(null);
     }
@@ -812,7 +822,7 @@ export function AuthorizationsPage() {
    */
   const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean }) => {
     if (!groupId) {
-      alert('No active group; cannot copy mandate.');
+      alert('No active team; cannot copy mandate.');
       return;
     }
     setCopyingHash(item.authorization_id);
@@ -892,8 +902,8 @@ export function AuthorizationsPage() {
 
   const handleRevoke = async (authorizationId: string, ownerLabel?: string, profileShortName?: string) => {
     const confirmMsg = ownerLabel && profileShortName
-      ? `Revoke ${ownerLabel}'s ${profileShortName} mandate? This cannot be undone.`
-      : 'Revoke this mandate? The agent will no longer be able to execute actions under it.';
+      ? `End ${ownerLabel}'s ${profileShortName} mandate? This cannot be undone.`
+      : 'End this mandate? The AI will no longer be able to execute actions under it.';
     if (!confirm(confirmMsg)) return;
     setRevokingHash(authorizationId);
     try {
@@ -908,7 +918,7 @@ export function AuthorizationsPage() {
         fetchTeamItems();
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to revoke mandate');
+      alert(err instanceof Error ? err.message : 'Failed to end mandate');
     } finally {
       setRevokingHash(null);
     }
@@ -1017,7 +1027,7 @@ export function AuthorizationsPage() {
       <div className="page-header">
         <div className="page-header-text">
           <h1 className="page-title">Mandates</h1>
-          <p className="page-subtitle">Active, pending, expired, and archived agent mandates.</p>
+          <p className="page-subtitle">Active, pending, expired, and archived AI mandates.</p>
         </div>
         <div className="page-header-actions">
           <button className="btn btn-primary" onClick={() => setShowPicker(true)}>
@@ -1061,7 +1071,7 @@ export function AuthorizationsPage() {
             </div>
             <div className="modal-body">
               <p style={{ color: 'var(--text-tertiary)', fontSize: '0.9rem', marginTop: 0, marginBottom: '1rem' }}>
-                What should your agent be able to do? Pick a profile, set limits, then authorize.
+                What should your AI be able to do? Pick an area, set limits, then give the mandate.
               </p>
               <AuthorizePicker onDismiss={() => setShowPicker(false)} preselectProfileId={preselectProfileId} />
             </div>
@@ -1107,7 +1117,7 @@ export function AuthorizationsPage() {
             className={`nav-tab${activeFilter === tab ? ' active' : ''}`}
             onClick={() => { setActiveFilter(tab); setProfileFilter(null); setModeFilter(null); }}
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)} ({counts[tab]})
+            {viewLabel(tab)} ({counts[tab]})
           </button>
         ))}
       </div>
@@ -1149,8 +1159,8 @@ export function AuthorizationsPage() {
           icon={'☰'}
           title="No mandates"
           text={activeFilter === 'archived'
-            ? 'Nothing archived. Archive an expired or revoked mandate to move it here.'
-            : `No ${activeFilter} mandates found.`}
+            ? 'Nothing removed from the list. Remove an expired or ended mandate from the list to move it here.'
+            : `No ${viewLabel(activeFilter).toLowerCase()} mandates found.`}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>

@@ -23,7 +23,7 @@ export function NoTicketRow({ proposal, manifests }: { proposal: Proposal; manif
         <span className="no-ticket-pill">No ticket</span>
       </div>
       <div className="no-ticket-l2">
-        {resolveAreaName(proposal.profileId, catalog)} · {at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} · refused by the Authority Server
+        {resolveAreaName(proposal.profileId, catalog)} · {at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} · refused by suveren.ai
       </div>
       <div className="no-ticket-why"><b aria-hidden="true">&#10005;</b><span>{sentence}</span></div>
     </div>

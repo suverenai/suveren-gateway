@@ -49,18 +49,18 @@ export function SetupGuide({ aiConfigured, hasRunningIntegration, hasActiveAuth,
       optional: true,
     },
     {
-      label: 'Connect a service',
+      label: 'Set up a connector',
       to: '/integrations',
       status: hasRunningIntegration ? 'done' : 'pending',
     },
     {
-      label: 'Give your agent a mandate',
-      detail: 'Start with the Setup mandate: it lets your AI prepare the other mandates, and you approve each one. Or pick the area you need and sign its mandate yourself.',
+      label: 'Give your AI a mandate',
+      detail: 'Start with the Setup mandate: it lets your AI prepare the other mandates, and you approve each one. Or pick the area you need and give its mandate yourself.',
       to: '/mandates?new=1',
       status: hasActiveAuth ? 'done' : 'pending',
     },
     {
-      label: 'Connect your agent',
+      label: 'Connect your AI',
       status: (hasAgentConnected || agentMarkedDone) ? 'done' : 'pending',
     },
   ];

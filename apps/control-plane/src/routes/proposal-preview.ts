@@ -57,7 +57,7 @@ async function resolveProposalToolArgsForRoute(
 ): Promise<{ tool: string; toolArgs: Record<string, unknown> } | undefined> {
   const cookie = vault.getSpCookie();
   if (!cookie) {
-    res.status(401).json({ error: 'No Authority Server session — sign in to preview this proposal.' });
+    res.status(401).json({ error: 'No suveren.ai session — sign in to preview this proposal.' });
     return undefined;
   }
 
@@ -95,7 +95,7 @@ async function resolveProposalToolArgsForRoute(
       res.status(502).json({ error: err.message });
       return undefined;
     }
-    res.status(502).json({ error: `Authority Server unreachable: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(502).json({ error: `suveren.ai unreachable: ${err instanceof Error ? err.message : String(err)}` });
     return undefined;
   }
 
@@ -165,7 +165,7 @@ export function createProposalStatusRouter(
 
     const ref = findSealedAttachment(resolved.toolArgs, sha256);
     if (!ref) {
-      res.status(404).json({ status: 'error', message: 'No sealed attachment with this fingerprint on this proposal.' });
+      res.status(404).json({ status: 'error', message: 'No sealed attachment with this check value on this proposal.' });
       return;
     }
     try {

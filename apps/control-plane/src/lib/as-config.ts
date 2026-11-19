@@ -125,7 +125,7 @@ export interface AsUrlValidation {
  */
 export function validateAsUrl(candidate: string): AsUrlValidation {
   const trimmed = candidate.trim();
-  if (!trimmed) return { ok: false, error: 'The Authority Server URL is empty.' };
+  if (!trimmed) return { ok: false, error: 'The suveren.ai URL is empty.' };
 
   let parsed: URL;
   try {

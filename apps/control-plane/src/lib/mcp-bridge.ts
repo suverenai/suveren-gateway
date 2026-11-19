@@ -354,7 +354,7 @@ export async function getEnrichedAuthorizations(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/internal/authorizations`, {
     headers: internalHeaders(),
   });
-  if (!res.ok) throw new Error('Failed to fetch authorizations');
+  if (!res.ok) throw new Error('Failed to fetch mandates');
   return res.json();
 }
 

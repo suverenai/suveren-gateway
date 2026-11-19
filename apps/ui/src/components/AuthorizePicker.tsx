@@ -105,7 +105,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
   // the Copy/Edit prefill path only.
   const storeAuthAndNavigate = (profileId: string, intentHint?: string) => {
     if (!groupId) {
-      console.error('No active group when creating authorization');
+      console.error('No active team when creating mandate');
       return;
     }
     const isTeam = isTeamManaged(profileId);
@@ -158,10 +158,10 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       ) : entries.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
-            No integrations set up yet. Connect a service first.
+            No connectors set up yet. Set up a connector first.
           </p>
           <Link to="/integrations" className="btn btn-primary btn-sm" onClick={() => onDismiss?.()}>
-            Go to Integrations
+            Go to Connectors
           </Link>
         </div>
       ) : (

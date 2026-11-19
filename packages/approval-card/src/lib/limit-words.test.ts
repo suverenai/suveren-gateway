@@ -23,7 +23,7 @@ const MONEY = profile({
 
 describe('refusalSentence (wording A)', () => {
   it('a dead mandate says so in plain words, never the code', () => {
-    expect(refusalSentence({ code: 'MANDATE_REVOKED', message: 'The parent mandate has been revoked' }, NO_WORDS).text).toBe('Not done. This mandate was revoked.');
+    expect(refusalSentence({ code: 'MANDATE_REVOKED', message: 'The parent mandate has been revoked' }, NO_WORDS).text).toBe('Not done. This mandate was ended.');
     expect(refusalSentence({ code: 'MANDATE_EXPIRED', message: 'The parent mandate has expired' }, NO_WORDS).text).toBe('Not done. This mandate has expired.');
   });
   it('uses the profile\'s noun and verb for a counted daily limit', () => {
@@ -133,7 +133,7 @@ describe('sharedLimitLabel (wording B)', () => {
     expect(cumulativeBound(WITH_WORDS, 'missing')).toBeNull();
   });
   it('the helper line names the thing only when the profile does, and only in a team', () => {
-    expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, true, WORDS)).toBe("Every colleague's emails count toward this one number.");
+    expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, true, WORDS)).toBe("Every member's emails count toward this one number.");
     expect(sharedLimitHelper(cumulativeBound(NO_WORDS, 'thing_weekly_max')!, true)).toBe('Everyone on the team counts toward this one number.');
     expect(sharedLimitHelper(cumulativeBound(WITH_WORDS, 'box_daily_max')!, false)).toBeNull();
   });

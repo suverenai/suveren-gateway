@@ -207,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveMembership(null);
     setPendingRequest(null);
     setMode('personal');
-    setError(message ?? 'Your sign-in ended after 30 days or was revoked. Sign in again.');
+    setError(message ?? 'Your sign-in ended. Sign in again.');
   }, []);
 
   // The gateway stopped accepting this tab's session (restart → vault locked,

@@ -108,7 +108,7 @@ export function createMcpServer(
   register(
     'list-authorizations',
     {
-      description: 'Where things stand. With no argument: a short answer with what is possible here, the one next step and what you can do yourself. With a domain (the area of the task, e.g. "charge"): the exact steps the person takes for that area, and the full details of its mandates, including consumption, bounds and capability map.',
+      description: 'Where things stand. With no argument: a short answer with what is possible here, the one next step and what you can do yourself. With a domain (the area of the task, e.g. "charge"): the exact steps the person takes for that area, and the full details of its mandates, including consumption, limits and capability map.',
       inputSchema: {
         domain: z.string().optional().describe('The area of the task (e.g., "charge", "deploy"), by its short name or the name the person sees. Omit for the short answer.'),
       },
@@ -134,7 +134,7 @@ export function createMcpServer(
   register(
     'list-integrations',
     {
-      description: 'List all running integrations and their authorization status. Returns a compact overview — use list-authorizations(domain) for full details on a specific profile.',
+      description: 'List all running connectors and their mandate status. Returns a compact overview — use list-authorizations(domain) for full details on a specific profile.',
       inputSchema: {},
     },
     withNotes(listIntegrationsHandler(state, integrationManager))

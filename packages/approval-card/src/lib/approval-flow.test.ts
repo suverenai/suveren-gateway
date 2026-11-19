@@ -4,11 +4,11 @@ import { workingWord, stampWord, stampLine, ticketIdOf, nextAfter, positionLabel
 describe('approval flow words (UI spec §17.5)', () => {
   it('names the call while it is out, and the stamp after', () => {
     expect(workingWord('approve', false)).toBe('Approving');
-    expect(workingWord('approve', true)).toBe('Signing');
+    expect(workingWord('approve', true)).toBe('Giving');
     expect(workingWord('reject', false)).toBe('Rejecting');
     expect(workingWord('change', false)).toBe('Sending');
     expect(stampWord('approve', false)).toBe('Approved');
-    expect(stampWord('approve', true)).toBe('Signed');
+    expect(stampWord('approve', true)).toBe('Given');
     expect(stampWord('reject', false)).toBe('Rejected');
     expect(stampWord('change', false)).toBe('Sent back to the AI');
   });

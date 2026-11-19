@@ -53,7 +53,7 @@ export function bindRefusal(env: NodeJS.ProcessEnv = process.env): string | null
   if (resolveAgentToken(env)) return null;
   if (env.SUVEREN_CONTAINER === '1') return null;
   return (
-    `SUVEREN_BIND_HOST=${host} would let other machines connect as this person's agent, ` +
+    `SUVEREN_BIND_HOST=${host} would let other machines connect as this person's AI, ` +
     `but SUVEREN_MCP_TOKEN is not set. Set a token (long and random), or remove SUVEREN_BIND_HOST ` +
     `to listen on this machine only.`
   );

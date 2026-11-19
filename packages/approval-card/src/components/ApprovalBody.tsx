@@ -177,7 +177,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // `agentReplacesProposal`, read in its handleCommit).
   const handleEditBeforeSigning = async () => {
     if (!groupId) {
-      setEditError('No active workspace; cannot open the mandate screen.');
+      setEditError('No active team; cannot open the mandate screen.');
       return;
     }
     setEditingBeforeSigning(true);
@@ -221,7 +221,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // "Change it myself": the form opens pre-filled with what the AI proposed, computed
   // from the signed mandate; the diff is recomputed on the form's review step.
   const handleChangeMyself = async () => {
-    if (!groupId) { setEditError('No active workspace; cannot open the mandate screen.'); return; }
+    if (!groupId) { setEditError('No active team; cannot open the mandate screen.'); return; }
     setEditingBeforeSigning(true);
     setEditError(null);
     try {
@@ -433,11 +433,11 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           {sealedHeading}
         </h3>
         {/* §17.3 (6) — a mandate proposal: everything signed in this one tile.
-            The AI's intent first (amber — it becomes the person's words on
+            The AI's why first (amber — it becomes the person's words on
             signing), then Commitment as a row like Valid. */}
         {isMandate && aiIntent && (
           <div className="av3-intent" data-testid="mandate-intent-ai">
-            <div className="av3-intent-l">Intent — written by the AI, becomes your words when you sign</div>
+            <div className="av3-intent-l">Why — written by the AI, becomes your words when you give it</div>
             <p>{aiIntent}</p>
           </div>
         )}
@@ -450,7 +450,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               onClick={handleEditBeforeSigning}
               disabled={editingBeforeSigning}
             >
-              {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
+              {editingBeforeSigning ? 'Opening…' : 'Edit before giving'}
             </button>
             {editError && <p className="msg-error">{editError}</p>}
           </div>
@@ -637,7 +637,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
               <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
               <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
-              {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
+              {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its check value.</span>}
             </p>
           </div>
         </details>
@@ -656,18 +656,18 @@ function MandateIntent({ intent, loading, error, expanded, onToggle }: {
 }) {
   return (
     <div className="av3-mintent">
-      <div className="av3-quiet">Intent</div>
+      <div className="av3-quiet">Why</div>
       {error ? (
         <p className="msg-error">{error}</p>
       ) : intent !== null ? (
         <>
           <p className={`intent-text${expanded ? '' : ' intent-clamped'}`}>{intent}</p>
-          <button type="button" className="av3-link" onClick={onToggle}>{expanded ? 'Show less' : 'Show full intent'}</button>
+          <button type="button" className="av3-link" onClick={onToggle}>{expanded ? 'Show less' : 'Show the full why'}</button>
         </>
       ) : loading ? (
-        <p className="av3-quiet">Loading intent…</p>
+        <p className="av3-quiet">Loading why…</p>
       ) : (
-        <p className="av3-quiet">No intent available for this mandate.</p>
+        <p className="av3-quiet">No why available for this mandate.</p>
       )}
     </div>
   );

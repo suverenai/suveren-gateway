@@ -41,7 +41,7 @@ export function SimulationBanner() {
   return (
     <div ref={ref} className="simulation-banner" role="status" aria-live="polite">
       <span className="simulation-banner-text">
-        Simulation mode — real systems are blocked.
+        Simulation mode — real systems are refused.
       </span>
     </div>
   );

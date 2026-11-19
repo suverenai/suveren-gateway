@@ -61,10 +61,10 @@ export function LoginPage() {
         <div className="login-split-left">
           <div style={{ maxWidth: '28rem' }}>
             <h1 style={{ fontSize: 'clamp(2.25rem, 4vw, 3.25rem)', letterSpacing: '-0.03em', lineHeight: 1.1, marginBottom: '1.25rem' }}>
-              Your agents, your intent, your rules.
+              Your AI, your why, your rules.
             </h1>
             <p style={{ fontSize: '1.125rem', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '3rem' }}>
-              The gateway runs on your machine, between your agents and the tools they use. Your signature. Your bounds. Your tickets.
+              The gateway runs on your computer, between your AI and the tools it uses. Your signature. Your limits. Your tickets.
             </p>
           </div>
         </div>
@@ -131,7 +131,7 @@ export function LoginPage() {
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.8 }}>
                 {[
                   <>Create an account at <a href="https://www.suveren.ai/get-started" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Suveren</a></>,
-                  'Join or create a team to get domain authority',
+                  'Join or create a team to work under its team limits',
                   'Sign in here with your API key to start giving mandates',
                 ].map((text, i) => (
                   <div key={i} style={{ display: 'flex', gap: '0.625rem', alignItems: 'baseline', marginBottom: i < 2 ? '0.5rem' : 0 }}>
@@ -184,7 +184,7 @@ export function LoginPage() {
               <li>Any unsynchronised gate content stored locally</li>
             </ul>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Mandates and tickets on the Authority Server are NOT affected
+              Mandates and tickets on suveren.ai are NOT affected
               — only this gateway's local state is wiped.
             </p>
             <p style={{ fontSize: '0.825rem', color: 'var(--text-tertiary)', marginBottom: '1rem' }}>

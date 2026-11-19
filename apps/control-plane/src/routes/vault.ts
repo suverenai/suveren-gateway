@@ -118,7 +118,7 @@ export function createVaultRouter(vault: Vault): Router {
     if (groupId) {
       const group = getGroup(manifests, groupId);
       if (!group) {
-        res.status(404).json({ error: `Unknown sign-in group "${groupId}"` });
+        res.status(404).json({ error: `Unknown sign-in team "${groupId}"` });
         return;
       }
       signsOut = changesGroupClient(group, vault.getCredential(name), incoming);

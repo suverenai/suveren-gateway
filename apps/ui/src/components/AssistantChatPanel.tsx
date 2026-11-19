@@ -54,7 +54,7 @@ function stripFencedBlock(text: string): string {
  * Shift+Enter inserts a newline.
  */
 const DEFAULT_GREETING =
-  "Tell me what your agent should do — I'll help shape it. Or ask me to draft a full intent and we'll iterate.";
+  "Tell me what your AI should do — I'll help shape it. Or ask me to draft a full why and we'll iterate.";
 
 export function AssistantChatPanel({
   target,
@@ -172,7 +172,7 @@ export function AssistantChatPanel({
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            placeholder={placeholder ?? 'Ask for help articulating the intent…'}
+            placeholder={placeholder ?? 'Ask for help articulating the why…'}
             rows={1}
             disabled={loading}
           />

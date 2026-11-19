@@ -91,15 +91,15 @@ export function TicketWhatYouSaw({ proposalId, tool, manifests }: Props) {
       <RequestContextBoxBody resp={snapshot.requestContext} />
 
       {status === 'verified' && (
-        <p className="ob-check">&#10003; Matches the fingerprint recorded with your approval.</p>
+        <p className="ob-check">&#10003; Matches the check value recorded with your approval.</p>
       )}
       {status === 'mismatch' && (
-        <p className="ob-check ob-check-x">&#10005; <b>This copy differs from the fingerprint recorded with your approval.</b></p>
+        <p className="ob-check ob-check-x">&#10005; <b>This copy differs from the check value recorded with your approval.</b></p>
       )}
       {status === 'unchecked' && (
         <p className="ob-quiet">
-          This device's copy of what was shown, kept locally — the Authority Server does not record a
-          fingerprint for you to check it against.
+          This device's copy of what was shown, kept locally — suveren.ai does not record a
+          check value for you to check it against.
         </p>
       )}
       {/* AU10 §8.4 coordinator decision — several required approvers each

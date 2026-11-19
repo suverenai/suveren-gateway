@@ -40,11 +40,11 @@ describe('resultDismissLabel', () => {
 
 describe('a dead mandate in plain words', () => {
   it('names the fact', () => {
-    expect(mandateEndedHead('revoked')).toBe('This mandate was revoked.');
+    expect(mandateEndedHead('revoked')).toBe('This mandate was ended.');
     expect(mandateEndedHead('expired')).toBe('This mandate has expired.');
   });
   it('a gateway error carrying the code becomes a sentence, never the code', () => {
-    expect(decisionErrorWords('The parent mandate has been revoked (MANDATE_REVOKED)')).toBe('This mandate was revoked. It can no longer be approved.');
+    expect(decisionErrorWords('The parent mandate has been revoked (MANDATE_REVOKED)')).toBe('This mandate was ended. It can no longer be approved.');
     expect(decisionErrorWords('Mandate gone (MANDATE_EXPIRED)')).toBe('This mandate has expired. It can no longer be approved.');
   });
   it('any other error is left as it came', () => {

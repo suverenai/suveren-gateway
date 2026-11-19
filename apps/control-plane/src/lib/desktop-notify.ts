@@ -181,7 +181,7 @@ export function lockedNotification(port: string | number): { title: string; mess
   return {
     title: 'Suveren is running but locked',
     message:
-      `Your agent has no authority until you unlock it. ` +
+      `Your AI cannot act until you unlock the gateway. ` +
       `Open ${url} and enter your API key.`,
     url,
   };
@@ -197,7 +197,7 @@ export function sessionExpiredNotification(port: string | number): { title: stri
   const url = `http://localhost:${port}`;
   return {
     title: 'Suveren Gateway locked',
-    message: 'Your sign-in has ended. Sign in again so your agents can act.',
+    message: 'Your sign-in has ended. Sign in again so your AI can act.',
     url,
   };
 }

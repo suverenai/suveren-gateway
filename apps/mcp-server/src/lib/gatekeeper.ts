@@ -53,7 +53,7 @@ export class MCPGatekeeper {
           approved: false,
           errors: [{
             code: 'MANDATE_NOT_FOUND',
-            message: `No active authorization for "${authorizationPath}". A decision owner must grant authority via the Authority UI.`,
+            message: `No active mandate for "${authorizationPath}". The owner has to give a mandate in the gateway.`,
           }],
         },
         authorization: null,

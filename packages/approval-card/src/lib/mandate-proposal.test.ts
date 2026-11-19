@@ -4,7 +4,7 @@ import { modeView, mandatePreviewParts, mandateTechnicalLine, mandateTitleText, 
 describe('mandate proposal card parts', () => {
   it('words the mode', () => {
     expect(modeView('review')).toEqual({ label: 'Commitment', title: 'Review Each Action', text: 'You review and approve each action before it executes.' });
-    expect(modeView('automatic')).toEqual({ label: 'Commitment', title: 'Automatic', text: 'Agent acts freely within your limits.' });
+    expect(modeView('automatic')).toEqual({ label: 'Commitment', title: 'Automatic', text: 'Your AI acts freely within your limits.' });
     expect(modeView('')).toBeNull();
     expect(modeView(undefined)).toBeNull();
     expect(modeView('review_above_cap')?.title).toBe('Review above the limit');

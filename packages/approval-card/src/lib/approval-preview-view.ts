@@ -239,7 +239,7 @@ export function hasSystemValues(view: CreationView): boolean {
  * 2026-11-11). Every other card keeps its heading.
  */
 export function sealedTileHeading(view: PreviewBoxView | undefined, isMandate: boolean): string {
-  if (isMandate) return 'You sign this';
+  if (isMandate) return 'You give this';
   const showsChange = !!view?.change || !!view?.creation?.rows.some((r) => r.kind === 'compare');
   return showsChange ? 'You approve this change' : 'Runs exactly as shown';
 }

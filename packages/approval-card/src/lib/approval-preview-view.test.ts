@@ -385,6 +385,6 @@ describe('the change heading and changes in a list of reads', () => {
     };
     expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1, name: 'Andreas Schadauer' }), false)).toBe('You approve this change');
     expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1 }), false)).toBe('Runs exactly as shown');
-    expect(sealedTileHeading(undefined, true)).toBe('You sign this');
+    expect(sealedTileHeading(undefined, true)).toBe('You give this');
   });
 });

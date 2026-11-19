@@ -236,7 +236,7 @@ function rowsForDomain(
 const RULES_SECTION = ['=== RULES ===', ...AGENT_RULES.map(r => `- ${r}`), ''];
 
 const LISTED_WITHOUT_MANDATE_HEADING =
-  'Listed but not usable yet — no mandate covers these; every call is refused until the person grants one:';
+  'Listed but not usable yet — no mandate covers these; every call is refused until the person gives one:';
 
 export function listAuthorizationsHandler(
   state: SharedState,
@@ -336,7 +336,7 @@ function listAuthorizations(
         output.push(`[${auth.path}] ${auth.profileId} (${remainingMin} min remaining)${statusLabel}`);
         if (auth.complete) output.push(`  Mandate id: ${auth.authorizationId}`);
         if (auth.needsReapproval) {
-          output.push('  The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
+          output.push('  suveren.ai no longer accepts this mandate\'s protocol version. Ask the mandate owner to give it again (Mandates page → Give again).');
         }
         output.push('');
         output.push(`  Bounds: ${boundsDesc}`);
@@ -439,7 +439,7 @@ function listAuthorizations(
 
         // Item 9 (re-approval UX): generic, not per-profile.
         if (auth.needsReapproval) {
-          lines.push('    The Authority Server no longer accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).');
+          lines.push('    suveren.ai no longer accepts this mandate\'s protocol version. Ask the mandate owner to give it again (Mandates page → Give again).');
         }
 
         // Flag review mode in the compact view (automatic is the unremarkable default)

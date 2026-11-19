@@ -45,7 +45,7 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
 
     const me = vault.getSessionUser();
     if (!me) {
-      res.status(401).json({ error: 'No Authority Server session.' });
+      res.status(401).json({ error: 'No suveren.ai session.' });
       return;
     }
 
