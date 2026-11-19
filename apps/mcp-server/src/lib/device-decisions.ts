@@ -126,6 +126,19 @@ export interface DeviceCpClient {
   sendReceipt(mandateId: string, version: number, grantHash: string): Promise<void>;
   /** Is this DID a person this gateway's owner compared by identity code and accepted (or is it their own)? */
   ownerConfirmed(did: string): Promise<boolean>;
+  /**
+   * The sealed body (scope and intent) of a verified grant, opened by the control plane with this computer's own key (plan 20.19).
+   * Untrusted until {@link checkBody} compared it with the hashes of the mandate. Throws {@link BodyRefused}.
+   */
+  openBody(mandateId: string, version: number, grantHash: string): Promise<{ scope: Record<string, string | number>; intent: string }>;
+}
+
+/** The sealed body of a mandate did not arrive (`body_not_received`) or could not be accepted; anything else is an error of asking. */
+export class BodyRefused extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'BodyRefused';
+  }
 }
 
 /** The control plane refused to remember a grant: a lower version than one seen, another grant of the same version, or a revoked mandate. */
@@ -170,6 +183,11 @@ export const controlPlaneDevice: DeviceCpClient = {
     const body = await cpCall('POST', '/internal/mandate-grant/owner-known', { did });
     return (body as { known?: unknown }).known === true;
   },
+  async openBody(mandateId, version, grantHash) {
+    const body = await cpCall('POST', '/internal/mandate-grant/body', { mandateId, version, grantHash }) as { scope?: unknown; intent?: unknown };
+    if (typeof body.intent !== 'string' || typeof body.scope !== 'object' || body.scope === null || Array.isArray(body.scope)) throw new Error('unreadable answer');
+    return { scope: body.scope as Record<string, string | number>, intent: body.intent };
+  },
   async sendReceipt(mandateId, version, grantHash) {
     await cpCall('POST', '/internal/mandate-grant/receipt', { mandateId, version, grantHash });
   },
@@ -185,7 +203,8 @@ async function cpCall(method: 'GET' | 'POST', path: string, body?: unknown): Pro
     redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
   });
-  const parsed = (await res.json().catch(() => ({}))) as { code?: unknown };
+  const parsed = (await res.json().catch(() => ({}))) as { code?: unknown; error?: unknown };
+  if (!res.ok && parsed.error === 'body_refused' && typeof parsed.code === 'string') throw new BodyRefused(parsed.code);
   if (res.status === 409 && (parsed.code === 'lower_version' || parsed.code === 'same_version_other_grant' || parsed.code === 'revoked')) throw new GrantRefused(parsed.code);
   if (res.status === 409 && (parsed.code === 'rollback' || parsed.code === 'fork' || parsed.code === 'own_chain' || parsed.code === 'full'
     || parsed.code === 'proposal_id_reused' || parsed.code === 'nonce_reused')) throw new PinRefused(parsed.code);

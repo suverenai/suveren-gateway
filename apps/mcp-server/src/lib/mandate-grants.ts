@@ -26,9 +26,10 @@
 import { decodeMandateBlob, buildMandateProjection, getProfile, computeProfileHash, type MandatePayload } from '@hap/core';
 import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import {
-  deviceKeys, deviceKeysEnabled, verifiedChain, GrantRefused,
+  deviceKeys, deviceKeysEnabled, verifiedChain, GrantRefused, BodyRefused,
   type DeviceCpClient, type ChainReader,
 } from './device-decisions';
+import { checkBody, type BodyHold } from './mandate-bodies';
 
 const { grantMembersOf } = createGrantMembers(buildMandateProjection);
 
@@ -69,6 +70,13 @@ export interface GrantGateDeps extends ChainReader {
    * refusal (`device_not_set_up_here`); an error or "no" leaves the gateway working as before.
    */
   accountHasChain?: () => Promise<boolean>;
+  /**
+   * Where a mandate's scope and intent live on this computer (plan 20.19). A mandate is honoured only when what is held matches the
+   * hashes of its grant, or a sealed body fetched, opened by this computer's own key and matching them is kept here. Unset: the
+   * check is skipped: only for the callers that re-verify a grant for a DECISION (commitments, decision facts) and gate nothing with
+   * scope; the gate of the attestation cache (shared-state.ts), where a mandate enters what is gated with, always sets it.
+   */
+  bodies?: BodyHold;
 }
 
 export interface GrantGateInput {
@@ -82,7 +90,7 @@ export interface GrantGateInput {
 export type GrantGate = (i: GrantGateInput) => Promise<GrantCheck>;
 
 /** `protectedDids` is read at every check: the signed identities of the mandates cached right now (their pins are never evicted). */
-export function makeGrantGate(deps: Omit<GrantGateDeps, 'protectedDids' | 'localProfileHash' | 'accountHasChain'> & { protectedDids?: () => string[] }): GrantGate {
+export function makeGrantGate(deps: Omit<GrantGateDeps, 'protectedDids' | 'localProfileHash' | 'accountHasChain' | 'bodies'> & { protectedDids?: () => string[]; bodies?: BodyHold }): GrantGate {
   const sp = deps.sp as GrantGateDeps['sp'] & { getSessionDid?: () => Promise<string | null> };
   // Asked at most every five minutes: the answer changes once, when the person sets up device keys.
   let asked: { at: number; has: boolean } | null = null;
@@ -137,12 +145,45 @@ export async function checkMandateGrant(d: GrantGateDeps, i: GrantGateInput): Pr
   const top = new Map<string, number>();
   for (const g of granted) top.set(g.mandateId, Math.max(top.get(g.mandateId) ?? 0, g.version));
   const live = granted.filter(g => g.version === top.get(g.mandateId));
-  // Receipt (DEC-23): the owner's own gateway answers a verified grant once. A failure is not a refusal: asked again on the next check.
+  // The body (plan 20.19), on the owner's own computers (only they are recipients of the sealed body; an approver's gateway gates
+  // nothing of the owner's with scope and decides on the proposal's content): scope and intent must be the ones the grant signed, held here or fetched sealed and opened by this computer.
+  // A mandate whose body is not here and cannot be fetched and checked is not honoured, and no receipt answers it (a receipt says "received").
+  const received: GrantedBlob[] = [];
   for (const g of live) {
+    const b = own.rootDid === g.ownerDid ? await ensureBody(d, i.authorizationId, g) : { ok: true as const };
+    if (b.ok) received.push(g); else firstRefusal ??= b.check;
+  }
+  if (received.length === 0) return firstRefusal ?? refuse('mandate_body_not_received', 'the sealed mandate has not reached this computer yet.');
+  // Receipt (DEC-23): the owner's own gateway answers a verified grant once. A failure is not a refusal: asked again on the next check.
+  for (const g of received) {
     if (own.rootDid !== g.ownerDid || !g.receiptNeeded) continue;
     try { await d.cp.sendReceipt(g.mandateId, g.version, g.grantHash); } catch { /* not a refusal: asked again on the next check */ }
   }
-  return { ok: true, granted: live };
+  return { ok: true, granted: received };
+}
+
+/** Scope and intent of a verified mandate are present on this computer and are the ones its grant signed, or this says why not. */
+async function ensureBody(d: GrantGateDeps, authorizationId: string, g: GrantedBlob): Promise<{ ok: true } | { ok: false; check: GrantCheck }> {
+  if (!d.bodies) return { ok: true };
+  const no = (code: string, text: string) => ({ ok: false as const, check: refuse(code, text) });
+  const held = d.bodies.held(authorizationId);
+  // What this computer holds counts only while it matches what the owner signed: a changed scope or intent is a new body to fetch.
+  if (held && checkBody(g.payload, { scope: held.scope ?? {}, intent: held.intent }).ok) return { ok: true };
+  let opened: Awaited<ReturnType<DeviceCpClient['openBody']>>;
+  try {
+    opened = await d.cp.openBody(g.mandateId, g.version, g.grantHash);
+  } catch (e) {
+    if (e instanceof BodyRefused) {
+      if (e.code === 'body_not_received') return no('mandate_body_not_received', 'the sealed mandate has not reached this computer yet.');
+      return no('mandate_body_refused', `the sealed mandate cannot be used on this computer (${e.code}).`);
+    }
+    return no('body_unavailable', 'the sealed mandate could not be fetched just now.');
+  }
+  // Before anything of it is used: the hashes the owner's grant signed.
+  const verdict = checkBody(g.payload, opened);
+  if (!verdict.ok) return no('mandate_body_mismatch', `the sealed mandate does not match what its owner granted (${verdict.why}).`);
+  try { d.bodies.keep(authorizationId, g.payload, opened); } catch { return no('body_unavailable', 'the sealed mandate could not be kept on this computer.'); }
+  return { ok: true };
 }
 
 async function oneBlob(
