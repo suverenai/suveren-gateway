@@ -45,6 +45,8 @@ export interface UnreadableReader { did: string; code: string }
 export interface CardContextInput {
   display: unknown;
   execution_mapping: unknown;
+  /** The manifest's static execution fields (with the mapping, the whole execution context can be rebuilt). */
+  static_execution?: unknown;
   linked_record: unknown;
   gateway_version: string;
 }
