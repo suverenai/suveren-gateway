@@ -6,7 +6,7 @@ export declare const ID_RANGE: { min: number; max: number };
 export declare const DAEMON_PATH: string;
 
 export interface SystemLayout {
-  codeRoot: string; codeDir: string; currentLink: string; nodeBinary: string; serverEntry: string;
+  nodeDir: string; nodeBinDir: string; codeRoot: string; codeDir: string; currentLink: string; nodeBinary: string; serverEntry: string;
   settingsDir: string; settingsFile: string; dataDir: string; logDir: string; logFile: string;
   runDir: string; daemonPlist: string; agentPlist: string;
 }
@@ -32,9 +32,12 @@ export declare function diffManifests(
 ): { missing: string[]; extra: string[]; changed: string[]; ok: boolean };
 export declare function checkPreconditions(opts: { platform: string; uid: number; isAdmin: boolean }): string[];
 export declare function buildInstallPlan(opts: {
-  version: string; packageDir: string; nodeBinary: string; freeId: number;
+  version: string; packageDir: string; node: NodeDistribution; freeId: number;
   cpPort: number; mcpPort: number; prefix?: string; account?: string;
 }): { layout: SystemLayout; steps: PlanStep[] };
 export declare function renderPlan(plan: { steps: PlanStep[] }): string;
-export declare function buildUpdatePlan(opts: { version: string; packageDir: string; nodeBinary: string; prefix?: string }): { layout: SystemLayout; steps: PlanStep[] };
+export declare function buildUpdatePlan(opts: { version: string; packageDir: string; node: NodeDistribution; prefix?: string }): { layout: SystemLayout; steps: PlanStep[] };
 export declare function buildUninstallPlan(opts: { prefix?: string; removeData?: boolean; account?: string }): { layout: SystemLayout; steps: PlanStep[] };
+export interface NodeDistribution { binary: string; npmDir: string }
+export declare function resolveNodeDistribution(execPath: string, opts?: { realpath?: (p: string) => string; exists?: (p: string) => boolean }): NodeDistribution;
+export declare function nodeLinkProblems(otoolOutput: string): string[];

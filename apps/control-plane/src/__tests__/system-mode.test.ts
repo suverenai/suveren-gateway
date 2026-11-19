@@ -79,8 +79,14 @@ describe('the real CLI against a scratch install', () => {
     writeFileSync(join(pkg, 'server.js'), '');
     const node = join(scratch, 'node');
     writeFileSync(node, '');
+    const npmDir = join(scratch, 'npm');
+    mkdirSync(join(npmDir, 'bin'), { recursive: true });
+    writeFileSync(join(npmDir, 'package.json'), '{}');
+    writeFileSync(join(npmDir, 'bin', 'npx-cli.js'), '');
+    writeFileSync(join(npmDir, 'bin', 'npm-cli.js'), '');
+    const nodeDist = { binary: node, npmDir };
     executePlan(
-      buildInstallPlan({ version: '1.0.0', packageDir: pkg, nodeBinary: node, freeId: 260, cpPort: CP, mcpPort: MCP, prefix }),
+      buildInstallPlan({ version: '1.0.0', packageDir: pkg, node: nodeDist, freeId: 260, cpPort: CP, mcpPort: MCP, prefix }),
       { prefix },
     );
   });

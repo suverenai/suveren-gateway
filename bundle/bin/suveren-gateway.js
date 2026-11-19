@@ -20,7 +20,7 @@ import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindows
 import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validateProxyUrl, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
-import { buildInstallPlan, buildUpdatePlan, buildUninstallPlan, renderPlan, parseDsclIds, pickFreeId, checkPreconditions } from '../lib/system-install-mac.mjs';
+import { buildInstallPlan, buildUpdatePlan, buildUninstallPlan, renderPlan, resolveNodeDistribution, nodeLinkProblems, parseDsclIds, pickFreeId, checkPreconditions } from '../lib/system-install-mac.mjs';
 import { detectSystemInstall, systemMarkers, thinCliRefusal } from '../lib/system-mode.mjs';
 import { executePlan } from '../lib/system-install-exec.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
@@ -1549,8 +1549,27 @@ async function systemInstall(sub, args) {
     const r = spawnSync('dscl', ['.', '-list', kind, field], { encoding: 'utf8' });
     return r.status === 0 ? parseDsclIds(r.stdout) : [];
   };
-  const common = { version: CLI_VERSION || '0.0.0', packageDir: PKG_ROOT, nodeBinary: process.execPath, prefix };
   let plan;
+  let common;
+  if (sub !== 'uninstall') {
+    let node;
+    try {
+      node = resolveNodeDistribution(process.execPath);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+    // A Node that loads libraries from a folder the person can write defeats the
+    // root-owned code folder. Refuse for real; warn when only looking.
+    const otool = spawnSync('otool', ['-L', node.binary], { encoding: 'utf8' });
+    const outside = otool.status === 0 ? nodeLinkProblems(otool.stdout) : [];
+    if (outside.length) {
+      const msg = `This Node loads libraries from outside macOS (${outside.slice(0, 2).join(', ')}${outside.length > 2 ? ', ...' : ''}).\nInstall the official Node from nodejs.org (it needs none) and run this again with it.`;
+      if (!dryRun && !prefix) { console.error(msg); process.exit(2); }
+      console.error(`Warning: ${msg}\n`);
+    }
+    common = { version: CLI_VERSION || '0.0.0', packageDir: PKG_ROOT, node, prefix };
+  }
   if (sub === 'install') {
     const freeId = pickFreeId([...listIds('/Users', 'UniqueID'), ...listIds('/Groups', 'PrimaryGroupID')]);
     plan = buildInstallPlan({ ...common, freeId, cpPort: Number(SUVEREN_PORT), mcpPort: Number(MCP_PORT) });

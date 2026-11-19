@@ -14,7 +14,7 @@ import {
   ACCOUNT_NAME, DAEMON_LABEL, DAEMON_PATH, ID_RANGE,
   buildLayout, parseDsclIds, pickFreeId, buildAccountSteps, buildDaemonPlist,
   buildSettingsJson, buildFileManifest, diffManifests, checkPreconditions,
-  buildInstallPlan, renderPlan,
+  buildInstallPlan, renderPlan, resolveNodeDistribution, nodeLinkProblems,
 } from '../../../../bundle/lib/system-install-mac.mjs';
 
 describe('buildLayout', () => {
@@ -84,11 +84,11 @@ describe('buildDaemonPlist', () => {
     expect(plist).toContain('<key>KeepAlive</key>\n  <true/>');
   });
   it('starts only root-owned code', () => {
-    expect(plist).toContain('<string>/usr/local/libexec/suveren/current/node</string>');
+    expect(plist).toContain('<string>/usr/local/libexec/suveren/current/node/bin/node</string>');
     expect(plist).toContain('<string>/usr/local/libexec/suveren/current/server.js</string>');
   });
   it('takes nothing from the person: fixed PATH, root-owned settings, own data folder', () => {
-    expect(plist).toContain(`<string>${DAEMON_PATH}</string>`);
+    expect(plist).toContain(`<string>/usr/local/libexec/suveren/current/node/bin:${DAEMON_PATH}</string>`);
     expect(plist).toContain('<string>/usr/local/etc/suveren/gateway.json</string>');
     expect(plist).toContain('<key>SUVEREN_DATA_DIR</key>\n    <string>/var/lib/suveren</string>');
     expect(plist).not.toMatch(/\/Users\//);
@@ -146,7 +146,7 @@ describe('checkPreconditions', () => {
 
 describe('buildInstallPlan', () => {
   const plan = buildInstallPlan({
-    version: '1.0.0', packageDir: '/pkg', nodeBinary: '/n/node', freeId: 260, cpPort: 3400, mcpPort: 3430,
+    version: '1.0.0', packageDir: '/pkg', node: { binary: '/n/bin/node', npmDir: '/n/lib/node_modules/npm' }, freeId: 260, cpPort: 3400, mcpPort: 3430,
   });
   const owned = (path: string) => plan.steps.find((s) => 'path' in s && s.path === path) as any;
 
@@ -178,5 +178,30 @@ describe('buildInstallPlan', () => {
   });
   it('renders one line per step', () => {
     expect(renderPlan(plan).trim().split('\n')).toHaveLength(plan.steps.length);
+  });
+});
+
+describe('our own node with npm and npx', () => {
+  const dist = { binary: '/n/bin/node', npmDir: '/n/lib/node_modules/npm' };
+  const plan = buildInstallPlan({ version: '1.0.0', packageDir: '/pkg', node: dist, freeId: 260, cpPort: 3400, mcpPort: 3430 });
+  it('copies node and npm into the root-owned code folder and links npm and npx', () => {
+    const base = `${plan.layout.codeDir}/node`;
+    expect(plan.steps).toContainEqual({ kind: 'copy', from: dist.binary, to: `${base}/bin/node`, owner: 'root:wheel', mode: '0755' });
+    expect(plan.steps).toContainEqual({ kind: 'copy', from: dist.npmDir, to: `${base}/lib/node_modules/npm`, owner: 'root:wheel', mode: 'go-w' });
+    expect(plan.steps).toContainEqual({ kind: 'symlink', path: `${base}/bin/npx`, target: '../lib/node_modules/npm/bin/npx-cli.js' });
+  });
+  it('resolves npm behind npx, also when npx is a link to another folder', () => {
+    const files = new Set(['/h/bin/node', '/h/bin/npx', '/lib/npm/package.json']);
+    const real = (p: string) => ({ '/h/bin/npx': '/lib/npm/bin/npx-cli.js' } as Record<string, string>)[p] ?? p;
+    expect(resolveNodeDistribution('/h/bin/node', { realpath: real, exists: (p: string) => files.has(p) }))
+      .toEqual({ binary: '/h/bin/node', npmDir: '/lib/npm' });
+  });
+  it('says so when the Node has no npx', () => {
+    expect(() => resolveNodeDistribution('/h/bin/node', { realpath: (p: string) => p, exists: () => false })).toThrow(/no npm and npx/);
+  });
+  it('flags a Node that loads libraries from outside macOS (Homebrew), accepts the official one', () => {
+    const brew = '/x/node:\n\t/usr/lib/libz.1.dylib (c)\n\t/opt/homebrew/opt/libuv/lib/libuv.1.dylib (c)\n\t@rpath/libnode.dylib (c)\n';
+    expect(nodeLinkProblems(brew)).toEqual(['/opt/homebrew/opt/libuv/lib/libuv.1.dylib', '@rpath/libnode.dylib']);
+    expect(nodeLinkProblems('/x/node:\n\t/usr/lib/libSystem.B.dylib (c)\n\t/System/Library/Frameworks/CoreFoundation (c)\n')).toEqual([]);
   });
 });

@@ -138,6 +138,7 @@ export function executePlan(plan, opts = {}) {
         break;
       case 'symlink': {
         // Atomic: build the new link beside the old one, then rename over it.
+        mkdirSync(dirname(s.path), { recursive: true });
         const tmp = `${s.path}.new`;
         rmSync(tmp, { force: true });
         symlinkSync(s.target, tmp);

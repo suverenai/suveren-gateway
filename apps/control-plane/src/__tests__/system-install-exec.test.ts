@@ -17,6 +17,7 @@ import { executePlan, isAllowedCommand, validatePlan } from '../../../../bundle/
 let scratch: string;
 let pkg: string;
 let node: string;
+let nodeDist: { binary: string; npmDir: string };
 
 beforeEach(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), 's1-exec-')));
@@ -26,12 +27,18 @@ beforeEach(() => {
   writeFileSync(join(pkg, 'lib', 'a.mjs'), 'export {}');
   node = join(scratch, 'fake-node');
   writeFileSync(node, '#!/bin/sh\n');
+  const npmDir = join(scratch, 'npm');
+  mkdirSync(join(npmDir, 'bin'), { recursive: true });
+  writeFileSync(join(npmDir, 'package.json'), '{"name":"npm"}');
+  writeFileSync(join(npmDir, 'bin', 'npx-cli.js'), '#!/usr/bin/env node\n');
+  writeFileSync(join(npmDir, 'bin', 'npm-cli.js'), '#!/usr/bin/env node\n');
+  nodeDist = { binary: node, npmDir };
 });
 afterEach(() => rmSync(scratch, { recursive: true, force: true }));
 
 const prefix = () => join(scratch, 'root');
 const install = (version = '1.0.0') =>
-  buildInstallPlan({ version, packageDir: pkg, nodeBinary: node, freeId: 260, cpPort: 3400, mcpPort: 3430, prefix: prefix() });
+  buildInstallPlan({ version, packageDir: pkg, node: nodeDist, freeId: 260, cpPort: 3400, mcpPort: 3430, prefix: prefix() });
 
 describe('isAllowedCommand', () => {
   it('allows only the calls the plans make', () => {
@@ -56,7 +63,7 @@ describe('validatePlan', () => {
   });
   it('refuses a copy into its own source (a --prefix inside the package folder)', () => {
     const inside = buildInstallPlan({
-      version: '1.0.0', packageDir: pkg, nodeBinary: node, freeId: 260, cpPort: 3400, mcpPort: 3430,
+      version: '1.0.0', packageDir: pkg, node: nodeDist, freeId: 260, cpPort: 3400, mcpPort: 3430,
       prefix: join(pkg, 'root'),
     });
     expect(() => validatePlan(inside.steps, { prefix: join(pkg, 'root') })).toThrow(/into itself/);
@@ -75,7 +82,11 @@ describe('install in a scratch folder', () => {
     const l = plan.layout;
     expect(readFileSync(join(l.codeDir, 'server.js'), 'utf8')).toBe('console.log(1)');
     expect(existsSync(join(l.codeDir, 'lib', 'a.mjs'))).toBe(true);
-    expect(existsSync(join(l.codeDir, 'node'))).toBe(true);
+    expect(existsSync(join(l.nodeBinary))).toBe(true);
+    // npx resolves through the code folder, not through any folder of the person.
+    expect(readlinkSync(join(l.nodeBinDir, 'npx'))).toBe('../lib/node_modules/npm/bin/npx-cli.js');
+    expect(readFileSync(join(l.nodeBinDir, 'npx')).length).toBeGreaterThan(0);
+    expect(readFileSync(join(l.nodeDir, 'lib/node_modules/npm/package.json'), 'utf8')).toContain('npm');
     expect(readlinkSync(l.currentLink)).toBe('1.0.0');
     expect(existsSync(join(l.currentLink, 'server.js'))).toBe(true);
     expect(JSON.parse(readFileSync(l.settingsFile, 'utf8'))).toMatchObject({ cpPort: 3400, mcpPort: 3430 });
@@ -111,7 +122,7 @@ describe('update and uninstall in a scratch folder', () => {
   it('update adds a version, flips current and keeps the old one', () => {
     executePlan(install('1.0.0'), { prefix: prefix() });
     writeFileSync(join(pkg, 'server.js'), 'console.log(2)');
-    const up = buildUpdatePlan({ version: '1.1.0', packageDir: pkg, nodeBinary: node, prefix: prefix() });
+    const up = buildUpdatePlan({ version: '1.1.0', packageDir: pkg, node: nodeDist, prefix: prefix() });
     const log = executePlan(up, { prefix: prefix() });
     expect(readlinkSync(up.layout.currentLink)).toBe('1.1.0');
     expect(readFileSync(join(up.layout.currentLink, 'server.js'), 'utf8')).toBe('console.log(2)');

@@ -20,8 +20,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { escapeXml } from './autostart-templates.mjs';
 
 export const ACCOUNT_NAME = '_suveren';
@@ -50,7 +50,9 @@ export function buildLayout({ version, prefix = '' }) {
     codeRoot,
     codeDir: `${codeRoot}/${version}`,
     currentLink: `${codeRoot}/current`,
-    nodeBinary: `${codeRoot}/current/node`,
+    nodeDir: `${codeRoot}/current/node`,
+    nodeBinDir: `${codeRoot}/current/node/bin`,
+    nodeBinary: `${codeRoot}/current/node/bin/node`,
     serverEntry: `${codeRoot}/current/server.js`,
     settingsDir: p('/usr/local/etc/suveren'),
     settingsFile: p('/usr/local/etc/suveren/gateway.json'),
@@ -122,7 +124,8 @@ export function buildAccountSteps({ id, name = ACCOUNT_NAME }) {
 export function buildDaemonPlist({ layout, account = ACCOUNT_NAME }) {
   const env = [
     ['HOME', layout.dataDir],
-    ['PATH', DAEMON_PATH],
+    // Our own node and npx first: connectors are started with `npx`.
+    ['PATH', `${layout.nodeBinDir}:${DAEMON_PATH}`],
     ['SUVEREN_DATA_DIR', layout.dataDir],
     ['SUVEREN_INSTALL_SETTINGS_FILE', layout.settingsFile],
   ];
@@ -196,6 +199,59 @@ export function diffManifests(expected, actual) {
   return { missing, extra, changed, ok: !missing.length && !extra.length && !changed.length };
 }
 
+
+// ─── Our own Node, with npm and npx ─────────────────────────────────────
+
+/**
+ * Find the pieces of a Node distribution from the node binary that runs the CLI:
+ * the real binary and the npm folder behind `npx`. Throws, in words, when the
+ * Node has no npm (connectors are started with `npx`).
+ */
+export function resolveNodeDistribution(execPath, { realpath = realpathSync, exists = existsSync } = {}) {
+  const binary = realpath(execPath);
+  for (const dir of [dirname(execPath), dirname(binary)]) {
+    const npx = join(dir, 'npx');
+    if (!exists(npx)) continue;
+    const real = realpath(npx);
+    const npmDir = dirname(dirname(real));
+    if (real.endsWith('/bin/npx-cli.js') && exists(join(npmDir, 'package.json'))) return { binary, npmDir };
+  }
+  throw new Error(`The Node at ${execPath} has no npm and npx next to it. Install the official Node from nodejs.org and run this again with it.`);
+}
+
+/**
+ * Libraries a node binary needs that are not part of macOS. The official Node
+ * needs none; a Homebrew Node loads libraries from /opt/homebrew, a folder the
+ * person's own user can write, which would defeat the root-owned code folder.
+ * `otoolOutput` is the text of `otool -L <binary>`.
+ */
+export function nodeLinkProblems(otoolOutput) {
+  const out = [];
+  for (const line of String(otoolOutput).split(/\r?\n/).slice(1)) {
+    const m = /^\s+(\S+)\s+\(/.exec(line);
+    if (!m) continue;
+    const lib = m[1];
+    if (lib.startsWith('/usr/lib/') || lib.startsWith('/System/')) continue;
+    out.push(lib);
+  }
+  return out;
+}
+
+/** Steps that put the node binary, npm and the npm/npx links into the code folder. */
+function nodeSteps(layout, node) {
+  const root = 'root:wheel';
+  const dir = `${layout.codeDir}/node`;
+  const npmTarget = (name) => `../lib/node_modules/npm/bin/${name}-cli.js`;
+  return [
+    { kind: 'mkdir', path: `${dir}/bin`, owner: root, mode: '0755' },
+    { kind: 'mkdir', path: `${dir}/lib/node_modules`, owner: root, mode: '0755' },
+    { kind: 'copy', from: node.binary, to: `${dir}/bin/node`, owner: root, mode: '0755' },
+    { kind: 'copy', from: node.npmDir, to: `${dir}/lib/node_modules/npm`, owner: root, mode: 'go-w' },
+    { kind: 'symlink', path: `${dir}/bin/npm`, target: npmTarget('npm') },
+    { kind: 'symlink', path: `${dir}/bin/npx`, target: npmTarget('npx') },
+  ];
+}
+
 // ─── The plan ───────────────────────────────────────────────────────────
 
 /**
@@ -224,7 +280,7 @@ export function checkPreconditions({ platform, uid, isAdmin }) {
 export function buildInstallPlan({
   version,
   packageDir,
-  nodeBinary,
+  node,
   freeId,
   cpPort,
   mcpPort,
@@ -247,7 +303,7 @@ export function buildInstallPlan({
 
   // Code: the package and a Node of our own (the person's nvm or Homebrew Node is writable by them).
   steps.push({ kind: 'copy', from: packageDir, to: layout.codeDir, owner: root, mode: 'go-w' });
-  steps.push({ kind: 'copy', from: nodeBinary, to: `${layout.codeDir}/node`, owner: root, mode: '0755' });
+  steps.push(...nodeSteps(layout, node));
   steps.push({ kind: 'write', path: layout.settingsFile, content: buildSettingsJson({ layout, cpPort, mcpPort }), owner: root, mode: '0644' });
   steps.push({ kind: 'symlink', path: layout.currentLink, target: version });
 
@@ -279,7 +335,7 @@ export function renderPlan(plan) {
  * A new version next to the old one: copy, verify, flip `current`, restart.
  * The daemon never updates its own code (design 2.5); an admin runs this.
  */
-export function buildUpdatePlan({ version, packageDir, nodeBinary, prefix = '' }) {
+export function buildUpdatePlan({ version, packageDir, node, prefix = '' }) {
   const layout = buildLayout({ version, prefix });
   const root = 'root:wheel';
   return {
@@ -287,7 +343,7 @@ export function buildUpdatePlan({ version, packageDir, nodeBinary, prefix = '' }
     steps: [
       { kind: 'mkdir', path: layout.codeDir, owner: root, mode: '0755' },
       { kind: 'copy', from: packageDir, to: layout.codeDir, owner: root, mode: 'go-w' },
-      { kind: 'copy', from: nodeBinary, to: `${layout.codeDir}/node`, owner: root, mode: '0755' },
+      ...nodeSteps(layout, node),
       { kind: 'symlink', path: layout.currentLink, target: version },
       { kind: 'run', argv: ['launchctl', 'kickstart', '-k', `system/${DAEMON_LABEL}`] },
     ],
