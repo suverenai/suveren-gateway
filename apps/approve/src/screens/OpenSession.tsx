@@ -22,7 +22,7 @@ export function OpenSessionScreen(p: OpenSessionProps) {
       <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onOpen} disabled={p.busy}>{p.busy ? S13.giveBusy : P.openButton}</button>
       {p.onForget && (
         <>
-          <p style={{ fontSize: 'var(--text-body-sm)' }}>{P.forgetNote}</p>
+          <p className="text-sm">{P.forgetNote}</p>
           <button type="button" className="btn btn-secondary btn-full" onClick={p.onForget}>{P.forgetButton}</button>
         </>
       )}

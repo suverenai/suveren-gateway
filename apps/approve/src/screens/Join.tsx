@@ -59,7 +59,7 @@ export function JoinScreen(p: JoinScreenProps) {
       return (
         <Screen title={P.nameTitle}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
-          <div className="form-group" style={{ marginBottom: 'var(--space-6)' }}>
+          <div className="form-group mb-6">
             <label className="form-label" htmlFor="join-name">{P.nameLabel}</label>
             <input id="join-name" className="form-input" value={label} maxLength={64} onChange={(e) => setLabel(e.target.value)} disabled={st.busy}
               onKeyDown={(e) => { if (e.key === 'Enter' && label.trim()) p.onName(label); }} />

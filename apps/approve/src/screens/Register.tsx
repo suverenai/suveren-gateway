@@ -57,7 +57,7 @@ export function RegisterScreen(p: RegisterScreenProps) {
             <>
               <button type="button" className="btn btn-primary btn-full btn-lg" onClick={() => setScan(true)} disabled={st.busy}>{P.scanStart}</button>
               <form onSubmit={(e) => { e.preventDefault(); if (typed.trim()) p.onCode(typed); }}>
-                <div className="form-group" style={{ marginTop: 'var(--space-6)' }}>
+                <div className="form-group mt-6">
                   <label className="form-label" htmlFor="setup-code">{P.setupCodeLabel}</label>
                   <CodeInput id="setup-code" value={typed} onChange={setTyped} disabled={st.busy} />
                 </div>
@@ -71,7 +71,7 @@ export function RegisterScreen(p: RegisterScreenProps) {
       return (
         <Screen title={P.nameTitle}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
-          <div className="form-group" style={{ marginBottom: 'var(--space-6)' }}>
+          <div className="form-group mb-6">
             <label className="form-label" htmlFor="phone-name">{P.nameLabel}</label>
             <input id="phone-name" className="form-input" value={label} maxLength={64} onChange={(e) => setLabel(e.target.value)} disabled={st.busy}
               onKeyDown={(e) => { if (e.key === 'Enter' && label.trim()) p.onName(label); }} />
@@ -89,7 +89,7 @@ export function RegisterScreen(p: RegisterScreenProps) {
           <RecoveryCodeBox code={p.code ?? ''}>{p.code && <RecoveryQr text={p.code} />}</RecoveryCodeBox>
           <p><strong>{P.codeOnce}</strong></p>
           <p>{P.codePaper}</p>
-          <p style={{ fontSize: 'var(--text-body-sm)' }}>{P.codeNever}</p>
+          <p className="text-sm">{P.codeNever}</p>
           <button type="button" className="btn btn-secondary btn-full" onClick={() => window.print()}>{P.codePrint}</button>
           <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onCodeSeen}>{P.codeContinue}</button>
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.codeCancel}</button>

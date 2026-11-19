@@ -28,9 +28,9 @@ export function WelcomeScreen({ onNew, onJoin }: { onNew: () => void; onJoin: ()
       <p>{P.welcomeBody}</p>
       <p>{P.welcomeReadOnly}</p>
       <button type="button" className="btn btn-primary btn-full btn-lg" onClick={onNew}>{P.welcomeNew}</button>
-      <p style={{ fontSize: 'var(--text-body-sm)' }}>{P.welcomeNewWhy}</p>
+      <p className="text-sm">{P.welcomeNewWhy}</p>
       <button type="button" className="btn btn-secondary btn-full btn-lg" onClick={onJoin}>{P.welcomeJoin}</button>
-      <p style={{ fontSize: 'var(--text-body-sm)' }}>{P.welcomeJoinWhy}</p>
+      <p className="text-sm">{P.welcomeJoinWhy}</p>
     </Screen>
   );
 }

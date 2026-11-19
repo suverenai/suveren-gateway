@@ -35,7 +35,7 @@ export function ScanView({ onText, onCancel }: { onText: (text: string) => void;
         <>
           <p className="ap-scan-line" role="status">{P.scanFrame}</p>
           <p className="ap-scan-line" role="status" data-testid="scan-progress">{P.scanProgress(progress?.seconds ?? 0)}</p>
-          <p className="ap-scan-line" style={{ color: 'var(--text-muted)' }}>{P.scanBlackNote}</p>
+          <p className="ap-scan-line text-muted">{P.scanBlackNote}</p>
         </>
       )}
       <button type="button" className="btn btn-ghost btn-full" onClick={() => { scanner.current?.stop(); onCancel(); }}>{P.scanStop}</button>
