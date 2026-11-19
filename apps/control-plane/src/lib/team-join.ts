@@ -168,7 +168,7 @@ export class TeamJoin {
   }
 
   /** Sign `object` with this computer's device key and its check: one touch. `focus` picks the member a list's prompt names. */
-  async signWithCheck(s: Session, object: object, focus?: string): Promise<{ sig: string; check: { signature: string } }> {
+  async signWithCheck(s: Session, object: object, focus?: string, previous?: object): Promise<{ sig: string; check: { signature: string } }> {
     const { d } = this;
     const dk = await deviceKeys();
     if (!d.checks || !d.checkStore) return refuse('no_check_key');
@@ -245,7 +245,9 @@ export class TeamJoin {
     const adminDid = await this.adminDidFor(s, teamId);
     const key = this.memberKey(teamId, adminDid);
     if (!this.memberGate.matched(key)) return refuse('not_compared', 409);
-    const prev = await this.ownAnchorOf(s, teamId);
+    const head = await this.ownAnchorOf(s, teamId);
+    // A new identity (another root DID) starts a new line: version 1, prev null (the Authority Server and hap-core refuse a prev of another member DID).
+    const prev = head && head.anchor.member_did === s.stored.rootDid ? head : null;
     if (prev && prev.anchor.admin_did === adminDid) return { stored: true };   // already said; nothing new to sign
     const anchor = dk.buildAnchor({
       member_did: s.stored.rootDid, team_id: teamId, admin_did: adminDid,
