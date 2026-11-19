@@ -22,15 +22,18 @@
  * is only for a DID that is neither pinned nor a verified member.
  *
  * KNOWN LIMITS (stated in the release notes, not closed by this code):
- *  - First sight of a person's chain is verified against their DID but pinned only from then on (trust on first use):
- *    an Authority Server that has served a person's chain to this gateway NEVER, can present a forged one made with a
- *    DID of its own choosing only if the mandate names that DID, which the owner's signed grant covers. Until the team
- *    member list (DEC-73) is wired, a colleague who was never seen has no second anchor.
- *  - The Authority Server can withhold a wrap, drop the card context, or serve a person an older state of the list:
- *    the person then sees "not yet openable" and cannot read; it can never make anyone read what they should not.
- *  - A person's chain is verified when a proposal is made and when it is re-wrapped, not continuously: a device
- *    removed a moment ago can still hold a wrap of a proposal made just before its removal (content, not authority).
- */
+ *  - M2, trust on first use and no freshness. The first sight of a colleague's chain is verified against their DID
+ *    but there is no earlier pin to compare with. The AS can serve a TRUNCATED chain, so a device removed later still
+ *    gets a wrap. With a pin, the AS can serve exactly the pinned head forever: a removal made after it is never seen.
+ *    Fork and rollback against the pin are caught; withholding is not. Inherent without a freshness proof. Until the
+ *    team member list (DEC-73) is wired, a colleague never seen has no second anchor.
+ *  - M3, a reader listed `as_unreachable` or `as_answer_invalid` at submission stays unable to read THAT proposal.
+ *    Re-wrap (lib/proposal-rewrap.ts) covers the caller's own person only; nobody re-wraps for a colleague. The AS can
+ *    induce this per person: denial of service, not a leak. The tool text only says "tell the person".
+ *  - The AS can withhold a wrap, drop the card context, or serve an older state: the person then cannot read; it can
+ *    never make anyone read what they should not.
+ *  - A chain is verified when a proposal is made and when it is re-wrapped, not continuously: a device removed a moment
+ *    ago can still hold a wrap of a proposal made just before (content, not authority). */
 import type { ChainState, DeviceState } from '@hap/core/device-keys';
 import type { Vault } from './vault';
 import type { DeviceChainStore } from './device-chain-store';
