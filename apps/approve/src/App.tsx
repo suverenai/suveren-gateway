@@ -1,0 +1,273 @@
+/**
+ * The phone app (stage D1: register or join, device list, add a computer, read requests). The logic lives in the drivers and the
+ * session (lib/); this file only decides which screen is on and starts the timers. One card for every device: the request is
+ * drawn by the shared approval card (packages/approval-card), configured in lib/app-host.ts.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Proposal } from '@suveren/approval-card/types';
+import { BUILD_COMMIT } from './lib/config';
+import { createRuntime } from './lib/runtime';
+import { assess, probe, requestPersistentStorage, type Need } from './lib/compat';
+import { RegisterDriver } from './lib/register-driver';
+import { JoinDriver } from './lib/join-driver';
+import { AdmitDriver } from './lib/admit-driver';
+import { deviceRows, type DeviceRow } from './lib/chain-view';
+import { identityCodeOf } from './lib/identity-code';
+import { bindPhoneHost } from './lib/app-host';
+import { openContext, type ContentWire } from './lib/content';
+import { P, errorText } from './texts';
+import { NeedsScreen, WelcomeScreen } from './screens/Start';
+import { RegisterScreen } from './screens/Register';
+import { JoinScreen } from './screens/Join';
+import { AdmitScreen } from './screens/Admit';
+import { DevicesScreen } from './screens/Devices';
+import { RequestsScreen, RequestDetail } from './screens/Requests';
+import { OpenSessionScreen } from './screens/OpenSession';
+import { useDriver } from './screens/Frame';
+
+/** How often an open list is read again (a timer; it never counts as use of the session). */
+const REFRESH_MS = 30_000;
+/** How often a pairing's mailbox is read while it waits. */
+const POLL_MS = 2_000;
+const VERSION = '0.1.0';
+
+type View =
+  | { t: 'boot' }
+  | { t: 'needs'; needs: Need[] }
+  | { t: 'welcome' }
+  | { t: 'register' }
+  | { t: 'join' }
+  | { t: 'locked'; error: string | null; ended: boolean; canForget: boolean }
+  | { t: 'home'; tab: 'requests' | 'devices' | 'admit' };
+
+export default function App() {
+  const rt = useMemo(() => createRuntime(), []);
+  const [view, setView] = useState<View>({ t: 'boot' });
+  const [persistent, setPersistent] = useState<boolean | null>(null);
+  const [updated, setUpdated] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  // ─── start ────────────────────────────────────────────────────────────────────
+  const locked = useCallback((error: string | null = null, ended = false, canForget = false) => {
+    bindPhoneHost(null);
+    setView({ t: 'locked', error, ended, canForget });
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const a = assess(await probe());
+      if (!a.ok) { setView({ t: 'needs', needs: a.needs }); return; }
+      setPersistent(await requestPersistentStorage());
+      setUpdated(await rt.accounts.buildChanged(BUILD_COMMIT));
+      try {
+        setView((await rt.accounts.read()) ? { t: 'locked', error: null, ended: false, canForget: false } : { t: 'welcome' });
+      } catch {
+        // A stored account that cannot be read is never "not paired".
+        setView({ t: 'locked', error: errorText('generic'), ended: false, canForget: true });
+      }
+    })();
+  }, [rt]);
+
+  // Content is hidden when the app goes to the background, and a session ends after more than 5 minutes away (plan 8, DEC-24, 6.2).
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden) {
+        document.body.classList.add('ap-blank');
+        rt.session.noteBackground();
+      } else {
+        document.body.classList.remove('ap-blank');
+        rt.session.noteForeground();
+        if (viewRef.current.t === 'home' && !rt.session.bearer()) locked(null, true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [rt, locked]);
+
+  // The phone's own session limits (an hour of no use, 12 hours after the last check) are looked at on a slow timer.
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      if (viewRef.current.t === 'home' && !rt.session.bearer()) locked(null, true);
+    }, 15_000);
+    return () => window.clearInterval(t);
+  }, [rt, locked]);
+
+  // ─── open a session ───────────────────────────────────────────────────────────
+  const openSession = useCallback(async () => {
+    setBusy(true);
+    const r = await rt.session.open();
+    setBusy(false);
+    if (!r.ok) {
+      locked(errorText(r.code), false, r.code === 'device_removed' || r.code === 'keys_missing');
+      return;
+    }
+    const account = await rt.accounts.read();
+    if (!account) { locked(errorText('not_paired')); return; }
+    bindPhoneHost({ reader: rt.reader, keys: rt.keys, ownKeyId: account.key_id, userId: r.session.user.id });
+    setView({ t: 'home', tab: 'requests' });
+  }, [rt, locked]);
+
+  const forget = useCallback(async () => {
+    await rt.keys.deleteAll().catch(() => {});
+    await rt.accounts.clear().catch(() => {});
+    setView({ t: 'welcome' });
+  }, [rt]);
+
+  switch (view.t) {
+    case 'boot':
+      return <div className="device-screen"><p role="status">{P.listLoading}</p></div>;
+    case 'needs':
+      return <NeedsScreen needs={view.needs} />;
+    case 'welcome':
+      return <WelcomeScreen onNew={() => setView({ t: 'register' })} onJoin={() => setView({ t: 'join' })} />;
+    case 'register':
+      return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
+    case 'join':
+      return <JoinFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
+    case 'locked':
+      return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
+    case 'home':
+      return <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} />;
+  }
+}
+
+type Rt = ReturnType<typeof createRuntime>;
+
+function RegisterFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: () => void }) {
+  const driver = useMemo(() => new RegisterDriver({
+    keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, rpId: rt.rpId, now: rt.now,
+  }), [rt]);
+  useEffect(() => () => driver.dispose(), [driver]);
+  const state = useDriver(driver);
+  return (
+    <RegisterScreen
+      state={state} code={driver.recoveryCode()}
+      onCode={(t) => void driver.submitCode(t)} onName={(l) => void driver.submitName(l)} onCodeSeen={() => driver.codeSeen()}
+      onKept={(c) => driver.toggleKept(c)} onFinish={() => void driver.finish()}
+      onCancel={() => { driver.cancel(); onBack(); }} onDone={onDone}
+    />
+  );
+}
+
+function JoinFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: () => void }) {
+  const driver = useMemo(() => new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now }), [rt]);
+  useEffect(() => () => driver.dispose(), [driver]);
+  const state = useDriver(driver);
+  useEffect(() => {
+    const t = window.setInterval(() => void driver.poll(), POLL_MS);
+    return () => window.clearInterval(t);
+  }, [driver]);
+  return (
+    <JoinScreen
+      state={state} nowSeconds={rt.now()}
+      onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone}
+    />
+  );
+}
+
+function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
+  rt: Rt; tab: 'requests' | 'devices' | 'admit'; setTab: (t: 'requests' | 'devices' | 'admit') => void;
+  persistent: boolean | null; updated: boolean; onEnded: () => void;
+}) {
+  return (
+    <div className="ap-shell">
+      <nav className="ap-nav" aria-label="App">
+        <button type="button" className="btn btn-ghost" aria-current={tab === 'requests' ? 'page' : undefined} onClick={() => setTab('requests')}>{P.navRequests}</button>
+        <button type="button" className="btn btn-ghost" aria-current={tab !== 'requests' ? 'page' : undefined} onClick={() => setTab('devices')}>{P.navDevices}</button>
+      </nav>
+      {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
+      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} />}
+      {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}
+    </div>
+  );
+}
+
+function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
+  const [proposals, setProposals] = useState<Proposal[] | null>(null);
+  const [error, setError] = useState<string | undefined>();
+  const [open, setOpen] = useState<{ proposal: Proposal; contextMissing: boolean } | null>(null);
+
+  const load = useCallback(async (byPerson: boolean) => {
+    const r = await rt.reader.list(byPerson);
+    if (r.ok) { setProposals(r.data); setError(undefined); return; }
+    if (r.code === 'session_ended') { onEnded(); return; }
+    setError(r.code === 'as_unreachable' ? errorText('as_unreachable') : P.listFailed);
+  }, [rt, onEnded]);
+
+  useEffect(() => {
+    void load(true);
+    const t = window.setInterval(() => void load(false), REFRESH_MS);
+    return () => window.clearInterval(t);
+  }, [load]);
+
+  const openOne = useCallback(async (id: string) => {
+    const r = await rt.reader.get(id, true);
+    if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
+    const account = await rt.accounts.read();
+    let contextMissing = false;
+    if (account && r.data.content) {
+      const ctx = await openContext(r.data.content as unknown as ContentWire, account.key_id, rt.keys);
+      contextMissing = ctx !== null && 'contextError' in ctx;
+    }
+    setOpen({ proposal: r.data, contextMissing });
+  }, [rt, onEnded]);
+
+  if (open) {
+    return <RequestDetail proposal={open.proposal} userId={rt.session.current()?.user.id ?? ''} contextMissing={open.contextMissing} onBack={() => setOpen(null)} />;
+  }
+  return <RequestsScreen proposals={proposals} error={error} nowMs={Date.now()} onOpen={(id) => void openOne(id)} onRefresh={() => void load(true)} />;
+}
+
+function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void }) {
+  const [rows, setRows] = useState<DeviceRow[]>([]);
+  const [code, setCode] = useState<string | null>(null);
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+
+  const show = useCallback(async () => {
+    const s = rt.session.current();
+    const account = await rt.accounts.read();
+    if (!s || !account) { onEnded(); return; }
+    setRows(deviceRows(s.entries, s.chain, account.key_id, rt.now()));
+    setCode(await identityCodeOf(account.root_did));
+  }, [rt, onEnded]);
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    rt.session.noteUse();
+    const r = await rt.session.refreshChain();
+    setBusy(false);
+    if (!r.ok) { setError(errorText(r.code)); return; }
+    setError(undefined);
+    await show();
+  }, [rt, show]);
+
+  useEffect(() => { void show(); void refresh(); }, [show, refresh]);
+
+  return (
+    <DevicesScreen
+      rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
+      version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
+    />
+  );
+}
+
+function AdmitFlow({ rt, onDone }: { rt: Rt; onDone: () => void }) {
+  const driver = useMemo(() => new AdmitDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  useEffect(() => () => driver.dispose(), [driver]);
+  const state = useDriver(driver);
+  useEffect(() => {
+    const t = window.setInterval(() => void driver.poll(), POLL_MS);
+    return () => window.clearInterval(t);
+  }, [driver]);
+  return (
+    <AdmitScreen
+      state={state} nowSeconds={rt.now()}
+      onScanned={(t) => void driver.scanned(t)} onChoose={(c) => void driver.choose(c)}
+      onCancel={() => driver.cancel()} onDone={onDone}
+    />
+  );
+}
