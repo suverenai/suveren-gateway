@@ -619,6 +619,11 @@ class SPClient {
     return data.groups ?? data;
   }
 
+  /**
+   * The profiles THIS GATEWAY ships and enforces. `/api/profiles` is answered by the
+   * control plane from the gateway's own copy, never by the Authority Server, so what
+   * a screen shows (labels, limits, versions) is what is enforced.
+   */
   async listProfiles(): Promise<ProfileSummary[]> {
     const res = await this.fetch('/api/profiles');
     if (!res.ok) throw new Error(`Failed to fetch profiles: ${res.status}`);
@@ -628,7 +633,8 @@ class SPClient {
 
   async getProfile(id: string) {
     const res = await this.fetch(`/api/profiles/${encodeURIComponent(id)}`);
-    if (!res.ok) throw new Error(`Failed to fetch profile: ${res.status}`);
+    // A profile this gateway does not ship answers 404 with a plain reason (never fetched elsewhere).
+    if (!res.ok) throw new Error(asErrorMessage(await res.json().catch(() => ({})), `Failed to fetch profile: ${res.status}`));
     return res.json();
   }
 

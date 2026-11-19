@@ -35,6 +35,7 @@ import { isSimulationMode } from '../src/lib/simulation-mode';
 import { agentAccess, bindRefusal, resolveAgentToken, resolveBindHost } from '../src/lib/agent-access';
 import { readPairing } from '../src/lib/as-pairing';
 import { loadProfiles } from '../src/lib/profile-loader';
+import { localProfileSummaries, localProfile } from '../src/lib/profile-catalog';
 import { loadManifests, getAllManifests, getManifest, getSignInGroups } from '../src/lib/manifest-loader';
 import { planReplacement } from '../src/lib/connector-replacement';
 import { buildInternalPreview } from '../src/lib/preview';
@@ -897,6 +898,17 @@ app.get('/internal/authorizations', internalOnly, (_req: Request, res: Response)
     needsReapproval: a.needsReapproval ?? false,
   }));
   res.json({ authorizations });
+});
+
+// The gateway's own profile catalog (what it enforces): the control plane serves it
+// to the UI and uses it for the mandate ceremony instead of the Authority Server's copy.
+app.get('/internal/profiles', internalOnly, (_req: Request, res: Response) => {
+  res.json({ profiles: localProfileSummaries() });
+});
+
+app.get('/internal/profiles/:id', internalOnly, (req: Request, res: Response) => {
+  const { status, body } = localProfile(req.params.id);
+  res.status(status).json(body);
 });
 
 app.get('/internal/manifests', internalOnly, (_req: Request, res: Response) => {

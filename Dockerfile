@@ -14,17 +14,24 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/ packages/
 COPY apps/ apps/
 COPY bundle/ bundle/
+# The profile pin: one hap-profiles commit, sha256 per file.
+COPY profiles.lock ./
 # Integration manifests — bundle/build.mjs bundles them (content/integrations).
 COPY content/ content/
 
 RUN pnpm install --frozen-lockfile || pnpm install
 RUN pnpm build
 
-# Pull profiles BEFORE assembling the bundle — bundle/build.mjs copies the
+# Pull the pinned profiles BEFORE assembling the bundle — bundle/build.mjs copies the
 # profile catalog into the bundle, so /hap-profiles must already exist (else it
 # fails with "Missing profiles"). The clone is also reused by the production
 # stage, so the runtime image needs no git.
-RUN git clone --depth 1 https://github.com/humanagencyprotocol/hap-profiles.git /hap-profiles \
+# Exactly the commit profiles.lock names (not main); bundle/build.mjs then
+# verifies every file against the lock and fails the build on any difference.
+RUN COMMIT="$(node -p "require('./profiles.lock').commit")" \
+    && git init -q /hap-profiles \
+    && git -C /hap-profiles fetch -q --depth 1 https://github.com/humanagencyprotocol/hap-profiles.git "$COMMIT" \
+    && git -C /hap-profiles checkout -q FETCH_HEAD \
     && rm -rf /hap-profiles/.git
 
 # Assemble the publishable bundle, incl. the profile catalog. Output: /build/bundle/dist/

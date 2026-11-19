@@ -34,9 +34,15 @@ jobs:
       # copy. Two suites (deploy-profile, content-binding-fields) assert
       # against the real published profiles, so without this they fail on an
       # undefined profile rather than on anything they mean to test.
+      # Pinned: the commit profiles.lock names, not whatever main holds today.
+      - name: Read the profile pin
+        id: profiles-pin
+        run: echo "commit=$(node -p "require('./suveren-gateway/profiles.lock').commit")" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v6
         with:
           repository: humanagencyprotocol/hap-profiles
+          ref: ${{ steps.profiles-pin.outputs.commit }}
           path: hap-profiles
 
       - uses: pnpm/action-setup@v6

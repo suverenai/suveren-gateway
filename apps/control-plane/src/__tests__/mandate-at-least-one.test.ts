@@ -49,8 +49,6 @@ function fakeAs() {
     calls.push({ method, path });
     if (path === '/api/groups') return { status: 200, body: { groups: [{ id: 'g_personal', name: 'Anna', isPersonal: true }] } };
     if (path === '/api/mandates/mine?status=active') return { status: 200, body: { mandates: [{ authorization_id: 'authz_old', profileId: VENUE.id, groupId: 'g_personal' }] } };
-    if (path === '/api/profiles') return { status: 200, body: { profiles: [{ id: VENUE.id }] } };
-    if (path.startsWith('/api/profiles/')) return { status: 200, body: VENUE };
     return { status: 404, body: {} };
   };
   return { as, calls };
@@ -59,6 +57,7 @@ function fakeAs() {
 function deps(as: CeremonyDeps['as']): CeremonyDeps {
   return {
     as, user: USER,
+    profiles: { list: async () => [{ id: VENUE.id }], get: async (id: string) => (id === VENUE.id ? VENUE : undefined) },
     encrypt: vi.fn(), deliverGateContent: vi.fn(async () => {}), newAuthorizationId: () => 'authz_new',
   } as unknown as CeremonyDeps;
 }
