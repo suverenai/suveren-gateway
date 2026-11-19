@@ -39,7 +39,7 @@ export function AuthorityServerCard() {
     let cancelled = false;
     spClient.getAsPairing()
       .then(data => { if (!cancelled) setState(data); })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not read Authority Server info'); });
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not read suveren.ai info'); });
     return () => { cancelled = true; };
   }, []);
 
@@ -49,7 +49,7 @@ export function AuthorityServerCard() {
   return (
     <article className="ob-card su-card">
       <ObTypeLine tag="SERVER" parts={['Connection', asUrlLocked && <LockedByItBadge />]} />
-      <h3 className="ob-title">Your Authority Server</h3>
+      <h3 className="ob-title">Your suveren.ai connection</h3>
 
       {!state && !error && (
         <p className="ob-one">Checking…</p>
@@ -67,7 +67,7 @@ export function AuthorityServerCard() {
               <dd className="ob-mono is-strong">{state.asUrl}</dd>
               {state.paired && state.fingerprint && (
                 <>
-                  <dt>Key fingerprint</dt>
+                  <dt>Key check value</dt>
                   <dd className="ob-mono is-strong">{state.fingerprint}</dd>
                 </>
               )}
@@ -76,7 +76,7 @@ export function AuthorityServerCard() {
                   as-tls-pin.ts), so turning pin-tls on later enforces a pin
                   already on file rather than a fresh trust-on-first-use
                   moment — this is the out-of-band check for that pin, same as
-                  the key fingerprint above, and worth comparing before relying
+                  the key check value above, and worth comparing before relying
                   on it either way. */}
               {(state.tlsPinFingerprint || state.pinTlsEnabled) && (
                 <>
@@ -96,7 +96,7 @@ export function AuthorityServerCard() {
 
           {state.paired && state.fingerprint ? (
             <p className="ob-one">
-              Compare this with the fingerprint on the Authority Server's own admin page over a
+              Compare this with the check value on suveren.ai's own admin page over a
               second channel (phone, video call) to confirm this gateway is talking to the right
               server.
             </p>
@@ -113,7 +113,7 @@ export function AuthorityServerCard() {
                     <>, set by your organization's IT policy</>
                   ) : (
                     <> (<code>config set pin-tls on</code>)</>
-                  )}. Every connection to the Authority Server must present this certificate's
+                  )}. Every connection to suveren.ai must present this certificate's
                   public key, or the gateway refuses it and locks.
                 </>
               ) : (
@@ -130,7 +130,7 @@ export function AuthorityServerCard() {
           )}
           {asUrlLocked ? (
             <p className="ob-one">
-              This Authority Server URL is set by your organization's IT policy and cannot be
+              This suveren.ai URL is set by your organization's IT policy and cannot be
               changed from this computer. Contact your IT administrator if it needs to change.
             </p>
           ) : (

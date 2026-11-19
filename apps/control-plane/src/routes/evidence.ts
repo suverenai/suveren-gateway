@@ -282,7 +282,7 @@ export function createEvidenceRouter(): Router {
         ?? (e.boundContent && typeof e.boundContent === 'object' && !Array.isArray(e.boundContent) ? e.boundContent : undefined);
       const ref = findSealedAttachment(candidate, sha256);
       if (!ref) {
-        res.status(404).json({ status: 'error', message: 'No sealed attachment with this fingerprint on this ticket.' });
+        res.status(404).json({ status: 'error', message: 'No sealed attachment with this check value on this ticket.' });
         return;
       }
       const result = await getAttachmentPreview(ref);

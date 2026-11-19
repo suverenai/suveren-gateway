@@ -60,7 +60,7 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
       });
     } else if (e.state === 'error') {
       items.push({
-        label: 'Integration error',
+        label: 'Connector error',
         detail: e.integration?.error
           ? `${e.manifest.name}: ${e.integration.error}${e.integration.problem ? ` It said: ${e.integration.problem}` : ''}`
           : `${e.manifest.name} is not running`,
@@ -81,7 +81,7 @@ export function buildIntegrationAttentionItems(entries: IntegrationEntry[], simu
         });
       } else {
         items.push({
-          label: 'Integration stopped',
+          label: 'Connector stopped',
           detail: `${e.manifest.name} is not running`,
           to: '/integrations',
           color: 'var(--text-primary)',

@@ -98,14 +98,14 @@ const SETUP_INTENT_HINT_REAL = [
 const DELEGATION_INTENT_HINT = [
   'Why — With test data only, I want to find out which routine parts of my work an AI could take over, so people gain time — before anything touches real systems.',
   '',
-  'Goal — Follow the setup guide: interview me about the company, the team and the work; prepare test data from real cases, renamed to .example names; propose the mandates and the working instructions (agent brief) that the AI doing the work will need.',
+  'Goal — Follow the setup guide: interview me about the company, the team and the work; prepare test data from real cases, renamed to .example names; propose the mandates and the working instructions (AI brief) that the AI doing the work will need.',
   '',
   'Watch out — You only propose; nothing happens until I approve it in the Suveren Gateway. Ask, don\'t guess: never invent a rule, a limit or a step. One proposal at a time. Steps customers would see start with my review. Never use real names or customer data in a test run — test data only. Never give the working AI a reporting mandate during a test run. Keep the setup and the working AI in separate conversations.',
   '',
   // DL1 — outside simulation, the same mandate also covers ongoing, real-system
   // use: the Scope above (which profiles, which mode) is what actually bounds
   // the AI from here, not simulation mode. Plain words, per the brief.
-  'Outside simulation — once you have connected real systems: the AI proposes mandates and its own working instructions (agent brief) for the profiles you allow above; you approve each one before it takes effect. Setup itself can never be proposed.',
+  'Outside simulation — once you have connected real systems: the AI proposes mandates and its own working instructions (AI brief) for the profiles you allow above; you approve each one before it takes effect. Setup itself can never be proposed.',
 ].join('\n');
 
 function briefRefusal(args: Record<string, unknown>): string | undefined {
@@ -214,7 +214,7 @@ function delegationMandateRefusal(auth: MandateCandidate): string | undefined {
   if (!profile) {
     return (
       `this gateway does not know ${shortName(auth.profileId)} ${versionOf(auth.profileId)} — the version your ` +
-      'Setup mandate was signed on. Ask the person to update the Suveren Gateway; nothing is wrong with the mandate.'
+      'Setup mandate was given on. Ask the person to update the Suveren Gateway; nothing is wrong with the mandate.'
     );
   }
   return (
@@ -353,7 +353,7 @@ const CREATE_MANDATE_INPUT_SCHEMA = {
     title: { type: 'string', description: 'A short name for the mandate.' },
     ticket_id: {
       type: 'string',
-      description: 'Authorization reference for this call, set by the governing gateway — agents do not set this.',
+      description: 'Mandate reference for this call, set by the governing gateway — AIs do not set this.',
     },
   },
   required: ['profile', 'limits', 'intent', 'mode'],
@@ -362,10 +362,10 @@ const CREATE_MANDATE_INPUT_SCHEMA = {
 const SET_AGENT_BRIEF_INPUT_SCHEMA = {
   type: 'object',
   properties: {
-    content: { type: 'string', description: 'The complete new agent brief, in markdown (at most 16 KB).' },
+    content: { type: 'string', description: 'The complete new AI brief, in markdown (at most 16 KB).' },
     ticket_id: {
       type: 'string',
-      description: 'Authorization reference for this call, set by the governing gateway — agents do not set this.',
+      description: 'Mandate reference for this call, set by the governing gateway — AIs do not set this.',
     },
   },
   required: ['content'],
@@ -382,7 +382,7 @@ const DESCRIBE_MANDATE_PROPOSAL_OUTPUT_SCHEMA = {
     limits: { type: 'object', title: 'Limits' },
     scope: { type: 'object', title: 'Scope' },
     title: { type: ['string', 'null'], title: 'Title' },
-    intent: { type: 'string', title: 'Intent', description: 'Written by the AI — becomes your words when you sign' },
+    intent: { type: 'string', title: 'Intent', description: 'Written by the AI — becomes your words when you give it' },
     checks: { type: 'array', title: 'Checks', items: { type: 'string' } },
   },
   required: ['proposal', 'profile_version', 'workspace', 'mode', 'valid', 'limits', 'scope', 'title', 'intent', 'checks'],
@@ -400,7 +400,7 @@ const DESCRIBE_BRIEF_PROPOSAL_OUTPUT_SCHEMA = {
 const CHANGE_MANDATE_DESCRIPTION =
   'Propose a change to one of the person\'s active mandates. Name it by `mandate_id` (shown by list-authorizations) ' +
   'and give only what should change: `limits`, `scope`, `mode`, `duration_hours` or `intent`. The gateway builds the new ' +
-  'mandate from the signed one and shows the person only the differences. A person approves or rejects; nothing changes ' +
+  'mandate from the given one and shows the person only the differences. A person approves or rejects; nothing changes ' +
   'until then, even for a reduction. A Setup mandate can never be changed. Any other argument is refused. ' +
   WHEN_TO_SUGGEST_A_CHANGE;
 
@@ -477,7 +477,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     // card), not the internal "test setup" framing. Description is unchanged.
     name: 'Setup',
     description:
-      'Your AI proposes mandates and its agent brief — in a test (simulation mode) and, within the profiles ' +
+      'Your AI proposes mandates and its AI brief — in a test (simulation mode) and, within the profiles ' +
       'and modes you allow, on your real systems too. Every proposal waits for your approval.',
     get intentHint() { return isSimulationMode() ? DELEGATION_INTENT_HINT : SETUP_INTENT_HINT_REAL; },
     profile: DELEGATION_PROFILE,
@@ -489,14 +489,14 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     // Wording A, signed off by Andreas 2026-11-05. The agent passes it on to the person.
     noMandateText:
       'Not done: I may only prepare mandates once you have given me a **Setup** mandate. Two ways: ' +
-      '(1) In the gateway, open **Mandates → New mandate → Setup** and sign it. Then I prepare mandates and you approve each one. ' +
-      '(2) Or sign the mandate you want yourself: **Mandates → New mandate**, then pick the area. Tell me which you prefer.',
+      '(1) In the gateway, open **Mandates → New mandate → Setup** and give it. Then I prepare mandates and you approve each one. ' +
+      '(2) Or give the mandate you want yourself: **Mandates → New mandate**, then pick the area. Tell me which you prefer.',
     toolGating: {
       overrides: {
         set_agent_brief: {
           executionMapping: {},
           staticExecution: { action_type: 'brief' },
-          actionLabel: 'Agent brief set',
+          actionLabel: 'AI brief set',
           hideUnlessAuthorized: true,
           approvalView: { content: { label: 'New agent brief', kind: 'markdown' } },
           // AU3 — the approval card's preview of this pending proposal (DL1
@@ -548,7 +548,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         description:
           'Start here when the person asks how to begin with Suveren or how to set up their work with it. ' +
           'Simulation mode only: the setup guides — how to interview the person, build the test data, propose ' +
-          'mandates and the agent brief, set up the working AI\'s process, and what can make a test misleading. ' +
+          'mandates and the AI brief, set up the working AI\'s process, and what can make a test misleading. ' +
           'Call without `topic` for the list and the order to follow; then read each topic before doing that step.',
         inputSchema: {
           type: 'object',
@@ -592,7 +592,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
       {
         name: 'set_agent_brief',
         description:
-          'Propose a new agent brief — the standing instructions every agent session starts with. `content` ' +
+          'Propose a new AI brief — the standing instructions every AI session starts with. `content` ' +
           'replaces the whole brief (markdown, at most 16 KB). A person approves or rejects the proposal; only ' +
           'after approval is the brief replaced, and it applies from the next session. Write the complete brief, ' +
           'not a change to the current one.',
@@ -604,15 +604,15 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (refusal) return { ...builtinText(`Refused: ${refusal}`), isError: true };
           writeContextFile(args.content as string);
           return builtinText(
-            `Agent brief replaced (${Buffer.byteLength(args.content as string, 'utf-8')} bytes). It applies from the next agent session.`,
+            `AI brief replaced (${Buffer.byteLength(args.content as string, 'utf-8')} bytes). It applies from the next AI session.`,
           );
         },
       },
       {
         name: 'create_mandate',
         description:
-          'Propose a new mandate for the person running this gateway — the authority another tool needs (e.g. ' +
-          'sales quotes up to a value). Always goes to the person\'s current workspace (their team, or Personal ' +
+          'Propose a new mandate for the person running this gateway — the permission another tool needs (e.g. ' +
+          'sales quotes up to a value). Always goes to the person\'s current team (their team, or Personal ' +
           'if they are not in one) — there is no way to name a different one. A person approves or rejects the ' +
           'proposal; only after approval is the mandate created, exactly as if they had signed it on the mandate ' +
           'screen. Checked against the profile before the proposal: unknown limits, a mode the profile does not ' +
@@ -663,7 +663,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           if (r.revokeError) {
             return {
-              ...builtinText(`The new mandate ${r.authorizationId} is signed and active, but the old mandate ${read.old.authorizationId} could not be revoked and is still live with its old limits. Tell the person: they should revoke the old one in the gateway. (${r.revokeError})`),
+              ...builtinText(`The new mandate ${r.authorizationId} is given and active, but the old mandate ${read.old.authorizationId} could not be ended and is still live with its old limits. Tell the person: they should end the old one in the gateway. (${r.revokeError})`),
               isError: true,
             };
           }
@@ -675,7 +675,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         // Internal, like describe_mandate_proposal: the card's local facts, never listed.
         name: 'describe_mandate_change',
         internal: true,
-        description: 'Internal — the local facts on the approval card of a pending change_mandate proposal. Not for agent use.',
+        description: 'Internal — the local facts on the approval card of a pending change_mandate proposal. Not for AI use.',
         inputSchema: { type: 'object', properties: { mandate_id: { type: 'string' }, change: { type: 'object' } } },
         outputSchema: {
           type: 'object',
@@ -690,7 +690,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         // pending create_mandate proposal from the SAME args, local data only.
         name: 'describe_mandate_proposal',
         internal: true,
-        description: 'Internal — the approval card\'s preview of a pending create_mandate proposal. Not for agent use.',
+        description: 'Internal — the approval card\'s preview of a pending create_mandate proposal. Not for AI use.',
         inputSchema: CREATE_MANDATE_INPUT_SCHEMA,
         outputSchema: DESCRIBE_MANDATE_PROPOSAL_OUTPUT_SCHEMA,
         handler: async (args) => {
@@ -729,7 +729,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         // callable by an agent. Builds the "New agent brief" diff card.
         name: 'describe_brief_proposal',
         internal: true,
-        description: 'Internal — the approval card\'s preview of a pending set_agent_brief proposal. Not for agent use.',
+        description: 'Internal — the approval card\'s preview of a pending set_agent_brief proposal. Not for AI use.',
         inputSchema: SET_AGENT_BRIEF_INPUT_SCHEMA,
         outputSchema: DESCRIBE_BRIEF_PROPOSAL_OUTPUT_SCHEMA,
         handler: async (args) => {

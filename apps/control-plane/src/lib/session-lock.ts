@@ -32,16 +32,16 @@ export interface SessionLockDeps {
 }
 
 /** The one-line reason relayed to the browser over SSE (payload, not the event name). */
-export const SESSION_LOCKED_MESSAGE = 'Your sign-in ended after 30 days or was revoked. Sign in again.';
+export const SESSION_LOCKED_MESSAGE = 'Your sign-in ended. Sign in again.';
 
 /** Same channel, for the pinned-key mismatch case (see as-pairing.ts). */
 export const AS_KEY_MISMATCH_MESSAGE =
-  'The Authority Server presented a signing key that does not match the one pinned at pairing. Sign in again to review.';
+  'suveren.ai presented a signing key that does not match the one pinned at pairing. Sign in again to review.';
 
 /** Same channel, for the TLS pin mismatch case (see as-tls-pin.ts) — only
  *  reachable when `config set pin-tls on` is enabled. */
 export const AS_TLS_MISMATCH_MESSAGE =
-  'A connection to the Authority Server presented a TLS certificate that does not match the one pinned ' +
+  'A connection to suveren.ai presented a TLS certificate that does not match the one pinned ' +
   'at pairing. The connection was refused before anything was sent. If the certificate changed ' +
   'intentionally (a new key, not just renewal), clear the pairing and sign in again to re-pin it.';
 

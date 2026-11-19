@@ -103,7 +103,7 @@ type RawPolicy = Partial<Record<RawPolicyKey, string | number | boolean>>;
  */
 function validateAsUrl(candidate: string): { ok: boolean; url?: string; error?: string } {
   const trimmed = candidate.trim();
-  if (!trimmed) return { ok: false, error: 'The Authority Server URL is empty.' };
+  if (!trimmed) return { ok: false, error: 'The suveren.ai URL is empty.' };
   let parsed: URL;
   try {
     parsed = new URL(trimmed);

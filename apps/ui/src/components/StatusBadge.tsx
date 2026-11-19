@@ -7,7 +7,7 @@ const LABELS: Record<string, string> = {
   active: 'Active',
   pending: 'Pending',
   expired: 'Expired',
-  revoked: 'Revoked',
+  revoked: 'Ended',
 };
 
 export function StatusBadge({ status, label }: Props) {

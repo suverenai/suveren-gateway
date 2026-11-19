@@ -164,7 +164,7 @@ export function BlockedPage() {
   }, [records, catalog]);
 
   if (failed) {
-    return <EmptyState icon="⛔" title="Could not load blocked actions" text="Try again shortly." />;
+    return <EmptyState icon="⛔" title="Could not load refused actions" text="Try again shortly." />;
   }
   if (records === null) return null;
 
@@ -181,8 +181,8 @@ export function BlockedPage() {
       {records.length === 0 ? (
         <EmptyState
           icon="✓"
-          title="Nothing blocked"
-          text="Every call your agent made stayed within its mandate."
+          title="Nothing refused"
+          text="Every call your AI made stayed within its mandate."
         />
       ) : (
         <>

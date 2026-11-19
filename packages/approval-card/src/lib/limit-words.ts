@@ -161,7 +161,7 @@ export function sharedLimitHelper(bound: CumulativeBound, team: boolean, words?:
   if (!team) return null;
   const noun = words?.[bound.key]?.noun;
   return noun
-    ? `Every colleague's ${noun} count toward this one number.`
+    ? `Every member's ${noun} count toward this one number.`
     : 'Everyone on the team counts toward this one number.';
 }
 
@@ -225,9 +225,9 @@ export function refusalSentence(refusal: RefusalData, profile: AgentProfile | nu
     }
   }
 
-  if (refusal.code === 'MANDATE_REVOKED') return { text: `${lead} This mandate was revoked.`, basis: 'code' };
+  if (refusal.code === 'MANDATE_REVOKED') return { text: `${lead} This mandate was ended.`, basis: 'code' };
   if (refusal.code === 'MANDATE_EXPIRED') return { text: `${lead} This mandate has expired.`, basis: 'code' };
 
   const msg = refusal.message?.trim();
-  return { text: msg ? `${lead} ${msg}` : `${lead} The Authority Server refused it.`, basis: 'message' };
+  return { text: msg ? `${lead} ${msg}` : `${lead} suveren.ai refused it.`, basis: 'message' };
 }

@@ -159,7 +159,7 @@ export function DashboardPage() {
   attentionItems.push(...buildIntegrationAttentionItems(integrationEntries, simulationOn));
   for (const e of startingIntegrations) {
     attentionItems.push({
-      label: 'Integration starting',
+      label: 'Connector starting',
       detail: `${e.manifest.name} is coming up…`,
       to: '/integrations',
       color: 'var(--text-primary)',
@@ -174,7 +174,7 @@ export function DashboardPage() {
     if (e.authStatus === 'failed' && e.state !== 'not-running' && e.state !== 'error' && e.state !== 'paused') {
       attentionItems.push({
         label: 'Reconnect needed',
-        detail: `${e.manifest.name}: authorization expired — reconnect to restore access`,
+        detail: `${e.manifest.name}: login expired — reconnect to restore access`,
         to: '/integrations',
         color: 'var(--text-primary)',
       });

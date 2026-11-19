@@ -31,7 +31,7 @@ export function outcomeOfProposal(p: Pick<Proposal, 'status' | 'refusal'>): Excl
 
 /** "Not known": the stamp must not read as a success when nobody has confirmed it. */
 export const OUTCOME_WAITING_LINE = 'Waiting for the ticket…';
-export const OUTCOME_UNKNOWN_LINE = 'The Authority Server has not answered yet, so it is not known whether this ran. Open Tickets to see the result.';
+export const OUTCOME_UNKNOWN_LINE = 'suveren.ai has not answered yet, so it is not known whether this ran. Open Tickets to see the result.';
 
 /** The action under a result that stays on screen. */
 export function resultDismissLabel(moreWaiting: boolean): string {
@@ -44,8 +44,8 @@ export type MandateEnded = NonNullable<Proposal['mandateEnded']>;
 
 const ENDED_WORDS: Record<MandateEnded, { head: string; decisionError: string }> = {
   revoked: {
-    head: 'This mandate was revoked.',
-    decisionError: 'This mandate was revoked. It can no longer be approved.',
+    head: 'This mandate was ended.',
+    decisionError: 'This mandate was ended. It can no longer be approved.',
   },
   expired: {
     head: 'This mandate has expired.',

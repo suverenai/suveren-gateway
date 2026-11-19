@@ -158,7 +158,7 @@ export async function resolveAttachmentsAndInserts(
     for (const ref of refsResult.refs) {
       const policy = isAttachmentSourceAllowed(profileId, profile, allowedSourcesValue, ref);
       if (!policy.allowed) {
-        return { ok: false, message: `Refused: attachment "${ref.connector}:${ref.kind}" is not allowed. ${policy.reason} Tell the person: **Mandates**, open the mandate, **Edit**, tick it under **What the AI may attach**, sign again. Do not send without the attachment they asked for: stop and ask.` };
+        return { ok: false, message: `Refused: attachment "${ref.connector}:${ref.kind}" is not allowed. ${policy.reason} Tell the person: **Mandates**, open the mandate, **Change**, tick it under **What the AI may attach**, give again. Do not send without the attachment they asked for: stop and ask.` };
       }
       const resolved = await resolveDocumentReference(integrationManager, ref, maxBytes);
       if (!resolved.ok) {

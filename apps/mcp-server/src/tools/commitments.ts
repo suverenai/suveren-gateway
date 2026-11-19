@@ -371,9 +371,9 @@ export async function executeCommitted(
       if (code === 'VERSION_UNSUPPORTED') {
         state.cache.markNeedsReapproval(proposal.authorizationId);
         return {
-          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} must be signed again ` +
-            `— the Authority Server no longer accepts its protocol version. Ask the mandate owner to ` +
-            `sign it again (Mandates page → Sign again; see list-authorizations). ${err.message}`,
+          text: `Proposal ${proposal.id}: blocked — mandate ${proposal.authorizationId} must be given again ` +
+            `— suveren.ai no longer accepts its protocol version. Ask the mandate owner to ` +
+            `give it again (Mandates page → Give again; see list-authorizations). ${err.message}`,
           isError: true,
         };
       }
@@ -949,7 +949,7 @@ export function checkPendingCommitmentsHandler(
             return {
               content: [{
                 type: 'text' as const,
-                text: `Proposal ${match.id} was REPLACED: the person signed their own version of this ` +
+                text: `Proposal ${match.id} was REPLACED: the person gave their own version of this ` +
                   `mandate on the mandate screen. Nothing was created from this proposal. Use the ` +
                   `person's mandate — check list-authorizations.`,
               }],

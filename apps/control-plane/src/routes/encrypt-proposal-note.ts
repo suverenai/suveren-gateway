@@ -38,7 +38,7 @@ export function createEncryptProposalNoteRouter(vault: Vault, spUrl: string, dat
     const me = vault.getSessionUser();
     const cookie = vault.getSpCookie();
     if (!me || !cookie) {
-      res.status(401).json({ error: 'No Authority Server session.' });
+      res.status(401).json({ error: 'No suveren.ai session.' });
       return;
     }
 

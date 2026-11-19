@@ -41,7 +41,7 @@ const PROVIDER_CONFIG: Record<string, { provider: string; endpoint: string; mode
 // Single ordered list of this page's section headings. The JSX below renders
 // these by index rather than hardcoding the strings a second time, so a test
 // asserting the order can't drift from what's actually on screen.
-export const SETTINGS_SECTIONS = ['Authority Server', 'This computer', 'Security', 'Version', 'AI Assistant'] as const;
+export const SETTINGS_SECTIONS = ['suveren.ai', 'This computer', 'Security', 'Version', 'AI Assistant'] as const;
 
 export function SettingsServicesPage() {
   const [successMsg, setSuccessMsg] = useState('');
@@ -185,7 +185,7 @@ export function SettingsServicesPage() {
     <div className="su-page">
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">The connection to your Authority Server, this computer, security, version and your AI assistant.</p>
+        <p className="page-subtitle">Your connection to suveren.ai, this computer, security, version and your AI assistant.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
@@ -214,17 +214,17 @@ export function SettingsServicesPage() {
           <div className="ob-part">
             <div className="su-tile-h"><ObLock />What the gateway protects</div>
             <ul className="su-list">
-              <li>Every tool call verified against your mandate bounds</li>
-              <li>Credentials never exposed to agents through MCP</li>
+              <li>Every tool call verified against your mandate limits</li>
+              <li>Credentials never exposed to your AI through MCP</li>
               <li>Every action produces a signed ticket</li>
             </ul>
           </div>
           <div className="ob-part">
             <div className="su-tile-h">Your responsibility</div>
             <ul className="su-list">
-              <li>If your AI agent has full access to your computer, it could bypass the gateway</li>
-              <li>For best security, run agents in sandboxed environments</li>
-              <li>The gateway secures what agents do through tools — not what they do on your machine</li>
+              <li>If your AI has full access to your computer, it could bypass the gateway</li>
+              <li>For best security, run your AI in a sandboxed environment</li>
+              <li>The gateway secures what your AI does through tools — not what it does on your computer</li>
             </ul>
           </div>
         </section>
@@ -452,7 +452,7 @@ function AdvancedAIPrompts() {
     >
       <p>
         These are the system prompts the AI assistant sees when helping you write
-        Intent (per-mandate) or Context (your Agent Brief).
+        the why (per mandate) or your AI brief.
         Edit with care — changes apply on the next chat turn.
       </p>
 
@@ -468,8 +468,8 @@ function AdvancedAIPrompts() {
         <>
           <PromptEditor
             kind="intent"
-            label="Intent — per-mandate"
-            description="Used on the Intent gate when creating a new mandate."
+            label="Why — per-mandate"
+            description="Used on the Why step when creating a new mandate."
             state={data.intent}
             draft={drafts.intent}
             onChange={(v) => setDrafts((d) => ({ ...d, intent: v }))}
@@ -481,8 +481,8 @@ function AdvancedAIPrompts() {
 
           <PromptEditor
             kind="context"
-            label="Agent Brief"
-            description="Used on the Agent Brief page when refining your brief."
+            label="AI brief"
+            description="Used on the AI brief page when refining your brief."
             state={data.context}
             draft={drafts.context}
             onChange={(v) => setDrafts((d) => ({ ...d, context: v }))}

@@ -39,7 +39,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/reports', icon: 'reports', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
   { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: 'team', label: 'Team', teamOnly: true, group: 'setup' },
-  { to: '/agent-brief', icon: 'brief', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
+  { to: '/agent-brief', icon: 'brief', label: 'AI brief', statusKey: 'brief', group: 'setup' },
   { to: '/integrations', icon: 'integrations', label: 'Connectors', statusKey: 'integrations', group: 'setup' },
   { to: '/settings', icon: 'settings', label: 'Settings', statusKey: 'assistant', group: 'setup' },
 ];
@@ -188,9 +188,9 @@ export function Sidebar() {
     if (prevMode.current === mode) return;
 
     if (mode === 'team' && activeTeam) {
-      setToastMsg(`You are now acting in team context — ${activeTeam.name}`);
+      setToastMsg(`You are now acting in team — ${activeTeam.name}`);
     } else if (mode === 'personal') {
-      setToastMsg('You have left the team — back to personal context');
+      setToastMsg('You have left the team — back to Personal');
     }
     prevMode.current = mode;
   }, [mode, activeTeam]);

@@ -116,8 +116,8 @@ function SentBox({ view, display, executionContext }: {
         <h4 className="ob-tile-h"><ObLock />Sealed in the ticket</h4>
         <Content content={view.bound} display={display} executionContext={executionContext} sealed />
         {view.check === 'ok'
-          ? <p className="ob-check">&#10003; Matches the fingerprint in the signed ticket</p>
-          : <p className="ob-check ob-check-x">&#10005; <b>Does not match the fingerprint in the signed ticket — this local copy was changed</b></p>}
+          ? <p className="ob-check">&#10003; Matches the check value in the signed ticket</p>
+          : <p className="ob-check ob-check-x">&#10005; <b>Does not match the check value in the signed ticket — this local copy was changed</b></p>}
         {view.extras && sentRows(view.extras, display, executionContext).length > 0 && (
           <>
             <p className="ob-lbl ob-gap">Also sent — recorded by this gateway, not sealed in the ticket</p>

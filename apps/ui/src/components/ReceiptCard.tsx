@@ -140,7 +140,7 @@ export function ReceiptCard({
         </span>
         {/* The signature line sits under the title (§18.3) — only what was actually checked here. */}
         {signature === 'valid' && (
-          <span className="ob-check" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued — no Authority Server involved.">
+          <span className="ob-check" title="Ed25519 signature checked on this device against the issuer key archived when the ticket was issued — no suveren.ai involved.">
             <span aria-hidden="true">&#10003;</span><span>Signature verified on this device · ticket <span className="ob-mono">{shortId}</span></span>
           </span>
         )}
@@ -175,7 +175,7 @@ export function ReceiptCard({
 
           <ObFold title="Mandate" summary={[mandateName, usage].filter(Boolean).join(' · ')} testId="ticket-mandate">
             <p className="ob-lbl">
-              {intent || allowed ? 'Name, allowed values and intent: from this device.' : 'Name: from this device.'}
+              {intent || allowed ? 'Name, allowed values and why: from this device.' : 'Name: from this device.'}
               {usage ? ' Use: sealed in the ticket.' : ''}
             </p>
             <dl className="ob-kv receipt-rows">
@@ -183,21 +183,21 @@ export function ReceiptCard({
               {ownerLabel && <><dt>Owner</dt><dd>{ownerLabel}</dd></>}
               {allowed && <><dt>Allowed</dt><dd>{allowed}</dd></>}
               {usage && <><dt>Used</dt><dd className="receipt-num">{usage}</dd></>}
-              <dt>Intent</dt>
+              <dt>Why</dt>
               <dd className="ob-plain">
                 {intent
                   ? (
                     <>
                       <span className={`intent-text${intentExpanded ? '' : ' intent-clamped'}`}>{intent}</span>{' '}
                       <button type="button" className="ob-link" onClick={() => setIntentExpanded(!intentExpanded)}>
-                        {intentExpanded ? 'Show less' : 'Show full intent'}
+                        {intentExpanded ? 'Show less' : 'Show the full why'}
                       </button>
                     </>
                   )
                   : <span className="receipt-absent">
                       {localUnavailable
                         ? 'local store unreachable — sign in to the gateway to read it'
-                        : 'not on this device — the Authority Server stores only its hash'}
+                        : 'not on this device — suveren.ai stores only its hash'}
                     </span>}
               </dd>
             </dl>

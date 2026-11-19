@@ -118,7 +118,7 @@ describe('createMandate — the sign page\'s request, from the gateway', () => {
   it('an intent that cannot be delivered revokes the new mandate', async () => {
     const { as, calls } = fakeAs();
     const { d } = deps(as, { deliverGateContent: async () => { throw new Error('mcp down'); } });
-    await expect(createMandate(REQ, d)).rejects.toThrow(/revoked/);
+    await expect(createMandate(REQ, d)).rejects.toThrow(/was ended/);
     expect(calls.some((c) => c.path === '/api/authorizations/authz_new/revoke')).toBe(true);
   });
 });
@@ -205,7 +205,7 @@ describe('workspace when `team` is omitted — the Delegation mandate\'s', () =>
 
   it('Delegation mandates in two workspaces: refused, naming both — the AI must say which', async () => {
     const { as, calls } = fakeAs({ delegationIn: ['g_team', 'g_personal'], approvers: ['u_anna'] });
-    await expect(planMandate(SETUP_REQ, deps(as).d)).rejects.toThrow(/several workspaces.*"Sales Vienna".*personal/);
+    await expect(planMandate(SETUP_REQ, deps(as).d)).rejects.toThrow(/several teams.*"Sales Vienna".*personal/);
     expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
   });
 
@@ -331,7 +331,7 @@ describe('replacing a mandate', () => {
   it('an undelivered new mandate is revoked and the old one is left alone', async () => {
     const { as, calls } = fakeAs();
     const { d } = deps(as, { deliverGateContent: vi.fn(async () => { throw new Error('mcp down'); }) });
-    await expect(createMandate(base, d)).rejects.toThrow(/revoked/);
+    await expect(createMandate(base, d)).rejects.toThrow(/was ended/);
     const revoked = calls.filter((c) => c.path.endsWith('/revoke')).map((c) => c.path);
     expect(revoked).toEqual(['/api/authorizations/authz_new/revoke']);
   });

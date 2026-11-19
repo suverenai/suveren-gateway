@@ -17,13 +17,13 @@ export interface DecisionResult {
 
 /** "Approving…" while the call is out (§17.5.1). */
 export function workingWord(kind: DecisionKind, isMandate: boolean): string {
-  if (kind === 'approve') return isMandate ? 'Signing' : 'Approving';
+  if (kind === 'approve') return isMandate ? 'Giving' : 'Approving';
   return kind === 'reject' ? 'Rejecting' : 'Sending';
 }
 
 /** The stamp's word — shown only after the gateway answered (§17.5.2). */
 export function stampWord(kind: DecisionKind, isMandate: boolean): string {
-  if (kind === 'approve') return isMandate ? 'Signed' : 'Approved';
+  if (kind === 'approve') return isMandate ? 'Given' : 'Approved';
   return kind === 'reject' ? 'Rejected' : 'Sent back to the AI';
 }
 

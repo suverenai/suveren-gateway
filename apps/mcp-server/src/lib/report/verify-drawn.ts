@@ -346,13 +346,13 @@ function checkMandateFields(ctx: DrawnCheckContext, att: Attestations, m: Data, 
   }
 
   if (m.profile !== undefined) {
-    if (!payload) box.mismatches.push('profileId: no verified mandate attestation in the file backs it.');
+    if (!payload) box.mismatches.push('profileId: no verified mandate in the file backs it.');
     else signedField(box, 'profileId', m.profile, payload.profile_id);
   }
 
   if (m.mode !== undefined || (Array.isArray(m.owners) && m.owners.length > 0)) {
     if (!payload) {
-      box.mismatches.push(`${prefix}commitment_mode/owner: no verified mandate attestation in the file backs them.`);
+      box.mismatches.push(`${prefix}commitment_mode/owner: no verified mandate in the file backs them.`);
     } else {
       if (m.mode !== undefined) signedField(box, `${prefix}commitment_mode`, m.mode, payload.commitment_mode);
       checkOwners(att, payload, Array.isArray(m.owners) ? m.owners : [], box, prefix);
@@ -389,7 +389,7 @@ function checkOwners(att: Attestations, payload: MandatePayload, labels: unknown
       ? label === ownName
       : label === formatOwnerLabel(did) || label === UNDISCLOSED_OWNER_LABEL || (typeof label === 'string' && !!att.names.get(did)?.has(label));
     if (ok) box.signed.push(`${prefix}owner`);
-    else box.mismatches.push(`${prefix}owner: "${String(label)}" is not a name this owner disclosed in a signed attestation in the file.`);
+    else box.mismatches.push(`${prefix}owner: "${String(label)}" is not a name this owner disclosed in a signed mandate in the file.`);
   });
 }
 

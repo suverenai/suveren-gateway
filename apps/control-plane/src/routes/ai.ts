@@ -128,7 +128,7 @@ export function createAIRouter(vault: Vault): Router {
     }
 
     if (existing.length === 0) {
-      res.json({ success: true, review: null, note: 'No other authorizations on this profile to compare against.' });
+      res.json({ success: true, review: null, note: 'No other mandates on this profile to compare against.' });
       return;
     }
 

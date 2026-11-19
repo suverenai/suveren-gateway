@@ -68,7 +68,7 @@ describe('content-crypto — v0.8 proposal content', () => {
     keysByUser.set('self', self.publicKey);
     const { content } = await encryptProposalContent(ARGS, [], DEPS);
     const forged = { ...content, hash: computeProposalContentHash({ ...ARGS, amount: 500 }) };
-    await expect(decryptProposalContent(forged, 'self', self.privateKey)).rejects.toThrow(/fingerprint/);
+    await expect(decryptProposalContent(forged, 'self', self.privateKey)).rejects.toThrow(/check value/);
   });
 
   it('pre-0.41 content (standard base64, `keys` only) still opens, and is fingerprint-checked', async () => {
@@ -83,6 +83,6 @@ describe('content-crypto — v0.8 proposal content', () => {
     };
     expect(JSON.parse(await decryptProposalContent(wire, 'self', self.privateKey))).toEqual(ARGS);
     await expect(decryptProposalContent({ ...wire, hash: computeProposalContentHash({ x: 1 }) }, 'self', self.privateKey))
-      .rejects.toThrow(/fingerprint/);
+      .rejects.toThrow(/check value/);
   });
 });

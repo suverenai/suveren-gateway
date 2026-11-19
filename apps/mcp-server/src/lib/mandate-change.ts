@@ -49,23 +49,23 @@ export function readSignedMandate(state: SharedState, id: string): SignedMandate
   const ownerDid = decoded?.payload.mandate_owners?.[0]?.did;
   if (!decoded || !ownerDid) return { refusal: 'This mandate\'s signed copy cannot be read here, so it cannot be changed.', code: 'MANDATE_NOT_READABLE' };
   const profile = getProfile(auth.profileId);
-  if (!profile) return { refusal: `This gateway does not know the area version this mandate was signed on (${auth.profileId}). Ask the person to update the gateway.`, code: 'MANDATE_NOT_READABLE' };
+  if (!profile) return { refusal: `This gateway does not know the area version this mandate was given on (${auth.profileId}). Ask the person to update the gateway.`, code: 'MANDATE_NOT_READABLE' };
 
   const bounds = (auth.bounds ?? auth.frame) as Record<string, string | number>;
   const context = auth.context ?? {};
   const intent = auth.gateContent?.intent ?? '';
-  if (!intent) return { refusal: 'This mandate\'s intent is not on this gateway, so it cannot be changed here.', code: 'MANDATE_NOT_READABLE' };
+  if (!intent) return { refusal: 'This mandate\'s why is not on this gateway, so it cannot be changed here.', code: 'MANDATE_NOT_READABLE' };
   // The gateway's own copy must reproduce what was signed, or it would build the change on something the person never signed.
   const same = computeBoundsHash(bounds as never, profile) === decoded.payload.bounds_hash
     && computeScopeHash(context as never, profile) === decoded.payload.scope_hash
     && computeIntentHash(intent) === decoded.payload.gate_content_hashes?.intent;
-  if (!same) return { refusal: 'This gateway\'s copy of the mandate does not match what was signed, so it cannot be changed. Tell the person.', code: 'MANDATE_COPY_MISMATCH' };
+  if (!same) return { refusal: 'This gateway\'s copy of the mandate does not match what was given, so it cannot be changed. Tell the person.', code: 'MANDATE_COPY_MISMATCH' };
 
   const signedMode = auth.signedCommitmentMode ?? (auth.deferredCommitmentDomains.length > 0 ? 'review' : 'automatic');
   // review_above_cap is a team's cap on an automatic mandate, not the person's own choice; the AS applies the cap again.
   const mode: 'review' | 'automatic' = signedMode === 'review' ? 'review' : 'automatic';
   const expiresAt = Math.max(...auth.attestations.map(a => a.expiresAt));
-  if (!auth.groupId) return { refusal: 'This mandate\'s workspace could not be read, so it cannot be changed yet. Try again in a moment.', code: 'MANDATE_NOT_READABLE' };
+  if (!auth.groupId) return { refusal: 'This mandate\'s team could not be read, so it cannot be changed yet. Try again in a moment.', code: 'MANDATE_NOT_READABLE' };
 
   return {
     short: short(auth.profileId),

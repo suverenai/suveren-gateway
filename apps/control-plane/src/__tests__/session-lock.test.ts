@@ -65,7 +65,7 @@ describe('createSessionLock', () => {
     expect(notifyFn).toHaveBeenCalledOnce();
     const [title, message] = notifyFn.mock.calls[0];
     expect(title).toBe('Suveren Gateway locked');
-    expect(message).toBe('Your sign-in has ended. Sign in again so your agents can act.');
+    expect(message).toBe('Your sign-in has ended. Sign in again so your AI can act.');
   });
 
   it('is single-flight: several calls in a row (concurrent 401s) notify exactly once', async () => {

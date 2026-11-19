@@ -8,5 +8,5 @@
  */
 export function replacedRevokeProblem(reason: string | undefined): string {
   if (!reason) return '';
-  return `Your new mandate is signed and active, but the old one could not be revoked, so it is still live with its old limits. Revoke it under Mandates. (${reason})`;
+  return `Your new mandate is given and active, but the old one could not be ended, so it is still live with its old limits. End it under Mandates. (${reason})`;
 }

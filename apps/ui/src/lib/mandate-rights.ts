@@ -55,7 +55,7 @@ export function mandateRight(i: MandateRightInput): MandateRight {
     return {
       can: false,
       code: 'OWNER_NOT_APPROVER',
-      reason: `Only ${i.profileName}'s grantors in ${team} can give this — you are not one of them.`,
+      reason: `Only people allowed to give ${i.profileName} mandates in ${team} can give this — you are not one of them.`,
       fix: `Ask one of them, or a team admin to add you.`,
     };
   }

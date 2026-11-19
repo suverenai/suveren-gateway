@@ -298,8 +298,8 @@ describe('re-approval UX (item 9) — VERSION_UNSUPPORTED', () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain('must be signed again');
-    expect(text).toContain('Ask the mandate owner to sign it again');
+    expect(text).toContain('must be given again');
+    expect(text).toContain('Ask the mandate owner to give it again');
     expect(markNeedsReapproval).toHaveBeenCalledWith(WORK.authorizationId);
     expect(invalidate).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();

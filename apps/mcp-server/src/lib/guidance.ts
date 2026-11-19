@@ -140,20 +140,20 @@ function firstStepWords(card: string, area?: string): string {
  */
 export function firstMandateText(opts: { card: string; area?: string; form?: boolean }): string {
   return [
-    'No active mandate exists, so no tool works. An AI can never create the first one: a person signs it. This is the next step, whatever the person opens with.',
+    'No active mandate exists, so no tool works. An AI can never create the first one: a person gives it. This is the next step, whatever the person opens with.',
     firstStepWords(opts.card, opts.form ? undefined : opts.area),
     ...(opts.form ? [SETUP_FORM] : []),
-    'Once they have signed, call list-authorizations() for what comes next.',
+    'Once they have given it, call list-authorizations() for what comes next.',
   ].join('\n');
 }
 
 /** The Setup mandate's form, given only when the person asks how to fill it in. */
 const SETUP_FORM =
-  'The form, if they ask: **Scope & Limits**: the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. **Intent** is already filled in; they leave it as it is. **Sign**: a **Title** (required), how it runs and for how long, then **Sign mandate**. Ask them first whether it should run automatically or ask each time.';
+  'The form, if they ask: **Scope & Limits**: the areas you may prepare mandates for, the modes you may propose (review = they approve every action; automatic = it runs within the limits) and how many proposals a day. **Why** is already filled in; they leave it as it is. **Give**: a **Title** (required), how it runs and for how long, then **Give the mandate**. Ask them first whether it should run automatically or ask each time.';
 
 /** The Sign step, as the AI tells it whenever a person signs a mandate themselves. */
 export const SIGN_STEP =
-  'Ask them first whether it should run automatically or ask each time. On the **Sign** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Sign mandate**.';
+  'Ask them first whether it should run automatically or ask each time. On the **Give** step they give it a **Title** (required) and choose **Review Each Action** or **Automatic**, then press **Give the mandate**.';
 
 /** The name of the card the mandate picker shows: "Name — Area" when the connector serves several areas. */
 export function pickerCard(m: GuideManifest, area: string, areaName: (a: string) => string): string {
@@ -372,7 +372,7 @@ export function howToGetMandate(
   const t = input.team?.get(shortOf(area));
   if (t?.teamCode === 'profile_not_enabled') {
     const team = t.teamName ? `"${t.teamName}"` : 'the team';
-    return `Blocked: the team ${team} has not enabled ${name}, so no one in it can give this mandate. Tell the person to ask an admin of ${team} to open **Team → Manage this team in your Authority Server**, enable ${name} and name who may give its mandates. Nothing else helps until then.`;
+    return `Blocked: the team ${team} has not enabled ${name}, so no one in it can give this mandate. Tell the person to ask an admin of ${team} to open **Team → Manage this team on suveren.ai**, enable ${name} and name who may give its mandates. Nothing else helps until then.`;
   }
   if (t?.teamCode === 'not_a_grantor') {
     const team = t.teamName ? `"${t.teamName}"` : 'the team';
@@ -385,7 +385,7 @@ export function howToGetMandate(
   };
   if (setup.tool && setup.held.length > 0) {
     if (listed(setup.fields.profile, shortOf(area)) === false) {
-      return `Not yours to propose: the person's ${setup.card} mandate does not list ${name}. Tell them either to sign it themselves (**Mandates → + New mandate →** card **${card}**; ${SIGN_STEP}) or to add ${name} to the ${setup.card} mandate (**Mandates**, open it, **Edit**); then you can propose it.`;
+      return `Not yours to propose: the person's ${setup.card} mandate does not list ${name}. Tell them either to give it themselves (**Mandates → + New mandate →** card **${card}**; ${SIGN_STEP}) or to add ${name} to the ${setup.card} mandate (**Mandates**, open it, **Change**); then you can propose it.`;
     }
     const modes = [...new Set(setup.held.flatMap(h => csv(setup.fields.mode ? h.context?.[setup.fields.mode] : undefined)))];
     const modeNote = modes.length > 0 ? ` (modes you may propose: ${modes.join(', ')})` : '';
@@ -395,7 +395,7 @@ export function howToGetMandate(
       : known ? ` Its fields: list-authorizations(domain: "${shortOf(area)}").` : '';
     return `You can prepare this mandate yourself, so do not send the person to the form. Propose it with ${setup.tool}(profile: "${shortOf(area)}", ...)${modeNote}. ${BEFORE_PROPOSING} The person approves it in the gateway.${fields}`;
   }
-  return `A person signs it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. ${SIGN_STEP} (With a ${setup.card} mandate you could prepare it for them.)`;
+  return `A person gives it: **Mandates → + New mandate**, card **${card}**, **Give a mandate**. ${SIGN_STEP} (With a ${setup.card} mandate you could prepare it for them.)`;
 }
 
 interface ConnectorLine {
@@ -436,7 +436,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
   for (const area of areas) {
     const have = covering(input.auths, area);
     if (have.length === 0 && input.auths.some(a => a.complete && a.needsReapproval && matches(a.profileId, area))) {
-      lines.push(`    mandate for ${input.areaName(area)}: must be signed again. A person opens **Mandates** and presses **Sign again** on it.`);
+      lines.push(`    mandate for ${input.areaName(area)}: must be given again. A person opens **Mandates** and presses **Give again** on it.`);
     } else if (have.length > 0) {
       lines.push(`    mandate for ${input.areaName(area)}: yes${have.some(a => (a.deferredCommitmentDomains ?? []).length > 0) ? ' (review: each action needs approval)' : ''}`);
     } else {
@@ -444,7 +444,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
       const ended = input.endedMandate?.(area);
       const before = ended === 'revoked' ? ' The last one was revoked.'
         : ended === 'expired' ? ' The last one has expired.'
-        : input.hadMandate?.(area) ? ' An earlier one has ended (revoked or expired).' : '';
+        : input.hadMandate?.(area) ? ' An earlier one has ended or expired.' : '';
       lines.push(`    mandate for ${input.areaName(area)}: none.${before} ${howToGetMandate(area, pickerCard(m, area, input.areaName), input, all)}`);
     }
   }
@@ -466,7 +466,7 @@ function connectorLine(m: GuideManifest, input: OverviewInput, sourcesByConsumer
     });
     lines.push(`    may attach: ${parts.join('; ')}`);
     if (consumerAreas.length > 0 && wanted.some(s => !ticked.has(s.key))) {
-      lines.push('    A source that is not ticked needs the person to edit that mandate: **Mandates**, open it, **Edit**, tick it under **What the AI may attach**, sign again.');
+      lines.push('    A source that is not ticked needs the person to change that mandate: **Mandates**, open it, **Change**, tick it under **What the AI may attach**, give again.');
     }
   }
   if (input.detail && m.templates?.length) {
@@ -547,7 +547,7 @@ export function attachmentNotAllowedText(opts: {
   const titles = [...new Set(named)].join(', ');
   const declared = opts.candidates.some(c => attachmentSourcesFieldDeclared(opts.profileOf(c.profileId)));
   const step = declared
-    ? `Tell the person: open **Mandates**, open the ${opts.area} mandate, press **Edit**, tick ${titles} under **What the AI may attach**, and sign it again.`
+    ? `Tell the person: open **Mandates**, open the ${opts.area} mandate, press **Change**, tick ${titles} under **What the AI may attach**, and give it again.`
     : `Tell the person: the ${opts.area} mandate is from a version that cannot carry attachments. They give a new ${opts.area} mandate (**Mandates → + New mandate → ${opts.area}**) and tick ${titles} under **What the AI may attach**.`;
   return `Refused: no ${opts.area} mandate lets ${opts.tool} attach ${titles}. Nothing was sent and no ticket was requested. ${step} Do not send without the attachment they asked for: stop and ask.`;
 }
@@ -632,7 +632,7 @@ export const roleText = (card: string): string =>
   'Meet them wherever they start; they say what they want done, you do the work, they set the limits and decide. ' +
   'Recommend safe limits and say why; never decide for them and never press them. ' +
   'They are the final authority, not Suveren and not you. ' +
-  'Leave them only what only they can do: sign, approve, decide. ' +
+  'Leave them only what only they can do: give mandates, approve, decide. ' +
   `When a task needs a mandate and they have no ${card} mandate yet, offer that one first. ` +
   'If they ask where to click, ask what they want to end up with. ' +
   'If work repeats, offer to take it over; if they do not know what they want, suggest one thing.';
@@ -664,7 +664,7 @@ export function connectedLine(connected: string[], notConnected: string[]): stri
 export function factsLines(opts: { card: string; areas: string[]; port?: string; connected?: string[]; notConnected?: string[]; gateway?: boolean }): string[] {
   return [
     ...(opts.port ? [`Only if the person cannot find the Suveren Gateway page, say in words that it runs on this computer on port ${opts.port}.`] : []),
-    'A mandate is a permission the person gives their AI, with limits they choose, for one kind of work: for example "send up to 5 emails a day, and show me each one first". They can change or revoke it at any time.',
+    'A mandate is a permission the person gives their AI, with limits they choose, for one kind of work: for example "send up to 5 emails a day, and show me each one first". They can change or end it at any time.',
     `The ${opts.card} mandate lets the person manage mandates from this chat: they say what the AI should do, the AI prepares the mandate, and it exists only once they approve it. The ${opts.card} mandate allows no work itself. Without it they fill in a form for every mandate.`,
     ...(opts.gateway ? ['Suveren is built on the open-source Human Agency Protocol (HAP).'] : []),
     ...(opts.areas.length > 0 ? [`Possible on this gateway: ${joinAreas(opts.areas)}.`] : []),
@@ -697,12 +697,12 @@ function oneNextStep(input: ShortAnswerInput): string {
   const complete = auths.filter(a => a.complete);
   const stale = complete.filter(a => a.needsReapproval);
   if (stale.length > 0) {
-    return `A person signs these again: ${joinAreas([...new Set(stale.map(a => areaName(shortOf(a.profileId))))])}. They open **Mandates** and press **Sign again**. Until then they do not work.`;
+    return `A person gives these again: ${joinAreas([...new Set(stale.map(a => areaName(shortOf(a.profileId))))])}. They open **Mandates** and press **Give again**. Until then they do not work.`;
   }
   if (complete.length === 0) {
-    if (auths.length > 0) return 'Wait for the other owners above to sign. Ask the person to remind them.';
+    if (auths.length > 0) return 'Wait until the other owners above have given their mandates. Ask the person to remind them.';
     if (setup.area && input.team?.get(setup.area)?.teamCode) return howToGetMandate(setup.area, setup.card, input);
-    return `A person signs the first mandate: an AI can never create it. ${firstStepWords(setup.card, setup.area)}`;
+    return `A person gives the first mandate: an AI can never create it. ${firstStepWords(setup.card, setup.area)}`;
   }
   const askAndDo = 'Ask what the person wants done';
   if (setup.tool && complete.length === setup.held.length) {
@@ -725,7 +725,7 @@ function whatYouCanDo(input: ShortAnswerInput): string {
   const parts: string[] = [];
   if (works) parts.push('do the work the active mandates allow (under a review mandate you create a proposal and the person approves it)');
   if (input.setup.tool) parts.push(`propose new mandates with ${input.setup.tool}, for the person to approve`);
-  if (parts.length === 0) parts.push('find out what the person wants done and recommend safe limits. Only a person can sign');
+  if (parts.length === 0) parts.push('find out what the person wants done and recommend safe limits. Only a person can give a mandate');
   return `You can do yourself: ${parts.join('; and ')}.`;
 }
 
@@ -748,7 +748,7 @@ export function shortAnswer(input: ShortAnswerInput): string {
 /** What the AI does before it proposes a mandate. */
 /** The intent says why; the numbers live in the mandate's own fields, so a change never has to touch both. */
 export const INTENT_HAS_NO_LIMITS =
-  'You write the intent of a mandate you propose, in plain words: why and what for; the person can change it. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
+  'You write the why of a mandate you propose, in plain words: why and what for; the person can change it. Never put limits, amounts, durations, recipients or modes in it: those have their own fields, and the person would have to change them twice.';
 
 export const BEFORE_PROPOSING =
   'Before you propose a mandate, ask everything you need in one message, as a short bullet list: should it run by itself or ask them each time, how much may it do, how long should it last. After each answer, ask again only the points still open, as a shorter list, until none is left. If this connector offers suggested settings, offer those; otherwise suggest what fits the work and say why. They decide. Never set a one-day duration unless they asked for it. Tell them in plain words what the mandate really allows (what, how much, to whom, for how long).' + ' ' + INTENT_HAS_NO_LIMITS;
@@ -769,13 +769,13 @@ export function refusalNextStep(code: unknown, card?: string): string {
     case 'MANDATE_REVOKED':
     case 'MANDATE_EXPIRED':
     case 'MANDATE_NOT_FOUND':
-      return `Nothing ran. Tell the person this mandate is no longer valid. They give a new one (${sign}) or press **Sign again** on it under **Mandates**. Do not retry.`;
+      return `Nothing ran. Tell the person this mandate is no longer valid. They give a new one (${sign}) or press **Give again** on it under **Mandates**. Do not retry.`;
     case 'BOUND_EXCEEDED':
     case 'CUMULATIVE_LIMIT_EXCEEDED':
-      return 'Nothing ran. Tell the person a limit stopped it. They can raise it (**Mandates**, open the mandate, **Edit**, sign again) or wait until the period ends. Do not retry the same call.';
+      return 'Nothing ran. Tell the person a limit stopped it. They can raise it (**Mandates**, open the mandate, **Change**, give again) or wait until the period ends. Do not retry the same call.';
     case 'PROFILE_NOT_ENABLED_FOR_GROUP':
     case 'OWNER_NOT_APPROVER':
-      return 'Nothing ran. Tell the person: their team has not enabled this area for them. A team admin opens **Team → Manage this team in your Authority Server** and enables it. Do not retry.';
+      return 'Nothing ran. Tell the person: their team has not enabled this area for them. A team admin opens **Team → Manage this team on suveren.ai** and enables it. Do not retry.';
     case 'RATE_LIMITED':
       return 'Nothing ran. Wait a minute and try once more; if it is refused again, tell the person.';
     default:

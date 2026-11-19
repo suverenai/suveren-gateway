@@ -210,7 +210,7 @@ export async function encryptProposalContent(
     // `did:`, so the two label sets cannot collide.
     const didReaders = await resolveReaderDids(v08, resolved, deps);
     if (didReaders.readers.length === 0) {
-      throw new Error('No reader of this proposal (the mandate owner or a signed decider) has an end-to-end key — cannot encrypt this proposal.');
+      throw new Error('No reader of this proposal (the mandate owner or an approver) has an end-to-end key — cannot encrypt this proposal.');
     }
     const { content: env, proposalContentHash } = await hapEncryptProposalContent(toolArgs, [
       ...resolved.map((r) => ({ did: r.userId, publicKey: r.publicKey })),
@@ -303,7 +303,7 @@ export function assertContentFingerprint(plaintext: string, wire: { hash?: strin
   }
   const actual = computeProposalContentHash(parsed as Record<string, unknown>);
   if (actual !== expected) {
-    throw new Error('Decrypted proposal content does not match its fingerprint — refusing to show it.');
+    throw new Error('Decrypted proposal content does not match its check value — refusing to show it.');
   }
 }
 
@@ -345,7 +345,7 @@ export async function decryptProposalContent(
     }
     // v0.8 rule 8 — never show content whose fingerprint does not match.
     if (opened.proposalContentHash !== fingerprint) {
-      throw new Error('Decrypted proposal content does not match its fingerprint — refusing to show it.');
+      throw new Error('Decrypted proposal content does not match its check value — refusing to show it.');
     }
     return opened.contentJcs;
   }

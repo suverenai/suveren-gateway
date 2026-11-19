@@ -65,7 +65,7 @@ describe('buildIntegrationAttentionItems', () => {
       entry({ name: 'Mollie', state: 'error', error: 'ENOENT: spawn failed' }),
     ]);
     expect(items).toHaveLength(1);
-    expect(items[0].label).toBe('Integration error');
+    expect(items[0].label).toBe('Connector error');
     expect(items[0].detail).toBe('Mollie: ENOENT: spawn failed');
     expect(items[0].color).toBe('var(--text-primary)');
   });
@@ -75,7 +75,7 @@ describe('buildIntegrationAttentionItems', () => {
       entry({ name: 'Records', state: 'not-running' }),
     ]);
     expect(items).toEqual([{
-      label: 'Integration stopped',
+      label: 'Connector stopped',
       detail: 'Records is not running',
       to: '/integrations',
       color: 'var(--text-primary)',
@@ -108,7 +108,7 @@ describe('buildIntegrationAttentionItems', () => {
       entry({ name: 'Mollie', state: 'error', error: 'crashed' }),
       entry({ name: 'Records', state: 'not-running' }),
     ]);
-    expect(items.map(i => i.label)).toEqual(['Integration error', 'Integration stopped']);
+    expect(items.map(i => i.label)).toEqual(['Connector error', 'Connector stopped']);
   });
 
   it('simulationOn=true: a connector declaring simulation but currently SET TO LIVE is skipped, same as a connector with no simulation marker at all', () => {

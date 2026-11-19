@@ -139,7 +139,7 @@ describe('the AI\'s guidance reads the declared field', () => {
       candidates: [{ profileId: PROFILE_ID, context: { [FIELD]: 'erp:invoice-pdf' } }],
       profileOf, titleOf: () => 'Saved files',
     });
-    expect(t).toContain('open the Bulletin mandate, press **Edit**, tick Saved files (files:file) under **What the AI may attach**');
+    expect(t).toContain('open the Bulletin mandate, press **Change**, tick Saved files (files:file) under **What the AI may attach**');
   });
 
   it('the connector overview says which sources the sending mandate allows', () => {

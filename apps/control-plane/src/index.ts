@@ -371,7 +371,7 @@ app.get('/auth/oauth/:integrationId/start', async (req: Request, res: Response) 
   const { integrationId } = req.params;
   const manifest = await getOAuthManifest(integrationId);
   if (!manifest?.oauth) {
-    res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` });
+    res.status(404).json({ error: `No OAuth config found for connector "${integrationId}"` });
     return;
   }
   const oauth = manifest.oauth;
@@ -423,7 +423,7 @@ app.get('/auth/oauth/:integrationId/callback', async (req: Request, res: Respons
   if (!started) {
     res.status(400).send(oauthResultPage(
       'Sign-in not accepted',
-      'This sign-in was not started from this gateway, or it took too long. Start it again from the Integrations page.',
+      'This sign-in was not started from this gateway, or it took too long. Start it again from the Connectors page.',
     ));
     return;
   }
@@ -549,7 +549,7 @@ const authGuard = requireAuth(vault);
 app.post('/auth/oauth/:integrationId/disconnect', authGuard, async (req: Request, res: Response) => {
   const integrationId = String(req.params.integrationId);
   const manifest = await getOAuthManifest(integrationId);
-  if (!manifest?.oauth) { res.status(404).json({ error: `No OAuth config found for integration "${integrationId}"` }); return; }
+  if (!manifest?.oauth) { res.status(404).json({ error: `No OAuth config found for connector "${integrationId}"` }); return; }
   const group = groupOfMember(manifestCache, integrationId);
   const targets = group ? group.members : [manifest as { id: string; oauth: OAuthLike }];
   try {
@@ -850,7 +850,7 @@ app.get('/integrations/:id/discover/:field', authGuard, async (req: Request, res
     const manifestsResp = (await getManifests()) as { manifests: Array<Record<string, unknown>> };
     const manifest = manifestsResp.manifests.find(m => m.id === integrationId);
     if (!manifest) {
-      res.status(404).json({ error: `Unknown integration "${integrationId}"` });
+      res.status(404).json({ error: `Unknown connector "${integrationId}"` });
       return;
     }
     const discovery = (manifest.contextDiscovery as Record<string, {
@@ -864,14 +864,14 @@ app.get('/integrations/:id/discover/:field', authGuard, async (req: Request, res
       extraFields?: Record<string, string>;
     }> | undefined)?.[fieldName];
     if (!discovery) {
-      res.status(404).json({ error: `No contextDiscovery declared for field "${fieldName}" on integration "${integrationId}"` });
+      res.status(404).json({ error: `No contextDiscovery declared for field "${fieldName}" on connector "${integrationId}"` });
       return;
     }
 
     // Resolve credentials from the vault
     const creds = memberCredentials((manifestsResp as { manifests: unknown }).manifests, integrationId);
     if (!creds) {
-      res.status(400).json({ error: `Integration "${integrationId}" has no credentials in the vault — complete OAuth first.` });
+      res.status(400).json({ error: `Connector "${integrationId}" has no credentials in the vault — complete OAuth first.` });
       return;
     }
     const oauth = manifest.oauth as {
@@ -984,7 +984,7 @@ app.get('/active-authorizations', authGuard, async (_req: Request, res: Response
     res.json(data);
   } catch (err) {
     console.error('[Control Plane] Authorizations retrieval error:', err);
-    res.status(500).json({ error: 'Failed to fetch authorizations from MCP server' });
+    res.status(500).json({ error: 'Failed to fetch mandates from MCP server' });
   }
 });
 
@@ -1198,7 +1198,7 @@ const asProxy = createProxyMiddleware({
         // Without a limit one lost answer kept the page on "Loading..." until a reload (= a new sign-in).
         // Not the `proxyTimeout` option: it aborts, an aborted request raises no error, and the caller never gets an answer.
         proxyReq.setTimeout(AS_PROXY_TIMEOUT_MS, () => {
-          proxyReq.destroy(Object.assign(new Error('Authority Server did not answer'), { code: 'ETIMEDOUT' }));
+          proxyReq.destroy(Object.assign(new Error('suveren.ai did not answer'), { code: 'ETIMEDOUT' }));
         });
         // Inject server-side SP session cookie instead of forwarding browser cookies
         const cookie = vault.getSpCookie();
@@ -1221,7 +1221,7 @@ const asProxy = createProxyMiddleware({
           if (res && 'writeHead' in res) {
             if (!res.headersSent) {
               res.writeHead(code === 'ECONNREFUSED' || code === 'ENOTFOUND' ? 502 : 504, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'as_unreachable', message: 'The Authority Server did not answer.' }));
+              res.end(JSON.stringify({ error: 'as_unreachable', message: 'suveren.ai did not answer.' }));
             } else {
               res.end();
             }
@@ -1422,7 +1422,7 @@ app.get('/health', async (req: Request, res: Response) => {
     mcpPort: mcpPublicPort(process.env, MCP_BASE),
     session: buildSessionHealth(vault),
     security: {
-      note: 'Gateway secures tool execution. Agent host isolation is the user\'s responsibility.',
+      note: 'Suveren\'s gateway secures tool execution. Keeping your AI in a separate environment is your responsibility.',
     },
   });
 });

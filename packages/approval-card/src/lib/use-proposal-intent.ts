@@ -52,7 +52,7 @@ export function useProposalIntent(authorizationId: string, currentUserId: string
         }
         const intentData = await hostData().getAttestationIntent(authorizationId);
         if (!intentData) {
-          if (live) setError('Intent not available or you are not an authorized approver.');
+          if (live) setError('The why is not available, or you are not allowed to approve this.');
           return;
         }
         const decrypted = await hostData().decryptIntent({
@@ -62,7 +62,7 @@ export function useProposalIntent(authorizationId: string, currentUserId: string
         });
         if (live) setIntent(decrypted);
       } catch (err) {
-        if (live) setError(err instanceof Error ? err.message : 'Failed to decrypt intent');
+        if (live) setError(err instanceof Error ? err.message : 'Failed to decrypt why');
       } finally {
         if (live) setLoading(false);
       }

@@ -86,13 +86,13 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
       const lookupKey = item.authorization_id;
       const gateEntry: GateContentEntry | null = await spClient.getGateContent(lookupKey);
       if (!gateEntry) {
-        throw new Error('Gate content not found locally. The MCP server may have restarted. Please re-authorize through the full wizard instead.');
+        throw new Error('The details of this mandate are no longer on this device. Give the mandate again instead.');
       }
 
       // 2. Renew through the control plane: the same steps as signing a mandate.
       // Grants keep their commitment mode — renewing moves only the expiry.
       if (!groupId) {
-        throw new Error('No active group; cannot extend mandate.');
+        throw new Error('No active team; cannot extend mandate.');
       }
       await spClient.renewMandate({
         authorizationId: item.authorization_id,
@@ -165,7 +165,7 @@ export function ExtendAuthModal({ item, onClose, onSuccess }: Props) {
           </div>
 
           <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
-            Same bounds, scope, and gate content will be re-signed with a new TTL (measured from now).
+            Same limits, scope, and why will be given again with a new end date (counted from now).
           </div>
 
           {error && <div className="error-message">{error}</div>}

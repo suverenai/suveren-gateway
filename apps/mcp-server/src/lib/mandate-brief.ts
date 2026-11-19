@@ -141,8 +141,8 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     lines.push('');
     for (const auth of needingReapproval) {
       lines.push(
-        `[${shortProfileName(auth.profileId)}] ${auth.authorizationId}: the Authority Server no longer ` +
-          'accepts this mandate\'s protocol version. Ask the mandate owner to sign it again (Mandates page → Sign again).',
+        `[${shortProfileName(auth.profileId)}] ${auth.authorizationId}: suveren.ai no longer ` +
+          'accepts this mandate\'s protocol version. Ask the mandate owner to give it again (Mandates page → Give again).',
       );
     }
     lines.push('');

@@ -304,7 +304,7 @@ export function AgentReviewPage() {
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
-      setError('No active group; cannot create mandate.');
+      setError('No active team; cannot create mandate.');
       return;
     }
     setSubmitting(true);
@@ -384,12 +384,12 @@ export function AgentReviewPage() {
       if (withdrawProblem) {
         // The mandate is live; only the AI's proposal is still open. Stay on
         // the page and say what to do instead of hiding it.
-        setError(`Your mandate is signed and active. The AI's proposal could not be withdrawn (${withdrawProblem}) — reject it under Approvals.`);
+        setError(`Your mandate is given and active. The AI's proposal could not be withdrawn (${withdrawProblem}) — reject it under Approvals.`);
         return;
       }
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Signing the mandate failed');
+      setError(e instanceof Error ? e.message : 'Giving the mandate failed');
     } finally {
       setSubmitting(false);
     }
@@ -412,11 +412,11 @@ export function AgentReviewPage() {
     ? approverNames.join(', ')
     : (profileConfig?.approvers ?? []).join(', ');
   const approversSubLine = hasCaps
-    ? `Within-cap actions run per the mode you choose above. Over-cap actions will require approval from you and ${approverNamesStr}, regardless of your mode.`
-    : `No caps set — they won't gate any action, but your intent is encrypted and shared with them as an accountability record.`;
+    ? `Actions within the team limit run per the mode you choose above. Actions above the team limit need approval from you and ${approverNamesStr}, whatever your mode.`
+    : `No team limits set — they won't gate any action, but your why is encrypted and shared with them as an accountability record.`;
   const bottomNote = hasCaps
-    ? `Over-cap actions will be reviewed by you and ${approverNamesStr}. Within-cap actions run per the mode you chose above.`
-    : `Approvers ${approverNamesStr} can read your intent but won't gate any action — no caps configured on this profile.`;
+    ? `Actions above the team limit are reviewed by you and ${approverNamesStr}. Actions within the team limit run per the mode you chose above.`
+    : `Approvers ${approverNamesStr} can read your why but won't gate any action — no team limits configured on this profile.`;
   const showBottomNote = !!(profileConfig?.approvers?.length);
   // The AS's team authority gate (PROFILE_NOT_ENABLED_FOR_GROUP /
   // OWNER_NOT_APPROVER), same rule as the profile picker — block the button
@@ -489,7 +489,7 @@ export function AgentReviewPage() {
   //     ('fail-safe-approval'), so review is NOT weakened by an automatic twin.
   // The earlier copy said "the more permissive limits effectively apply" for all
   // three — understating the cumulative case and overstating the mode case.
-  const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
+  const overlapWarningText = `This mandate's scope overlaps an existing mandate on ${overlapProfileName} (scoped to: ${overlapScopes}). The AI may act under either. Per-action limits take the more permissive value, and daily limits add together — two mandates of 10/day allow 20/day. Approval is not weakened: if either mandate requires review, review still applies. Confirm this is intended before you give the mandate.`;
 
   return (
     <>
@@ -500,7 +500,7 @@ export function AgentReviewPage() {
       <div className="card">
         <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>Review &amp; Commit</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-          Review your mandate details before signing.
+          Review your mandate details before giving.
         </p>
 
         {/* Copy/Edit moved this mandate to a newer profile version — the AS
@@ -572,7 +572,7 @@ export function AgentReviewPage() {
           )}
           {noModeAllowed && (
             <div className="msg-error" style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-              This profile allows no commitment mode, so no mandate can be signed under it. Its publisher must fix the profile.
+              This profile allows no commitment mode, so no mandate can be given under it. Its publisher must fix the profile.
             </div>
           )}
         </div>
@@ -669,11 +669,11 @@ export function AgentReviewPage() {
 
         {/* ── The record: decisions made in steps 2–3, quiet by design.
               Each block links back to the step that owns it. ── */}
-        <div className="info-section-label">What you are signing — set in previous steps</div>
+        <div className="info-section-label">What you are giving — set in previous steps</div>
 
         <div className="info-block">
           <div className="info-head">
-            <span className="info-title">Intent</span>
+            <span className="info-title">Why</span>
             <button className="info-edit" onClick={() => navigate('/mandates/new/intent?step=3')}>edit in step 3</button>
           </div>
           <div style={{ whiteSpace: 'pre-wrap' }}>{gateData.gateContent.intent}</div>
@@ -704,7 +704,7 @@ export function AgentReviewPage() {
 
         <div className="info-block">
         <div className="info-head">
-          <span className="info-title">Authority</span>
+          <span className="info-title">Mandate</span>
         </div>
         <dl className="info-kv">
           <dt>Profile</dt>
@@ -719,7 +719,7 @@ export function AgentReviewPage() {
             </>
           )}
           {/* Approvers row — always visible in team mode so the creator
-              knows whether anyone else can read their intent. Hidden for a
+              knows whether anyone else can read their why. Hidden for a
               personal workspace, where approvers are never required. */}
           {!authData.isPersonal && (
             <>
@@ -765,15 +765,15 @@ export function AgentReviewPage() {
             <span aria-hidden="true" style={{ fontWeight: 700 }}>!</span>
             <div>
               <div style={{ fontWeight: 600, marginBottom: '0.2rem' }}>
-                Identical limits to an existing grant
+                Identical limits to an existing mandate
               </div>
               <div>
                 {duplicateBoundsCount === 1
-                  ? `An active grant on ${overlapProfileName} already has exactly these limits.`
-                  : `${duplicateBoundsCount} active grants on ${overlapProfileName} already have exactly these limits.`}
-                {' '}If you meant to give the existing grant more time, use <strong>Extend</strong> on
-                the Mandates page instead — authorizing here creates a separate,
-                independent grant with its own intent and usage counters.
+                  ? `An active mandate on ${overlapProfileName} already has exactly these limits.`
+                  : `${duplicateBoundsCount} active mandates on ${overlapProfileName} already have exactly these limits.`}
+                {' '}If you meant to give the existing mandate more time, use <strong>Extend</strong> on
+                the Mandates page instead — giving a mandate here creates a separate,
+                independent mandate with its own why and usage counters.
               </div>
             </div>
           </div>
@@ -812,7 +812,7 @@ export function AgentReviewPage() {
             onClick={handleCommit}
             disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
           >
-            {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
+            {submitting ? 'Giving…' : commitMode === 'immediate' ? 'Give the mandate' : 'Give the mandate (asks first)'}
           </button>
         </div>
 

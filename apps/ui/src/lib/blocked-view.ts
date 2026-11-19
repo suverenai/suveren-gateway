@@ -81,16 +81,16 @@ const TITLE: Record<DenialKind, string> = {
   check: 'Blocked — a check failed',
   // Wording pending Andreas's sign-off (sealed-args rule, 2026-11-06).
   unsealed_arg: 'Blocked — not shown for approval',
-  read: 'Read blocked',
+  read: 'Read refused',
 };
 
 /** One generic sentence per KIND — never tailored to the action (decision 3). */
 const WHAT_YOU_CAN_DO: Record<DenialKind, string> = {
-  bound: 'Nothing ran. To allow this, raise the limit on the mandate (needs your signature) — or ask the AI to stay within it.',
+  bound: 'Nothing ran. To allow this, raise the limit on the mandate (you approve the change) — or ask the AI to stay within it.',
   scope: "Nothing ran. To allow this, widen the mandate's scope (needs your signature) — or ask the AI to stay within it.",
   cumulative: 'Nothing ran. Possible again once the window resets — or raise the limit in the mandate.',
   simulation: 'Nothing ran. Turn off simulation mode in Settings to use real systems.',
-  not_authorized: 'Nothing ran. Grant a mandate for this, or ask the decision owner.',
+  not_authorized: 'Nothing ran. Give a mandate for this, or ask the owner.',
   check: 'Nothing ran and no approval was asked for. The check reads the system\'s own data — correct the request or that data.',
   unsealed_arg: 'Nothing ran and no approval was asked for. The AI sent an item that would change what is sent without being shown for approval — ask it to send the request without it.',
   read: 'Nothing was read.',
@@ -176,7 +176,7 @@ function sourceLine(r: DenialRecord, mandateTitlesById: Readonly<Record<string, 
   const kind = kindOf(r);
   const src = sourceName(r.integrationId, names.manifests);
   const who = r.who === 'authority-server'
-    ? 'refused by the Authority Server'
+    ? 'refused by suveren.ai'
     : kind === 'read'
       ? 'refused by this gateway'
       : 'refused by this gateway, before anything ran';
@@ -282,10 +282,10 @@ const REASON_LEAD: Record<DenialKind, string> = {
   scope: 'Outside your mandate:',
   cumulative: 'Limit reached:',
   simulation: 'Simulation mode:',
-  not_authorized: 'Not authorized:',
+  not_authorized: 'Not covered by a mandate:',
   check: 'A check failed:',
   unsealed_arg: 'Not shown for approval:',
-  read: 'Read blocked:',
+  read: 'Read refused:',
 };
 
 /** The bold lead of the one ✕ line (§18.4) — one phrase per refusal kind. */
@@ -295,6 +295,6 @@ export function reasonLead(r: DenialRecord): string {
 
 /** Who refused, for the line under the reason (§18.4). */
 export function refusedByLine(r: Pick<DenialRecord, 'who' | 'kind'>): string {
-  if (r.who === 'authority-server') return 'Refused by the Authority Server before anything ran.';
+  if (r.who === 'authority-server') return 'Refused by suveren.ai before anything ran.';
   return 'Refused by this gateway before anything ran.';
 }

@@ -77,7 +77,7 @@ describe('rejected — domain-owner path', () => {
       rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'replaced' },
     });
     expect(text).toBe(
-      "Proposal p1 was REPLACED: the person signed their own version of this mandate on the mandate screen. " +
+      "Proposal p1 was REPLACED: the person gave their own version of this mandate on the mandate screen. " +
       'Nothing was created from this proposal. Use the person\'s mandate — check list-authorizations.',
     );
     expect(text).not.toContain('andreas');
@@ -109,7 +109,7 @@ describe('rejected — above-cap approver path', () => {
       ...BASE,
       approverRejectedBy: { userId: 'andreas', at: 0, outcome: 'replaced' },
     });
-    expect(text).toContain('REPLACED: the person signed their own version of this mandate');
+    expect(text).toContain('REPLACED: the person gave their own version of this mandate');
   });
 });
 

@@ -109,7 +109,7 @@ export function GroupsPage() {
       <div className="page-header">
         <h1 className="page-title">Team</h1>
         <p className="page-subtitle">
-          Your current team context. Team management lives in your Authority Server dashboard.
+          Your current team. Team management lives on suveren.ai.
         </p>
       </div>
 
@@ -147,19 +147,19 @@ export function GroupsPage() {
 
           <ObFold
             title="Leave team"
-            summary={isSoleAdmin ? 'you are the only admin' : 'revokes your mandates in this team'}
+            summary={isSoleAdmin ? 'you are the only admin' : 'ends your mandates in this team'}
           >
             <p>Leaving will:</p>
             <ul className="su-list">
-              <li>Revoke all mandates you created in this team's context</li>
+              <li>End all mandates you created in this team</li>
               <li>Reject any pending action proposals you authored</li>
               <li>Disable your membership — rejoining requires admin reactivation</li>
             </ul>
             <p className="ob-lbl ob-gap">Your personal mandates are not affected.</p>
             {isSoleAdmin ? (
               <p className="ob-lbl">
-                You are the only admin. Transfer admin to another member in your Authority Server
-                dashboard before leaving.
+                You are the only admin. Transfer admin to another member on suveren.ai
+                before leaving.
               </p>
             ) : (
               <>
@@ -189,7 +189,7 @@ export function GroupsPage() {
           {manageHref && (
             <div className="ob-btns">
               <a className="ob-btn" href={manageHref} target="_blank" rel="noopener noreferrer">
-                Manage this team in your Authority Server &#8599;
+                Manage this team on suveren.ai &#8599;
               </a>
             </div>
           )}
@@ -199,7 +199,7 @@ export function GroupsPage() {
           <ObTypeLine tag="TEAM" parts={[<span className="ob-st">Personal</span>]} />
           <h2 className="ob-title is-h3">You are working solo.</h2>
           <p className="ob-one">
-            Every mandate you create here is in your personal context. An account is Personal or in
+            Every mandate you create here is Personal. An account is Personal or in
             one team — joining or creating a team moves it.
           </p>
           <div className="ob-btns">
@@ -208,7 +208,7 @@ export function GroupsPage() {
             </button>
             {browseTeamsHref && (
               <a className="ob-btn" href={browseTeamsHref} target="_blank" rel="noopener noreferrer">
-                Manage teams in your Authority Server &#8599;
+                Manage teams on suveren.ai &#8599;
               </a>
             )}
           </div>
