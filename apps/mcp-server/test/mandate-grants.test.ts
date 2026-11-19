@@ -50,8 +50,8 @@ class FakeAs {
   failGrants = false;
   /** `GET /api/authorizations/:id` answers 404 (the group is not known) */
   noSummary = false;
-  /** The DID `GET /api/auth/session` names (the account), or null (the route answers 401). */
-  sessionDid: string | null = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy1';
+  /** `GET /api/devices/chain` fails (500): the Authority Server cannot say. */
+  failChain = false;
   /** What `GET /api/mandates?authorization_id=` answers as `authorization_id` (a mix-up) */
   answerAuthz: string | null = null;
   private server!: Server;
@@ -76,10 +76,12 @@ class FakeAs {
     const json = (status: number, body: unknown): void => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (!/^Bearer [A-Za-z0-9-]+$/.test(String(req.headers.authorization ?? ''))) return json(401, { approved: false, errors: [{ code: 'UNAUTHENTICATED', message: 'Authentication required' }] });
     let m: RegExpExecArray | null;
-    if (req.method === 'GET' && url.pathname === '/api/auth/session') return this.sessionDid ? json(200, { user: { id: 'u1', did: this.sessionDid } }) : json(500, { error: 'no' });
+    // NOTE: the real Authority Server has NO `GET /api/auth/session` (POST only, 405 otherwise); the gateway must not depend on one.
+    if (req.method === 'GET' && url.pathname === '/api/auth/session') return json(405, { error: 'method not allowed' });
     if (req.method === 'GET' && (m = /^\/api\/authorizations\/([^/]+)$/.exec(url.pathname))) return this.noSummary ? json(404, { error: 'no' }) : json(200, { authorization_id: decodeURIComponent(m[1]), profile_id: 'test-pay@1', group_id: 'g1' });
     if (req.method === 'GET' && url.pathname === '/api/devices/chain') {
       const did = url.searchParams.get('did') ?? '';
+      if (this.failChain) return json(500, { error: 'boom' });
       const c = this.chains.get(did);
       if (!c) return json(404, { approved: false, errors: [{ code: 'NO_CHAIN', message: 'no device chain for this DID' }] });
       return json(200, { root_did: did, entries: c.entries, head: c.head });
@@ -134,6 +136,8 @@ interface World {
   grantStore: MandateGrantStore;
   cpHits: string[];
   ownState: { state: 'none' | 'present' | 'unreadable' };
+  /** What the control plane knows of the signed-in account (its session answer at sign-in): `signedIn: false` = no session held (a 401). */
+  account: { signedIn: boolean; did: string | null };
   /** DIDs the person confirmed by identity code (besides their own). */
   confirmed: Set<string>;
   gate: ReturnType<typeof makeGrantGate>;
@@ -165,6 +169,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   const store = new DeviceChainStore(vault as never);
   store.create({ v: 1, rootDid: own.did, keyId: own.dev.keyId, head: await headOf(own), asUrl: as.url, label: 'This computer', setUpAt: now() });
   const ownState: World['ownState'] = { state: 'present' };
+  const account: World['account'] = { signedIn: true, did: 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy1' };
   const realState = store.state.bind(store);
   store.state = () => (ownState.state === 'present' ? realState() : ownState.state);
   const grantStore = new MandateGrantStore(vault as never);
@@ -206,7 +211,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   };
   const pinStore = new DevicePinStore(vault as never, store);
   (receiptSigner as Record<string, unknown>).pinChain = pinChainStub(as.chains, pinStore, own.did);
-  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, pinStore, { store: grantStore, grants: receiptSigner as never }));
+  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, pinStore, { store: grantStore, grants: receiptSigner as never, account: () => account }));
   const cp: Server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   open.push(() => new Promise<void>(r => cp.close(() => r())));
   process.env.SUVEREN_CP_INTERNAL_URL = `http://127.0.0.1:${(cp.address() as { port: number }).port}`;
@@ -235,7 +240,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
     const r = await gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] });
     expect(r).toMatchObject({ ok: false, code: 'device_not_set_up_here' });
   };
-  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, confirmed, gate, readKey, gateOnceSeen, serve };
+  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, account, confirmed, gate, readKey, gateOnceSeen, serve };
   await serve();
   return w;
 }
@@ -717,22 +722,47 @@ describe('a gateway without a chain on an account that has one', () => {
   it('switch on, no chain here, the Authority Server knows a chain for the account: refused; unknown or an error: works as before', async () => {
     const w = await world({ noGrant: true });
     w.ownState.state = 'none';
-    w.as.sessionDid = w.owner.did;
+    w.account.did = w.owner.did;
     await refusedWith(w, 'device_not_set_up_here');
     expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
     const w2 = await world({ noGrant: true });
     w2.ownState.state = 'none';
-    w2.as.sessionDid = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy2';   // the Authority Server knows no chain for it: works as before
+    w2.account.did = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy2';   // the Authority Server knows no chain for it: works as before
     expect((await w2.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
     // an answer that cannot be had (no session, an error) is NOT "no chain": refused, and not remembered as "no"
     const w3 = await world({ noGrant: true });
     w3.ownState.state = 'none';
-    w3.as.sessionDid = null;
+    w3.account.signedIn = false;
     await refusedWith(w3, 'device_state_unavailable');
-    w3.as.sessionDid = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy3';
+    w3.account.signedIn = true;
+    w3.account.did = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy3';
     expect((await w3.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
     // sticky: once a chain was reported for this account here, "no chain here" never comes back
     await w3.gateOnceSeen();
+  });
+
+  it('a DEFINITE "no chain" is skipped: the Authority Server answers 404 NO_CHAIN, or names no DID for the account', async () => {
+    const w = await world({ noGrant: true });
+    w.ownState.state = 'none';
+    w.account.did = null;   // signed in, the account has no DID: no chain
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    // and the gateway never asked the Authority Server for a session route it does not have
+    expect(w.as.requests.some(r => r.path.startsWith('/api/auth/session'))).toBe(false);
+    const w2 = await world({ noGrant: true });
+    w2.ownState.state = 'none';
+    w2.account.did = 'did:key:z6MkNoChainNoChainNoChainNoChainNoChainNoCh';   // 404 NO_CHAIN
+    expect((await w2.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(w2.as.requests.some(r => r.path.startsWith('/api/devices/chain'))).toBe(true);
+  });
+
+  it('an ERROR is not an answer: the Authority Server failing on the chain refuses (device_state_unavailable), nothing is remembered as "no"', async () => {
+    const w = await world({ noGrant: true });
+    w.ownState.state = 'none';
+    w.as.failChain = true;
+    await refusedWith(w, 'device_state_unavailable');
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    w.as.failChain = false;   // answers again: 404 = no chain; works, so the failure was not cached
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
   });
 });
 
@@ -784,11 +814,11 @@ describe('the unchanged path', () => {
     expect(w.as.requests.filter(r => r.path.includes('/grants') || r.path.startsWith('/api/devices'))).toEqual([]);
   });
 
-  it('switch on but this gateway has no device chain: asked once whether it has one, nothing else', async () => {
+  it('switch on but this gateway has no device chain: asked once whether it has one (chain, chain seen, the account DID), nothing else', async () => {
     const w = await world({ noGrant: true });
     w.ownState.state = 'none';
     expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
-    expect(w.cpHits).toEqual(['GET /internal/device-chain', 'GET /internal/mandate-grant/chain-seen']);
+    expect(w.cpHits).toEqual(['GET /internal/device-chain', 'GET /internal/mandate-grant/chain-seen', 'GET /internal/mandate-grant/account-did']);
     // the Authority Server is asked whether this account has a chain (its answer can only add a refusal); never for grants
     expect(w.as.requests.filter(r => r.path.includes('/grants') || r.path.startsWith('/api/devices')).map(r => r.path.split('?')[0])).toEqual(['/api/devices/chain']);
   });

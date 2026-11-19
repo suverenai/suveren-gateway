@@ -97,14 +97,15 @@ export interface GrantGateInput {
 export type GrantGate = (i: GrantGateInput) => Promise<GrantCheck>;
 
 export function makeGrantGate(deps: Omit<GrantGateDeps, 'localProfileHash' | 'accountHasChain'>): GrantGate {
-  const sp = deps.sp as GrantGateDeps['sp'] & { getSessionDid?: () => Promise<string | null> };
   // A definite NO is remembered for five minutes. An error is not an answer: it is not cached and it refuses (see checkMandateGrant).
   let no: number | null = null;
   const accountHasChain = async (): Promise<boolean> => {
     if (no !== null && Date.now() - no < 5 * 60_000) return false;
-    const did = await sp.getSessionDid?.();          // throws on any failure
-    if (!did) throw new Error('no session did');
-    const has = (await sp.getDeviceChain(did)) !== null;   // throws on any failure; null = the Authority Server has none
+    // The account's DID comes from the control plane (the session answer of the Authority Server at sign-in; there is no GET session
+    // route at the Authority Server). Throws when no session is held; null = the account has no DID at the Authority Server: no chain.
+    const did = await deps.cp.sessionDid();
+    if (!did) { no = Date.now(); return false; }
+    const has = (await deps.sp.getDeviceChain(did)) !== null;   // throws on any failure; null = the Authority Server has none (404)
     if (!has) no = Date.now();
     return has;
   };
