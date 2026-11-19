@@ -18,3 +18,9 @@ export const BUILD_COMMIT: string = import.meta.env.VITE_BUILD_COMMIT ?? 'dev';
 
 /** Epoch seconds. Injected into the flows so tests can move the clock. */
 export const NOW = (): number => Math.floor(Date.now() / 1000);
+
+/**
+ * DEC-83: phone-first setup off. The phone only offers "Add this phone to my account" (pairing by scanning a QR). The genesis
+ * from a phone (register-driver.ts, screens/Register.tsx) stays in the code, tested, but no screen reaches it while this is false.
+ */
+export const PHONE_FIRST_SETUP = false;

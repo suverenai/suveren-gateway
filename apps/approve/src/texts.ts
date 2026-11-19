@@ -86,6 +86,7 @@ export const P = {
 
   // ─── Join: this phone is added to an account that exists ──────────────────────
   joinTitle: 'Add this phone to your account', // DRAFT
+  joinIntro: 'This phone becomes one of your devices. Here you read what your AI wants to do. You approve or reject on your computer for now.', // DRAFT (DEC-83: the start screen is this one)
   joinScanWhy: 'On a device that already has your account, choose to add a device. It shows a code. Scan it here.', // DRAFT
   reviewTitle: 'You are about to join this account', // DRAFT
   reviewIdentity: 'Identity code', // = S13.joinYourCode (312)

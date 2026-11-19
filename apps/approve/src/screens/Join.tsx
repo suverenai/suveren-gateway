@@ -15,6 +15,8 @@ export interface JoinScreenProps {
   onDone: () => void;
   /** Drawn with the scan view open (tests and screenshots). */
   scanning?: boolean;
+  /** A way back to a start screen with another choice (only while phone-first setup is on, DEC-83). */
+  canGoBack?: boolean;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {
@@ -30,13 +32,14 @@ export function JoinScreen(p: JoinScreenProps) {
     case 'scan':
       return (
         <Screen title={P.joinTitle}>
+          <p>{P.joinIntro}</p>
           <p>{P.joinScanWhy}</p>
           {st.error && <Notice kind="error">{st.error}</Notice>}
           {st.busy && <Notice kind="info">{P.setupChecking}</Notice>}
           {scan && !st.busy
             ? <ScanView onText={(t) => { setScan(false); p.onScanned(t); }} onCancel={() => setScan(false)} />
             : <button type="button" className="btn btn-primary btn-full btn-lg" onClick={() => setScan(true)} disabled={st.busy}>{P.scanStart}</button>}
-          <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.back}</button>
+          {p.canGoBack && <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.back}</button>}
         </Screen>
       );
     case 'review':

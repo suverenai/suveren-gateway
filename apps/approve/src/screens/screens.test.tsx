@@ -10,6 +10,7 @@ import { DevicesScreen, DeviceList } from './Devices';
 import { RequestsScreen } from './Requests';
 import { OpenSessionScreen } from './OpenSession';
 import { ScanView } from './ScanView';
+import { PHONE_FIRST_SETUP } from '../lib/config';
 import type { DeviceRow } from '../lib/chain-view';
 
 const html = (el: ReactElement): string => renderToStaticMarkup(el);
@@ -42,7 +43,17 @@ describe('the phone screens (both widths use the same markup and the same tokens
     expect(t).toContain(P.welcomeReadOnly);
   });
 
-  describe('register', () => {
+  it('DEC-83: phone-first setup is off; the start is "add this phone", with no way back to another choice', () => {
+    expect(PHONE_FIRST_SETUP).toBe(false);
+    const joinProps = { nowSeconds: NOW, onScanned: noop, onReviewConfirm: noop, onName: noop, onCancel: noop, onDone: noop };
+    const m = html(<JoinScreen {...joinProps} state={{ step: 'scan', busy: false }} />);
+    expect(text(m)).toContain(P.joinIntro);
+    expect(text(m)).not.toContain(P.welcomeNew);
+    expect(text(m)).not.toContain(P.back);
+    expect(text(html(<JoinScreen {...joinProps} canGoBack state={{ step: 'scan', busy: false }} />))).toContain(P.back);
+  });
+
+  describe('register (kept and unit-tested, unreachable from the app while DEC-83 holds)', () => {
     it('code step: scan or type', () => {
       const t = text(reg({ step: 'code', busy: false }));
       expect(t).toContain(P.scanStart);

@@ -2,7 +2,7 @@
  * Writes one static HTML page with every phone screen and its important states, side by side in 390 px frames, rendered from the
  * REAL components (renderToStaticMarkup, as screens.test.tsx does) with the real CSS inlined. No network, no fonts, light theme.
  *
- *   node node_modules/.pnpm/vite-node@*/node_modules/vite-node/vite-node.mjs --config vite.config.ts scripts/mockup.tsx <output.html>
+ *   vite-node.mjs (from node_modules/.pnpm/vite-node@3.2.4...) --config vite.config.ts scripts/mockup.tsx <output.html>
  *   (run in apps/approve; tsx cannot be used: the shared package's JSX needs the vite react plugin)
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -12,8 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { P, errorText } from '../src/texts';
 import { configurePhoneHost } from '../src/lib/app-host';
 import type { DeviceRow } from '../src/lib/chain-view';
-import { NeedsScreen, WelcomeScreen } from '../src/screens/Start';
-import { RegisterScreen, type RegisterScreenProps } from '../src/screens/Register';
+import { NeedsScreen } from '../src/screens/Start';
 import { JoinScreen } from '../src/screens/Join';
 import { AdmitScreen } from '../src/screens/Admit';
 import { DevicesScreen } from '../src/screens/Devices';
@@ -34,9 +33,6 @@ const rows: DeviceRow[] = [
   { keyId: 'k1', label: 'Office Mac', kind: 'gateway', thisDevice: false, canGrant: true, addedAt: NOW - 40 * 86400, recent: false },
   { keyId: 'k2', label: 'My iPhone', kind: 'approve-app', thisDevice: true, canGrant: true, addedAt: NOW - 3600, recent: true },
 ];
-const reg = (state: RegisterScreenProps['state'], over: Partial<RegisterScreenProps> = {}) => (
-  <RegisterScreen state={state} code={null} onCode={noop} onName={noop} onCodeSeen={noop} onKept={noop} onFinish={noop} onCancel={noop} onDone={noop} {...over} />
-);
 const join = (state: Parameters<typeof JoinScreen>[0]['state'], scanning = false) => (
   <JoinScreen state={state} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} scanning={scanning} />
 );
@@ -44,24 +40,11 @@ const admit = (state: Parameters<typeof AdmitScreen>[0]['state']) => (
   <AdmitScreen state={state} nowSeconds={NOW} onScanned={noop} onChoose={noop} onCancel={noop} onDone={noop} />
 );
 const prop = (id: string, tool: string, age: number) => ({ ...FIXTURE_PLAIN_PROPOSAL, id, tool, createdAt: NOW - age });
-const CODE = 'SV1-7K2M-9QXA-4TWB-C8DN-H3FJ-P5RV-2';
 
 const groups: Array<[string, Array<[string, ReactElement]>]> = [
   ['This phone cannot pair', [['Needs screen: iPhone tab, old system', <NeedsScreen needs={['install_app', 'newer_system']} />]]],
-  ['Start', [['Start (not paired)', <WelcomeScreen onNew={noop} onJoin={noop} />]]],
-  ['Set up this phone', [
-    ['Code: scan or type', reg({ step: 'code', busy: false })],
-    ['Code: camera open', reg({ step: 'code', busy: false }, { scanning: true })],
-    ['Code: refused', reg({ step: 'code', busy: false, error: errorText('enrolment_code_used') })],
-    ['Name', reg({ step: 'name', busy: false })],
-    ['Recovery code (shown once)', reg({ step: 'sheet' }, { code: CODE })],
-    ['Kept? (button off)', reg({ step: 'kept', checked: false })],
-    ['Progress: passkey', reg({ step: 'working', doing: 'passkey' })],
-    ['Progress: second touch', reg({ step: 'working', doing: 'check' })],
-    ['Done', reg({ step: 'done' })],
-  ]],
-  ['Add this phone to an account', [
-    ['Scan', join({ step: 'scan', busy: false })],
+  ['Add this phone to an account (the start screen, DEC-83)', [
+    ['Start: scan', join({ step: 'scan', busy: false })],
     ['Scan: camera open', join({ step: 'scan', busy: false }, true)],
     ['Review before any key is made', join({ step: 'review', facts: { identityCode: '4821 0937 5516 2204 7789 1350', origin: { label: 'Office Mac', kind: 'gateway', at: NOW - 40 * 86400 }, devices: rows.slice(0, 1), admitterLabel: 'Office Mac' } })],
     ['Name', join({ step: 'name', busy: false, admitterLabel: 'Office Mac' })],
@@ -85,7 +68,7 @@ const groups: Array<[string, Array<[string, ReactElement]>]> = [
   ['Typical errors', [
     ['Server key not the expected one', <OpenSessionScreen busy={false} error={errorText('as_unverified')} ended={false} onOpen={noop} />],
     ['Pairing went wrong', join({ step: 'failed', error: errorText('bad_message') })],
-    ['Setup refused', reg({ step: 'failed', error: errorText('no_user_verification'), canRetry: true })],
+    ['No screen lock', join({ step: 'failed', error: errorText('no_user_verification') })],
   ]],
 ];
 

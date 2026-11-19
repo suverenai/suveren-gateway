@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Proposal } from '@suveren/approval-card/types';
-import { BUILD_COMMIT } from './lib/config';
+import { BUILD_COMMIT, PHONE_FIRST_SETUP } from './lib/config';
 import { createRuntime } from './lib/runtime';
 import { assess, probe, requestPersistentStorage, type Need } from './lib/compat';
 import { RegisterDriver } from './lib/register-driver';
@@ -46,6 +46,7 @@ export default function App() {
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [updated, setUpdated] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [joinKey, setJoinKey] = useState(0);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -62,7 +63,8 @@ export default function App() {
       setPersistent(await requestPersistentStorage());
       setUpdated(await rt.accounts.buildChanged(BUILD_COMMIT));
       try {
-        setView((await rt.accounts.read()) ? { t: 'locked', error: null, ended: false, canForget: false } : { t: 'welcome' });
+        // DEC-83: phone-first setup off: a phone that is not paired goes straight to adding itself to an account.
+        setView((await rt.accounts.read()) ? { t: 'locked', error: null, ended: false, canForget: false } : PHONE_FIRST_SETUP ? { t: 'welcome' } : { t: 'join' });
       } catch {
         // A stored account that cannot be read is never "not paired".
         setView({ t: 'locked', error: errorText('generic'), ended: false, canForget: true });
@@ -112,7 +114,7 @@ export default function App() {
   const forget = useCallback(async () => {
     await rt.keys.deleteAll().catch(() => {});
     await rt.accounts.clear().catch(() => {});
-    setView({ t: 'welcome' });
+    setView(PHONE_FIRST_SETUP ? { t: 'welcome' } : { t: 'join' });
   }, [rt]);
 
   switch (view.t) {
@@ -125,7 +127,7 @@ export default function App() {
     case 'register':
       return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
     case 'join':
-      return <JoinFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
+      return <JoinFlow key={joinKey} rt={rt} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
@@ -163,7 +165,7 @@ function JoinFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: 
     <JoinScreen
       state={state} nowSeconds={rt.now()}
       onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
-      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP}
     />
   );
 }
