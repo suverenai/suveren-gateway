@@ -87,6 +87,8 @@ export interface EncryptedIntent {
 
 export interface CeremonyDeps {
   as: AsCall;
+  /** The profiles this gateway ships; the only source of profile content. */
+  profiles: LocalProfiles;
   /** The signed-in person (from the login response); null when locked. */
   user: { id: string; did: string } | null;
   encrypt: (intent: string, recipients: Array<{ userId: string; publicKey: string }>) => Promise<EncryptedIntent>;
@@ -121,9 +123,20 @@ export interface MandatePlan {
   approvers: string[];
 }
 
+/**
+ * The profiles this gateway ships and enforces. The ceremony reads profile
+ * content ONLY from here: the Authority Server's copy is never fetched, so a
+ * compromised one cannot offer an older or altered profile.
+ */
+export interface LocalProfiles {
+  list: () => Promise<Array<{ id: string }>>;
+  /** Undefined when this gateway does not ship that id. */
+  get: (id: string) => Promise<AgentProfile | undefined>;
+}
+
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one') { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one' | 'profile_not_shipped' | 'profile_not_newest') { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -135,18 +148,43 @@ function refuse(msg: string, code?: MandateRefused['code']): never {
   throw new MandateRefused(msg, code);
 }
 
-async function resolveProfile(as: AsCall, requested: string): Promise<AgentProfile> {
+/** The newest shipped version of an area ("sales" -> sales@0.4), by numeric version. */
+function newestOf(list: Array<{ id: string }>, short: string): string | undefined {
+  const matches = list.filter(p => shortOf(p.id) === short);
+  matches.sort((a, b) => versionOf(b.id).localeCompare(versionOf(a.id), undefined, { numeric: true }));
+  return matches[0]?.id;
+}
+
+/**
+ * Resolve a profile from the gateway's own catalog — never from the Authority
+ * Server. A short name ("sales") means the newest shipped version.
+ *
+ * `forNewMandate` (the default): a full id must BE the newest shipped version of
+ * its area. An older one is refused (`profile_not_newest`): older versions stay
+ * on board only so mandates already given under them keep verifying until they
+ * end. Pass `{ forNewMandate: false }` to read such an existing mandate's profile.
+ */
+async function resolveProfile(
+  profiles: LocalProfiles,
+  requested: string,
+  opts: { forNewMandate?: boolean } = {},
+): Promise<AgentProfile> {
+  const forNewMandate = opts.forNewMandate ?? true;
   let id = requested.trim();
+  const list = await profiles.list();
   if (!id.includes('@')) {
-    const list = await as('GET', '/api/profiles');
-    const matches = ((list.body?.profiles ?? []) as Array<{ id: string }>).filter(p => shortOf(p.id) === id);
-    if (matches.length === 0) refuse(`Unknown profile "${requested}".`);
-    matches.sort((a, b) => versionOf(b.id).localeCompare(versionOf(a.id), undefined, { numeric: true }));
-    id = matches[0].id;
+    const newest = newestOf(list, id);
+    if (!newest) refuse(`Unknown profile "${requested}": this gateway does not include it. Update the gateway to use it.`, 'profile_not_shipped');
+    id = newest;
+  } else if (forNewMandate) {
+    const newest = newestOf(list, shortOf(id));
+    if (newest && newest !== id) {
+      refuse(`${shortOf(id)} ${versionOf(id)} is not the newest version this gateway ships (${versionOf(newest)}). New mandates are only given on the newest version; older ones keep working until they end.`, 'profile_not_newest');
+    }
   }
-  const res = await as('GET', `/api/profiles/${encodeURIComponent(id)}`);
-  if (res.status !== 200 || !res.body?.id) refuse(`Unknown profile "${requested}".`);
-  return res.body as AgentProfile;
+  const profile = await profiles.get(id);
+  if (!profile?.id) refuse(`Unknown profile "${requested}": this gateway does not include it. Update the gateway to use it.`, 'profile_not_shipped');
+  return profile;
 }
 
 function scalarRecord(label: string, value: unknown): Record<string, string | number> {
@@ -217,7 +255,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
   if (!group) refuse(req.team && req.team !== 'personal' ? `You are not a member of a team "${req.team}".` : 'No personal workspace found.');
   const isPersonal = !!group.isPersonal;
 
-  const profile = await resolveProfile(deps.as, req.profile);
+  const profile = await resolveProfile(deps.profiles, req.profile);
   const name = profile.name ?? shortOf(profile.id);
 
   // Rights — the Authority Server's team authority gate, up front.
@@ -430,7 +468,9 @@ export interface RenewRequest {
 export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
   const user = deps.user;
   if (!user) refuse('The gateway is not signed in.');
-  const profile = await resolveProfile(deps.as, req.profileId);
+  // Extending moves only the expiry of a mandate the person already gave on this version: it
+  // is not a new mandate, so an older shipped version is allowed here (unlike planMandate).
+  const profile = await resolveProfile(deps.profiles, req.profileId, { forNewMandate: false });
   const boundsHash = computeBoundsHash(req.bounds as never, profile);
   const scopeHash = computeScopeHash(req.context as never, profile);
   const res = await deps.as('POST', '/api/as/mandate', {
@@ -532,8 +572,8 @@ export async function planMandateChange(req: MandateChangeRequest, deps: Ceremon
   }
 
   // A change always moves to the newest version of the area's profile: the AS issues no other.
-  const newest = await resolveProfile(deps.as, shortOf(old.profileId));
-  const oldProfile = old.profileId === newest.id ? newest : await resolveProfile(deps.as, old.profileId);
+  const newest = await resolveProfile(deps.profiles, shortOf(old.profileId));
+  const oldProfile = old.profileId === newest.id ? newest : await resolveProfile(deps.profiles, old.profileId, { forNewMandate: false });
 
   const bad = [...unknownFields('limits', changes.limits, newest.boundsSchema), ...unknownFields('scope', changes.scope, newest.scopeSchema)];
   if (bad.length) refuse(`${bad.join(', ')} ${bad.length === 1 ? 'is' : 'are'} not part of ${shortOf(newest.id)} ${versionOf(newest.id)}.`);

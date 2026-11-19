@@ -221,11 +221,12 @@ function canonicalizeJcs(value: unknown): string {
 
 /**
  * Compute the v0.7 `profile_hash` client-side — sha256 of the JCS
- * serialization of the profile JSON exactly as the AS provisioned it
- * (protocol.md → *Profile hash*), mirroring hap-core's `computeProfileHash`.
- * The UI fetches the profile verbatim from `GET /api/profiles/:id`, so
- * hashing the PARSED object here agrees with the AS's own computation
- * regardless of either side's key order or whitespace.
+ * serialization of the profile JSON (protocol.md → *Profile hash*), mirroring
+ * hap-core's `computeProfileHash`. The UI fetches the profile verbatim from
+ * `GET /api/profiles/:id`, which the control plane answers from THIS gateway's
+ * own shipped copy (the one it enforces), not from the AS. Hashing the PARSED
+ * object here agrees with hap-core's computation regardless of either side's
+ * key order or whitespace.
  */
 export async function computeProfileHashBrowser(profile: unknown): Promise<string> {
   const hash = await sha256(canonicalizeJcs(profile));

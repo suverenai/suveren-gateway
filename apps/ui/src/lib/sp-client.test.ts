@@ -400,3 +400,34 @@ describe('spClient.login() shows the gateway refusal as written', () => {
     await expect(spClient.login('k')).rejects.toMatchObject({ name: expect.stringMatching(/DifferentAccount/) });
   });
 });
+
+/**
+ * DEC-77 — the UI reads profiles from THIS gateway: `/api/profiles` is answered by the
+ * control plane from the profiles the gateway ships and enforces, not by the Authority
+ * Server. The UI therefore only ever asks the gateway's own origin (relative path), and a
+ * profile the gateway does not ship comes back with a plain reason the person can read.
+ */
+describe('spClient profile reads come from the gateway', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('listProfiles and getProfile call the gateway\'s own /api/profiles (relative path, id encoded)', async () => {
+    const fetchSpy = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url === '/api/profiles' ? { profiles: [{ id: 'a/b/email@0.10' }] } : { id: 'a/b/email@0.10' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    expect(await spClient.listProfiles()).toEqual([{ id: 'a/b/email@0.10' }]);
+    expect(await spClient.getProfile('a/b/email@0.10')).toEqual({ id: 'a/b/email@0.10' });
+    expect(fetchSpy.mock.calls.map((c) => c[0])).toEqual(['/api/profiles', `/api/profiles/${encodeURIComponent('a/b/email@0.10')}`]);
+  });
+
+  it('a profile the gateway does not ship surfaces its plain reason, not "Failed to fetch profile: 404"', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'profile_not_shipped', message: 'This gateway does not include the area "x/y/nonesuch@3". Update the gateway to use it.' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }),
+    ) as unknown as typeof fetch;
+    await expect(spClient.getProfile('x/y/nonesuch@3')).rejects.toThrow('This gateway does not include the area "x/y/nonesuch@3". Update the gateway to use it.');
+  });
+});

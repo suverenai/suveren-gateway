@@ -35,6 +35,7 @@ import { execSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readLock, verifyProfilesAgainstLock, lockedFiles } from './lib/profiles-lock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -56,6 +57,26 @@ const OUT = join(__dirname, 'dist');
 const TPL = join(__dirname, 'package.json.tpl');
 
 console.log('[bundle] assembling …');
+
+// ─── Profile pin: checked FIRST, before anything is built or copied ────────
+// The gateway enforces mandates against the profiles it ships, so they must be
+// exactly the ones profiles.lock names (one hap-profiles commit, sha256 per
+// file). A missing source falls through to the "Missing profiles" guard below;
+// a source that differs from the lock stops the build here.
+const PROFILES_SRC = process.env.HAP_PROFILES_SRC ?? join(REPO_ROOT, '..', 'hap-profiles');
+const PROFILES_LOCK = readLock(join(REPO_ROOT, 'profiles.lock'));
+if (existsSync(PROFILES_SRC)) {
+  const problems = verifyProfilesAgainstLock(PROFILES_SRC, PROFILES_LOCK);
+  if (problems.length) {
+    console.error(
+      `[bundle] The profiles in ${PROFILES_SRC} are not the ones profiles.lock pins ` +
+      `(${PROFILES_LOCK.repository} @ ${PROFILES_LOCK.commit}):\n  ${problems.join('\n  ')}\n` +
+      `Check out that commit. To pin a newer one, read its changes and run scripts/refresh-profiles-lock.mjs.`,
+    );
+    process.exit(1);
+  }
+  console.log(`[bundle] profiles match profiles.lock (${PROFILES_LOCK.commit.slice(0, 12)}, ${lockedFiles(PROFILES_LOCK).length} files)`);
+}
 
 if (buildApps) {
   console.log('[bundle] running pnpm build for each app');
@@ -101,12 +122,12 @@ if (existsSync(GUIDES_SRC)) {
 // gateway registers ZERO profiles and every gated action fails with
 // "Unknown profile" — so the guard below makes a missing source a hard
 // build error instead of a silently-empty package (the 0.2.8 bug).
-const PROFILES_SRC = process.env.HAP_PROFILES_SRC ?? join(REPO_ROOT, '..', 'hap-profiles');
 if (existsSync(PROFILES_SRC)) {
-  cpSync(PROFILES_SRC, join(OUT, 'profiles'), {
-    recursive: true,
-    filter: (src) => !src.includes('/.git') && !src.includes('/test-results'),
-  });
+  // Only the locked files ship — nothing else that happens to sit in the folder.
+  for (const rel of lockedFiles(PROFILES_LOCK)) {
+    mkdirSync(dirname(join(OUT, 'profiles', rel)), { recursive: true });
+    cpSync(join(PROFILES_SRC, rel), join(OUT, 'profiles', rel));
+  }
 }
 
 // ─── Guard: essential catalogs MUST be present, or fail the build ──────────

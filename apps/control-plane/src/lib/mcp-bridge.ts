@@ -284,6 +284,23 @@ export async function stopAllRunning(): Promise<unknown> {
   return res.json();
 }
 
+/**
+ * The profiles this gateway ships and enforces (mcp-server lib/profile-catalog.ts).
+ * The UI's profile reads and the mandate ceremony take profile content from here,
+ * never from the Authority Server. A failure is thrown, not papered over.
+ */
+export async function getLocalProfileList(): Promise<{ profiles: Array<{ id: string }> }> {
+  const res = await fetch(`${MCP_BASE}/internal/profiles`, { headers: internalHeaders() });
+  if (!res.ok) throw new Error(`The gateway's profile list is not available (status ${res.status}).`);
+  return res.json() as Promise<{ profiles: Array<{ id: string }> }>;
+}
+
+/** 200 with the profile, or the gateway's 404 (`profile_not_shipped` + a plain message). */
+export async function getLocalProfileById(id: string): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`${MCP_BASE}/internal/profiles/${encodeURIComponent(id)}`, { headers: internalHeaders() });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
 export async function getManifests(): Promise<unknown> {
   const res = await fetch(`${MCP_BASE}/internal/manifests`, {
     headers: internalHeaders(),

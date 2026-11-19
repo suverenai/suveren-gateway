@@ -23,10 +23,17 @@ jobs:
       # The npm bundle ships the profile catalog from hap-profiles (the single
       # source of truth — not vendored). Without this, build.mjs ships empty
       # profiles and the gateway rejects every gated action (the 0.2.8 bug).
+      # Pin: the profiles are the commit profiles.lock names, not whatever main holds today.
+      - name: Read the profile pin
+        id: profiles-pin
+        shell: bash
+        run: echo "commit=$(node -p "require('./profiles.lock').commit")" >> "$GITHUB_OUTPUT"
+
       - name: Check out profile catalog
         uses: actions/checkout@v6
         with:
           repository: humanagencyprotocol/hap-profiles
+          ref: ${{ steps.profiles-pin.outputs.commit }}
           path: .hap-profiles
 
       - uses: pnpm/action-setup@v6

@@ -30,7 +30,6 @@ const LIMITS = {
 
 function fakeAs(opts: { approvers?: string[]; grantors?: string[] | 'all'; attestStatus?: number; attestBody?: unknown; delegationIn?: string[] } = {}) {
   const calls: Array<{ method: string; path: string; body?: any }> = [];
-  const profiles = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.4', '@0.2'), version: '0.2' }];
   const as: CeremonyDeps['as'] = async (method, path, body) => {
     calls.push({ method, path, body });
     if (path === '/api/groups') return { status: 200, body: { groups: [
@@ -41,11 +40,8 @@ function fakeAs(opts: { approvers?: string[]; grantors?: string[] | 'all'; attes
       ...(opts.delegationIn ?? []).map((g) => ({ profileId: DELEGATION.id, groupId: g })),
       { profileId: SALES.id, groupId: 'g_other' },
     ] } };
-    if (path === '/api/profiles') return { status: 200, body: { profiles: profiles.map((p) => ({ id: p.id })) } };
-    if (path.startsWith('/api/profiles/')) {
-      const p = profiles.find((x) => x.id === decodeURIComponent(path.slice('/api/profiles/'.length)));
-      return p ? { status: 200, body: p } : { status: 404, body: { error: 'not found' } };
-    }
+    // Profile content never comes from the Authority Server: a fetch of it fails the test loudly.
+    if (path.startsWith('/api/profiles')) throw new Error(`the ceremony asked the Authority Server for ${path}`);
     if (path.endsWith('/approvers/pubkeys')) {
       return { status: 200, body: { pubkeys: Object.fromEntries((opts.approvers ?? []).map((u) => [u, Buffer.alloc(32, 7).toString('base64')])) } };
     }
@@ -59,13 +55,22 @@ function fakeAs(opts: { approvers?: string[]; grantors?: string[] | 'all'; attes
   return { as, calls };
 }
 
+/** The gateway's own catalog: what it ships. SALES@0.4 is the newest sales; 0.2 is an older shipped one. */
+const SHIPPED = [SALES, DELEGATION, REPORTING, { ...SALES, id: SALES.id.replace('@0.4', '@0.2'), version: '0.2' }];
+function localProfiles(shipped: Array<{ id: string }> = SHIPPED): CeremonyDeps['profiles'] {
+  return {
+    list: async () => shipped.map((p) => ({ id: p.id })),
+    get: async (id) => shipped.find((p) => p.id === id) as never,
+  };
+}
+
 function deps(as: CeremonyDeps['as'], over: Partial<CeremonyDeps> = {}) {
   const encrypt = vi.fn(async (_intent: string, recipients: Array<{ userId: string }>) => ({
     intentCiphertext: 'Y2lwaGVy', encryptedKeys: Object.fromEntries(recipients.map((r) => [r.userId, { ct: 'a', enc: 'b' }])),
     approversFrozen: recipients.map((r) => r.userId), intentDisclosureHash: 'sha256:disclosure',
   }));
   const deliverGateContent = vi.fn(async () => {});
-  const d: CeremonyDeps = { as, user: USER, encrypt, deliverGateContent, newAuthorizationId: () => 'authz_new', ...over };
+  const d: CeremonyDeps = { as, profiles: localProfiles(), user: USER, encrypt, deliverGateContent, newAuthorizationId: () => 'authz_new', ...over };
   return { d, encrypt, deliverGateContent };
 }
 
@@ -404,10 +409,10 @@ describe('changing a mandate: built from the signed old one, never from what the
     const { as } = asWithMandate(true);
     const oldBounds: Record<string, string | number> = { ...LIMITS, profile: older.id };
     delete oldBounds.quote_daily_max; // pretend this limit is new in 0.4
-    const fetching: CeremonyDeps['as'] = async (m, p, b) => (p === `/api/profiles/${encodeURIComponent(older.id)}` ? { status: 200, body: older } : as(m, p, b));
+    const shipsOlder = { profiles: localProfiles([...SHIPPED, older]) };
     const old = { ...OLD, profileId: older.id, bounds: oldBounds };
-    await expect(planMandateChange({ old, changes: {} }, deps(fetching).d)).rejects.toThrow(/needs a value/);
-    const { diff } = await planMandateChange({ old, changes: { limits: { quote_daily_max: 7 } } }, deps(fetching).d);
+    await expect(planMandateChange({ old, changes: {} }, deps(as, shipsOlder).d)).rejects.toThrow(/needs a value/);
+    const { diff } = await planMandateChange({ old, changes: { limits: { quote_daily_max: 7 } } }, deps(as, shipsOlder).d);
     expect(diff.rows.find((r) => r.field === 'quote_daily_max')).toMatchObject({ tag: 'New', before: null, after: 7 });
     expect(diff.versionMove).toEqual({ from: older.id, to: SALES.id });
   });
@@ -435,5 +440,81 @@ describe('changing a mandate: built from the signed old one, never from what the
     const r = await changeMandate({ old: OLD, changes: { limits: { quote_daily_max: 15 } }, sealedDiff: diff }, deps(failing).d);
     expect(r.revokeError).toBe('down');
     expect(calls.find((c) => c.path === '/api/as/mandate')!.body).toMatchObject({ replaces: 'authz_old', title: 'Quotes' });
+  });
+});
+
+// ─── DEC-77: profile content comes from the gateway's own catalog ───────────────────────
+describe('the ceremony reads profiles from this gateway, never the Authority Server', () => {
+  const OLDER_ID = SALES.id.replace('@0.4', '@0.2');
+
+  it('a short name means the newest shipped version', async () => {
+    const { as } = fakeAs();
+    expect((await planMandate({ ...REQ, profile: 'sales' }, deps(as).d)).profile.id).toBe(SALES.id);
+  });
+
+  it('a NEW mandate on an older shipped version is refused with a clear reason, before anything is created', async () => {
+    const { as, calls } = fakeAs();
+    const err = await planMandate({ ...REQ, profile: OLDER_ID }, deps(as).d).catch((e) => e);
+    expect(err).toBeInstanceOf(MandateRefused);
+    expect(err.code).toBe('profile_not_newest');
+    expect(err.message).toMatch(/sales 0\.2 is not the newest version this gateway ships \(0\.4\).*older ones keep working until they end/);
+    await expect(createMandate({ ...REQ, profile: OLDER_ID }, deps(as).d)).rejects.toMatchObject({ code: 'profile_not_newest' });
+    expect(calls.some((c) => c.path === '/api/as/mandate')).toBe(false);
+  });
+
+  it('the newest version, named in full, is accepted', async () => {
+    const { as } = fakeAs();
+    expect((await planMandate({ ...REQ, profile: SALES.id }, deps(as).d)).profile.id).toBe(SALES.id);
+  });
+
+  it('a downgrade cannot come from the Authority Server: it is never asked, and its newest-looking list does not matter', async () => {
+    // Only the older version is "offered" by the AS; this gateway ships 0.4 and still picks it.
+    const { as, calls } = fakeAs();
+    const plan = await planMandate({ ...REQ, profile: 'sales' }, deps(as).d);
+    expect(plan.profile.id).toBe(SALES.id);
+    expect(calls.some((c) => c.path.startsWith('/api/profiles'))).toBe(false);
+  });
+
+  it('a profile this gateway does not ship is refused with a plain reason, not fetched', async () => {
+    const { as, calls } = fakeAs();
+    for (const profile of ['nonesuch', 'example.org/profiles/nonesuch@9']) {
+      const err = await planMandate({ ...REQ, profile }, deps(as).d).catch((e) => e);
+      expect(err).toBeInstanceOf(MandateRefused);
+      expect(err.code).toBe('profile_not_shipped');
+      expect(err.message).toMatch(/does not include it\. Update the gateway/);
+    }
+    expect(calls.some((c) => c.path.startsWith('/api/profiles'))).toBe(false);
+  });
+
+  it('extending a mandate already given on an older shipped version still works (only the expiry moves)', async () => {
+    const { as, calls } = fakeAs();
+    const older = SHIPPED.find((p) => p.id === OLDER_ID)!;
+    const bounds = { ...LIMITS, profile: older.id } as Record<string, string | number>;
+    const { d } = deps(as);
+    await renewMandate({
+      authorizationId: 'authz_old', profileId: older.id, groupId: 'g_personal', bounds, context: { currency: 'EUR' },
+      intent: 'Why.', mode: 'automatic', domain: 'owner', ttlSeconds: 3600,
+    }, d);
+    const sent = calls.find((c) => c.path === '/api/as/mandate')!.body;
+    expect(sent.profile_id).toBe(older.id);
+    expect(sent.profile_hash).toBe(computeProfileHash(older as never));
+  });
+
+  it('changing a mandate that sits on an older version still moves it to the newest shipped one', async () => {
+    // Covered in full by "a mandate on an older version: fields new in the newest version…" above;
+    // here only that reading the OLD profile is not subject to the newest-only rule.
+    const { as } = fakeAs();
+    const older = SHIPPED.find((p) => p.id === OLDER_ID)!;
+    const mine: CeremonyDeps['as'] = async (m, p, b) => (p === '/api/mandates/mine?status=active'
+      ? { status: 200, body: { mandates: [{ authorization_id: 'authz_old', profileId: older.id, groupId: 'g_personal' }] } }
+      : as(m, p, b));
+    const old = {
+      authorizationId: 'authz_old', ownerDid: USER.did, profileId: older.id, groupId: 'g_personal', domain: 'owner',
+      bounds: { ...LIMITS, profile: older.id }, context: { currency: 'EUR' }, intent: 'Why.', mode: 'automatic' as const,
+      expiresAt: Math.floor(Date.now() / 1000) + 3600, title: 'Sales',
+    };
+    const { plan, diff } = await planMandateChange({ old: old as never, changes: { limits: { quote_daily_max: 7 } } }, deps(mine).d);
+    expect(plan.profile.id).toBe(SALES.id);
+    expect(diff.versionMove).toEqual({ from: older.id, to: SALES.id });
   });
 });

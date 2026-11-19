@@ -14,6 +14,22 @@ Development/
 └── suveren-e2e/     ← optional, for E2E tests
 ```
 
+### The profile pin
+
+The gateway enforces mandates against the profiles it ships, so a release ships exactly the
+profiles a person reviewed. `profiles.lock` (repo root) names one hap-profiles commit and the
+sha256 of every file in it. CI and the Dockerfile check out that commit (not `main`), and
+`bundle/build.mjs` fails the build if any profile file differs from the lock.
+
+To move to newer profiles at release time: read the changes since the locked commit, check the
+commit out in the sibling `hap-profiles` (it must be on `origin/main`, with no local changes), then
+
+```bash
+node scripts/refresh-profiles-lock.mjs        # or pass the path of the checkout
+```
+
+and commit the new `profiles.lock` with the release.
+
 ## First-Time Setup
 
 ```bash

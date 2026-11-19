@@ -50,7 +50,7 @@ import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { oauthResultPage } from './lib/html-escape';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
+import { getLocalProfileList, getLocalProfileById, getToolDisplay, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy } from './lib/mcp-bridge';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -73,6 +73,8 @@ import { createBlockedSeenRouter } from './routes/blocked-seen';
 import { createTicketsSeenRouter } from './routes/tickets-seen';
 import { createReportSeenRouter } from './routes/report-seen';
 import { createInternalEventsRouter } from './routes/internal-events';
+import type { AgentProfile } from '@hap/core';
+import { createProfilesRouter } from './routes/profiles';
 import { createInternalMandateRouter } from './routes/internal-mandate';
 import { createMandateRouter } from './routes/mandate';
 import type { CeremonyDeps } from './lib/mandate-ceremony';
@@ -722,6 +724,13 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
       throw err;
     }
   },
+  profiles: {
+    list: async () => (await getLocalProfileList()).profiles,
+    get: async (id) => {
+      const r = await getLocalProfileById(id);
+      return r.status === 200 ? (r.body as AgentProfile) : undefined;
+    },
+  },
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
   resyncGates: () => resyncGates(),
@@ -753,6 +762,8 @@ app.use('/autostart', jsonParser, authGuard, createAutostartRouter());
 // Local display preferences (desktop notifications). Never holds secrets.
 // The web page signs mandates through the same steps as the AI path (lib/mandate-ceremony.ts).
 app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremonyDeps));
+// Profile reads come from this gateway's own profiles, not the Authority Server (see routes/profiles.ts).
+app.use('/api/profiles', authGuard, createProfilesRouter({ list: getLocalProfileList, get: getLocalProfileById }));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
