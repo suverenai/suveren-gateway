@@ -36,7 +36,7 @@ import { createInternalDeviceRouter } from './internal-device';
 import { isBearerCredential } from '../lib/as-credential';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
 import { MandateGrants } from '../lib/mandate-grants';
-import { MandateApprovals } from '../lib/mandate-approvals';
+import { DeviceApprovals } from '../lib/device-approvals';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -109,15 +109,14 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   signin?: DeviceSignin;
   /** Grants mandates on this computer with its check (step 13): only with device set-up. */
   grants?: MandateGrants;
-  /** What the person approved for the Setup tools; `/internal/mandate` runs only for these. */
-  approvals?: MandateApprovals;
+  /** Checks what the person approved on ANY of their own devices, for the Setup tools; `/internal/mandate` runs only for these (plan 20.21.6). */
+  approvals?: DeviceApprovals;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
-  const approvals = new MandateApprovals();
   if (o.device) {
     const store = new DeviceChainStore(o.vault);
     const client = new DeviceAsClient({ asUrl: o.device.asUrl, pinning: o.device.pinning, onTlsMismatch: o.device.onTlsMismatch });
@@ -153,7 +152,8 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
       now: o.device.now,
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants };
+    const approvals = new DeviceApprovals({ vault: o.vault, client, grants, pins, now: o.device.now });
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -211,7 +211,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
         store: device.store,
         decisions: new DeviceDecisions({
           vault: o.vault, store: device.store, client: device.client,
-          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided, approvals,
+          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
           now: o.device.now,
         }),
       }));
@@ -220,6 +220,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals } : {}),
   };
 }

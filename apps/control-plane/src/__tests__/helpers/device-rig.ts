@@ -122,7 +122,7 @@ export interface GatewayRig {
   checkStore: CheckKeyStore;
   /** Grants mandates on this computer (step 13); undefined with the switch off. */
   grants: MandateGrants | undefined;
-  approvals: import('../../lib/mandate-approvals').MandateApprovals | undefined;
+  approvals: import('../../lib/device-approvals').DeviceApprovals | undefined;
   /** What the mandate router handed to the intent delivery and the gate resync. */
   delivered: Array<{ authorizationId: string }>;
   resynced: { count: number };

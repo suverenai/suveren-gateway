@@ -59,6 +59,8 @@ const MANDATE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 /** What the ceremony hands in: everything is its own validated data (lib/mandate-ceremony.ts). */
 export interface IssueInput {
+  /** A mandate id chosen beforehand (the approval claim names it). Used only for a NEW mandate; a change keeps the id of the mandate it continues. */
+  mandateId?: string;
   /** The signed-in person's account id and their root DID (the vault's session). */
   ownUserId: string;
   ownDid: string;
@@ -110,7 +112,7 @@ export interface GrantDeps {
   now?: () => number;
 }
 
-interface Session { credential: string; stored: StoredDeviceChain; own: ChainState }
+export interface Session { credential: string; stored: StoredDeviceChain; own: ChainState }
 
 type CapShape = { enforcedBy?: string; boundType?: { kind?: string } };
 
@@ -172,6 +174,17 @@ export class MandateGrants {
     const dk = await deviceKeys();
     if (!dk.isActive(own, stored.keyId)) return refuse('device_removed', 'This computer is no longer a device of the chain.');
     return { credential, stored, own };
+  }
+
+  /** The mandate id of the mandate an authorization was granted as, read from the Authority Server and verified against this person's chain. */
+  async mandateIdFor(authorizationId: string): Promise<string> {
+    const s = await this.session();
+    return (await this.held(authorizationId, s)).mandateId;
+  }
+
+  /** This person's own chain, verified from the genesis on, and this computer's session: what an approval is checked against (lib/device-approvals.ts). */
+  approvalSession(): Promise<Session> {
+    return this.session();
   }
 
   // ─── the team's part of the mandate (plan 20.20 item 2) ──────────────────
@@ -311,7 +324,7 @@ export class MandateGrants {
     if (i.ownDid !== s.stored.rootDid) return refuse('wrong_identity', 'The signed-in person is not the owner of this device chain.');
 
     // 2. the mandate this one continues, if any
-    let mandateId: string = randomBytes(18).toString('base64url');
+    let mandateId: string = typeof i.mandateId === 'string' && MANDATE_ID.test(i.mandateId) ? i.mandateId : randomBytes(18).toString('base64url');
     let version = 1;
     let op: 'grant' | 'change' = 'grant';
     let replaces: string | null = null;
