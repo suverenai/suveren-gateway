@@ -62,10 +62,10 @@ function newCheckKey(): { priv: KeyObject; key: { type: 'platform'; pub: string 
 
 const now = () => Math.floor(Date.now() / 1000);
 
-async function newDevice(label: string, check?: ReturnType<typeof newCheckKey>) {
+async function newDevice(label: string, check?: ReturnType<typeof newCheckKey>, kind: 'gateway' | 'approve-app' = 'gateway') {
   const priv = randomBytes(32);
   const pub = await dk.ed25519PublicKey(priv);
-  const record = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(randomBytes(32)), kind: 'gateway', label, keystore: 'software', ...(check ? { check: check.key } : {}) }, pub);
+  const record = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(randomBytes(32)), kind, label, keystore: 'software', ...(check ? { check: check.key } : {}) }, pub);
   return { priv: new Uint8Array(priv), record };
 }
 
@@ -81,8 +81,8 @@ async function person(label = 'Computer', o: { check?: boolean } = {}): Promise<
   return { did: root.did, rootSeed: root.privateSeed, entries: [e0], dev: { keyId: d.record.key_id, priv: d.priv }, ...(check ? { check: check.priv } : {}) };
 }
 
-async function addDevice(p: Person, label: string): Promise<{ keyId: string; priv: Uint8Array }> {
-  const d = await newDevice(label);
+async function addDevice(p: Person, label: string, kind: 'gateway' | 'approve-app' = 'gateway'): Promise<{ keyId: string; priv: Uint8Array }> {
+  const d = await newDevice(label, undefined, kind);
   const e = dk.buildEntry({ root_did: p.did, seq: p.entries.length, prev: await dk.entryHash(p.entries.at(-1)!), op: 'add', created_at: now(), signer: 'root', device: d.record });
   e.sigs.push(await dk.signEntry(e, 'root', p.rootSeed), await dk.signEntry(e, d.record.key_id, d.priv));
   await dk.verifyChain({ expectedRootDid: p.did, entries: [...p.entries, e] });
@@ -412,6 +412,17 @@ describe('a gateway with a device chain', () => {
     expect(a).toBe(b);
     expect(w.callTool).toHaveBeenCalledOnce();
     expect(ticketCalls(w)).toBe(1);
+  });
+
+  it('a decision signed by a PHONE (approve-app) key under a mandate the Authority Server signed WITHOUT an owner grant: mandate_not_granted, nothing runs', async () => {
+    const w = await world({ noGrant: true });
+    const phone = await addDevice(w.owner, 'My iPhone', 'approve-app');
+    await w.as.setChain(w.owner);
+    setDecisions(w, [await w.decisionFor(w.owner, phone)]);
+    // the gate's refusal for code mandate_not_granted reads: "this mandate has no grant: the Authority Server signed it, but its owner's device did not"
+    await expectRefused(w, /this mandate has no grant/);
+    expect(ticketCalls(w)).toBe(0);
+    expect(w.callTool).not.toHaveBeenCalled();
   });
 
   it('a "committed" state with NO device decision does not run, asks for no ticket, and says why', async () => {
