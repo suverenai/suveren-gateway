@@ -61,12 +61,15 @@ export async function sealContentKey(cek: Uint8Array, publicKey: Uint8Array): Pr
   return { ct: toBase64Url(ct), enc: toBase64Url(new Uint8Array(sender.enc)) };
 }
 
-function contextKey(cek: Uint8Array): Uint8Array {
+/** A copy backed by a plain ArrayBuffer: what WebCrypto's BufferSource accepts under the DOM typings (a subarray is typed ArrayBufferLike). */
+const own = (u: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array(u);
+
+function contextKey(cek: Uint8Array): Uint8Array<ArrayBuffer> {
   return new Uint8Array(hkdfSync('sha256', cek, new Uint8Array(0), CONTEXT_INFO, 32));
 }
 
 /** `"context" ‖ 0x00 ‖ proposalContentHash`: binds the context to ONE proposal. */
-export function contextAad(proposalContentHash: string): Uint8Array {
+export function contextAad(proposalContentHash: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(Buffer.concat([Buffer.from('context', 'utf8'), Buffer.from([0]), Buffer.from(proposalContentHash, 'utf8')]));
 }
 
@@ -86,8 +89,8 @@ async function aesKey(cek: Uint8Array, usage: 'encrypt' | 'decrypt'): ReturnType
 export async function openContentWithKey(cek: Uint8Array, ciphertext: string): Promise<string> {
   const bytes = fromBase64Url(ciphertext);
   if (bytes.length < 12 + 16) throw new Error('short');
-  const key = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-  return Buffer.from(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12) }, key, bytes.subarray(12))).toString('utf8');
+  const key = await crypto.subtle.importKey('raw', own(cek), { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  return Buffer.from(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: own(bytes.subarray(0, 12)) }, key, own(bytes.subarray(12)))).toString('utf8');
 }
 
 /** Seal the card context: JCS of the object, then the construction in the file header. Returns base64url. */
@@ -112,7 +115,7 @@ export async function openContext(cek: Uint8Array, ciphertext: string, proposalC
   try {
     const bytes = fromBase64Url(ciphertext);
     if (bytes.length < 12 + 16) throw new Error('short');
-    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: contextAad(proposalContentHash) }, await aesKey(cek, 'decrypt'), bytes.subarray(12)));
+    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: own(bytes.subarray(0, 12)), additionalData: contextAad(proposalContentHash) }, await aesKey(cek, 'decrypt'), own(bytes.subarray(12))));
   } catch {
     throw new ContextError('context_unreadable');
   }
