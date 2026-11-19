@@ -21,7 +21,7 @@ const MAX_MANDATES = 2000;
 const MAX_APPROVERS = 512;
 
 interface Entry { version: number; grantHash: string; revoked: boolean; receipted: number[]; at: number }
-interface File { v: 1; mandates: Record<string, Entry>; approvers: string[] }
+interface File { v: 1; mandates: Record<string, Entry>; approvers: string[]; chainSeen?: boolean }
 
 const isInt = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 1;
 const isHash = (h: unknown): h is string => typeof h === 'string' && /^sha256:[0-9a-f]{64}$/.test(h);
@@ -64,14 +64,25 @@ export class MandateGrantStore {
     if (!isId(mandateId) || !isInt(version) || !isHash(grantHash) || (op !== 'grant' && op !== 'change' && op !== 'revoke')) throw new GrantStoreRefused('bad_request');
     const f = this.read();
     const cur = f.mandates[mandateId];
+    // A revoke is final for the mandate id at ANY version: a seen revoke (even of an older version than the highest seen) is recorded,
+    // never refused, and the highest version stays. Nothing un-revokes.
+    if (op === 'revoke') {
+      f.mandates[mandateId] = {
+        version: Math.max(cur?.version ?? 0, version),
+        grantHash: cur?.grantHash ?? grantHash,
+        revoked: true,
+        receipted: cur?.receipted ?? [],
+        at: Math.floor(Date.now() / 1000),
+      };
+      this.vault.setSecretSlot(SLOT, f);
+      return { receiptNeeded: false };
+    }
     if (cur?.revoked) {
-      if (op === 'revoke' && version === cur.version) return { receiptNeeded: false };
       throw new GrantStoreRefused('revoked');
     }
     if (cur) {
-      if (op !== 'revoke' && version < cur.version) throw new GrantStoreRefused('lower_version');
-      if (version === cur.version && op !== 'revoke' && grantHash !== cur.grantHash) throw new GrantStoreRefused('same_version_other_grant');
-      if (op === 'revoke' && version < cur.version) throw new GrantStoreRefused('lower_version');
+      if (version < cur.version) throw new GrantStoreRefused('lower_version');
+      if (version === cur.version && grantHash !== cur.grantHash) throw new GrantStoreRefused('same_version_other_grant');
     } else if (Object.keys(f.mandates).length >= MAX_MANDATES) {
       const oldest = Object.entries(f.mandates).filter(([, e]) => !e.revoked).sort((a, b) => a[1].at - b[1].at)[0] ?? Object.entries(f.mandates).sort((a, b) => a[1].at - b[1].at)[0];
       delete f.mandates[oldest[0]];
@@ -80,12 +91,12 @@ export class MandateGrantStore {
     f.mandates[mandateId] = {
       version: higher ? version : cur.version,
       grantHash: higher ? grantHash : cur.grantHash,
-      revoked: op === 'revoke',
+      revoked: false,
       receipted: cur?.receipted ?? [],
       at: Math.floor(Date.now() / 1000),
     };
     this.vault.setSecretSlot(SLOT, f);
-    return { receiptNeeded: op !== 'revoke' && !f.mandates[mandateId].receipted.includes(version) };
+    return { receiptNeeded: !f.mandates[mandateId].receipted.includes(version) };
   }
 
   /** This computer answered `version` with its receipt. */
@@ -105,6 +116,25 @@ export class MandateGrantStore {
   /** Has the person already compared this approver's identity code and accepted it? */
   approverConfirmed(did: string): boolean {
     return isDid(did) && this.read().approvers.includes(did);
+  }
+
+  /** The person withdraws a confirmation: that DID is no owner and no approver from now on. */
+  forgetApprover(did: string): void {
+    if (!isDid(did)) throw new GrantStoreRefused('bad_request');
+    const f = this.read();
+    f.approvers = f.approvers.filter(d => d !== did);
+    this.vault.setSecretSlot(SLOT, f);
+  }
+
+  confirmedList(): string[] { return [...this.read().approvers]; }
+
+  /** Sticky: once a device chain was ever reported for this account on this computer, the grant check never goes back to "no chain here". */
+  chainSeen(): boolean { return this.read().chainSeen === true; }
+  markChainSeen(): void {
+    const f = this.read();
+    if (f.chainSeen === true) return;
+    f.chainSeen = true;
+    this.vault.setSecretSlot(SLOT, f);
   }
 
   confirmApprovers(dids: readonly string[]): void {

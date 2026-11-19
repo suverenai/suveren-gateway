@@ -65,11 +65,21 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
     res.json({ head: pins.get(did as string) });
   }));
 
-  router.post('/device-pin/advance', guarded((req, res) => {
-    const { did, head, keep } = (req.body ?? {}) as { did?: unknown; head?: { seq?: unknown; hash?: unknown }; keep?: unknown };
-    const protect = Array.isArray(keep) ? keep.filter((k): k is string => typeof k === 'string').slice(0, 256) : [];
-    res.json({ head: pins.advance(did as string, head as { seq: number; hash: string }, protect) });
-  }));
+  // The control plane fetches and verifies the chain ITSELF before it moves a pin (and decides which pins to protect): what the MCP
+  // server verified is not taken on its word, and a caller cannot name a head. (Without mandate support nothing can verify: refused.)
+  router.post('/device-pin/advance', async (req: Request, res: Response) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (!mandates) { res.status(423).json({ error: 'unavailable', code: 'unavailable' }); return; }
+      const head = await mandates.grants.pinChain((req.body as { did?: unknown } | undefined)?.did as string);
+      res.json({ head });
+    } catch (err) {
+      if (err instanceof PinRefusedError) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'pin_refused', code: err.reason }); return; }
+      if ((err as { name?: string })?.name === 'GrantRefusal') { res.status(403).json({ error: 'pin_refused', code: (err as { code: string }).code }); return; }
+      res.status(423).json({ error: 'unavailable', code: 'unavailable' });
+    }
+  });
 
   // The proposal is about to run on these decisions: a reused proposal id or nonce is refused.
   router.post('/device-ledger/consume', guarded((req, res) => {
@@ -82,6 +92,9 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
   // asks here to REMEMBER it (the highest version per mandate, a revocation) and to answer it with this computer's receipt.
   // This router decides nothing about the grant: it refuses a lower version and holds the signing key.
   if (mandates) {
+    router.get('/mandate-grant/chain-seen', guarded((_req, res) => { res.json({ seen: mandates.store.chainSeen() }); }));
+    router.post('/mandate-grant/chain-seen', guarded((_req, res) => { mandates.store.markChainSeen(); res.json({ ok: true }); }));
+
     router.post('/mandate-grant/owner-known', guarded((req, res) => {
       const { did } = (req.body ?? {}) as { did?: unknown };
       res.json({ known: mandates.grants.ownerKnown(did as string) });

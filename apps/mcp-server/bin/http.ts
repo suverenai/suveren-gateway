@@ -538,7 +538,8 @@ app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Res
   }
   const out = await resolveProposalFacts({
     // device keys: a mandate without its owner's grant offers no decision (lib/mandate-grants.ts)
-    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache) }),
+    // the decision path: a colleague's mandate this person confirmed by identity code may be decided on (the cache never holds one)
+    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache), allowConfirmedOwners: true }),
     // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
     auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
     // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.

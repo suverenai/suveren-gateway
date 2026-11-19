@@ -17,6 +17,8 @@ import * as dk from '@hap/core/device-keys';
 import { decodeMandateBlob, computeBoundsHash, computeProfileHash } from '@hap/core';
 import { StubAs } from '../../__tests__/helpers/stub-as';
 import { StubMandates, AS_GRANT_MEMBERS } from '../../__tests__/helpers/stub-as-mandates';
+import { StubProposals } from '../../__tests__/helpers/stub-as-proposals';
+import { computeProposalContentHash } from '../../lib/content-crypto';
 import { bootGateway, call, sessionHeaders, type GatewayRig } from '../../__tests__/helpers/device-rig';
 import { PlatformHelper } from '../../lib/platform-helper';
 import { PlatformChecks } from '../../lib/platform-checks';
@@ -63,11 +65,12 @@ async function person() {
 async function world(o: { checkKey?: boolean } = {}) {
   const as = await new StubAs().listen();
   open.push(as);
+  const props = new StubProposals(as);   // first: StubMandates chains in front of it
   const mandates = new StubMandates(as, SALES);
   const delivered: unknown[] = [];
   const helperEnv: Record<string, string> = {};
   const helper = fakeHost(helperEnv);
-  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { delivered.push(a); } } });
+  const gw: GatewayRig = await bootGateway({ as, platform: helper, mandate: { deliver: async a => { delivered.push(a); } }, decision: { facts: async () => ({ mandateId: props.mandateId, actionType: props.actionType }) } });
   open.push(gw);
   const session = await gw.unlock();
   const h = sessionHeaders(session);
@@ -82,7 +85,7 @@ async function world(o: { checkKey?: boolean } = {}) {
   const spy = vi.spyOn(PlatformChecks.prototype, 'sign');
   /** From now on the helper behaves like this (set-up needed its own good touch first). */
   const helperNow = (env: Record<string, string>): void => { Object.assign(helperEnv, env); helper.close(); };
-  return { as, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId), touches: spy };
+  return { as, props, mandates, gw, h, post, sign, internal, delivered, helperNow, rootDid: String(start.body.rootDid), keyId: String(start.body.deviceKeyId), touches: spy };
 }
 type W = Awaited<ReturnType<typeof world>>;
 
@@ -468,15 +471,50 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(await known(other.did)).toBe(true);
   });
 
-  it('the AI path cannot confirm anyone: confirmedApproverDids is dropped from /internal/mandate', async () => {
+  it('the AI path (the internal secret alone) cannot raise Touch ID: a mandate is created only for what the person approved, once, from the approved arguments', async () => {
     const w = await world();
-    const t = await (async () => { const ap = await person(); w.as.otherChains.set(ap.did, ap.entries); w.mandates.users.set('u_ap', { did: ap.did }); w.mandates.team = { approvers: ['u_ap'], approvals: 1, caps: { value_max: { value: 500, kind: 'approval' } } }; w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did], approvals: 1 }; return ap; })();
-    // the page-guarded route takes the confirmation; the internal route (secret, AI path) must not
-    const r = await w.internal('/internal/mandate', { request: { ...REQ, team: 'g_team', confirmedApproverDids: [t.did] } });
-    // refused for want of a comparison the AI path cannot make: nothing signed, nobody remembered
-    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_identity_unconfirmed' });
+    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.', mode: 'review', duration_hours: 1, title: 'Quotes' };
+    const hash = computeProposalContentHash(args);
+    const request = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: args.intent, mode: 'review', durationHours: 1, title: 'Quotes', team: 'personal' };
+    // the AI calls directly: no approval, a made-up fingerprint, the right fingerprint of something nobody approved
+    for (const approvalHash of [undefined, `sha256:${'a'.repeat(64)}`, hash]) {
+      const r = await w.internal('/internal/mandate', { request: { ...request, ...(approvalHash ? { approvalHash } : {}) } });
+      expect([r.status, r.body.code], String(approvalHash)).toEqual([403, 'approval_required']);
+    }
     expect(w.touches).not.toHaveBeenCalled();
-    expect(new MandateGrantStore(w.gw.vault).approverConfirmed(t.did)).toBe(false);
+    expect(w.mandates.rows).toEqual([]);
+    // the person approves the proposal on the page
+    w.props.add({ id: 'p1', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
+    const approved = await w.post('/device-decision/p1/approve', { content_hash: hash, proposalContentHash: hash });
+    expect(approved.status, approved.text).toBe(200);
+    // another tool's approval, or a different fingerprint, is still nothing
+    const other = await w.internal('/internal/mandate', { request: { ...request, approvalHash: `sha256:${'b'.repeat(64)}` } });
+    expect(other.body.code).toBe('approval_required');
+    // the call names only the fingerprint: what is created is what was approved, whatever else the caller put in the request
+    const r = await w.internal('/internal/mandate', { request: { profile: 'sales', limits: { ...LIMITS, value_max: 999999 }, scope: { currency: 'USD' }, intent: 'something else', mode: 'automatic', durationHours: 5, approvalHash: hash, confirmedApproverDids: ['did:key:z6MkEvil'] } });
+    expect(r.status, r.text).toBe(200);
+    expect(w.touches).toHaveBeenCalledTimes(1);
+    const grant = w.mandates.rows[0].grant as Record<string, unknown>;
+    expect(grant).toMatchObject({ commitment_mode: 'review', bounds_hash: computeBoundsHash({ ...LIMITS, profile: SALES.id } as never, SALES) });
+    // used once
+    const again = await w.internal('/internal/mandate', { request: { ...request, approvalHash: hash } });
+    expect(again.body.code).toBe('approval_required');
+    expect(w.touches).toHaveBeenCalledTimes(1);
+  });
+
+  it('a touch that was not given leaves the approval unspent (try again), and a dry run needs no approval and raises no touch', async () => {
+    const w = await world();
+    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why', mode: 'review', duration_hours: 1, title: 'Q' };
+    const hash = computeProposalContentHash(args);
+    w.props.add({ id: 'p2', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
+    expect((await w.post('/device-decision/p2/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
+    const dry = await w.internal('/internal/mandate', { dryRun: true, request: { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why', mode: 'review', durationHours: 1, team: 'personal' } });
+    expect(dry.status, dry.text).toBe(200);
+    expect(w.touches).not.toHaveBeenCalled();
+    w.helperNow({ FAKE_TOUCH: 'cancel' });
+    expect((await w.internal('/internal/mandate', { request: { approvalHash: hash } })).body).toMatchObject({ grantCode: 'check_failed' });
+    w.helperNow({ FAKE_TOUCH: 'ok' });
+    expect((await w.internal('/internal/mandate', { request: { approvalHash: hash } })).status).toBe(200);
   });
 
   it('answers a grant with this computer\'s signed receipt, once; the Authority Server verifies it', async () => {
@@ -502,6 +540,112 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(r.status).toBe(502);
     const noSecret = await call(w.gw.port, 'POST', '/internal/mandate-grant/receipt', { body: { mandateId: 'm-cccccccc', version: 1, grantHash: H('f') }, origin: null });
     expect(noSecret.status).toBe(401);
+  });
+});
+
+describe('review round 2', () => {
+  const H = (c: string) => `sha256:${c.repeat(64)}`;
+
+  it('F1: a seen revoke is recorded at ANY version and never un-revoked; the highest version stays', async () => {
+    const w = await world();
+    const st = new MandateGrantStore(w.gw.vault);
+    st.observe('m-revoke01', 3, H('a'), 'change');
+    expect(st.observe('m-revoke01', 1, H('b'), 'revoke')).toEqual({ receiptNeeded: false });   // an OLDER version's revoke: recorded, not refused
+    expect(st.get('m-revoke01')).toMatchObject({ version: 3, revoked: true });
+    expect(() => st.observe('m-revoke01', 4, H('c'), 'change')).toThrow(/revoked/);
+    expect(() => st.observe('m-revoke01', 3, H('a'), 'change')).toThrow(/revoked/);
+    // and a revoke of a mandate never seen is recorded too
+    st.observe('m-revoke02', 2, H('d'), 'revoke');
+    expect(st.get('m-revoke02')).toMatchObject({ version: 2, revoked: true });
+  });
+
+  it('F1: a revoke by a device that was active at the named head counts; one signed after the device was removed does not verify', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const g = w.mandates.rows[0];
+    // the revoke row is a device-signed row of the owner's chain: the verifier accepts it against the chain as it is now
+    const r = await w.post('/api/mandate/revoke', { authorizationId: authzOf(first) });
+    expect(r.status, r.text).toBe(200);
+    const rev = w.mandates.rows.at(-1)!;
+    const obs = await w.internal('/internal/mandate-grant/observe', { mandateId: g.mandateId, version: rev.version, grantHash: rev.grantHash, op: 'revoke' });
+    expect(obs.status).toBe(200);
+    // (hap-core verifyGrant requires the signing device to be ACTIVE in the chain it is given: a revoke whose device was removed LATER no longer verifies. Stated as a limit.)
+  });
+
+  it('F5: the sticky flag that a chain was ever reported here is kept in the vault', async () => {
+    const w = await world();
+    const seen = () => call(w.gw.port, 'GET', '/internal/mandate-grant/chain-seen', { headers: { 'x-internal-secret': 'sekret' } }).then(r => r.body.seen);
+    expect(await seen()).toBe(false);
+    expect((await w.internal('/internal/mandate-grant/chain-seen', {})).status).toBe(200);
+    expect(await seen()).toBe(true);
+    expect(new MandateGrantStore(w.gw.vault).chainSeen()).toBe(true);
+  });
+
+  it('F6: a pin advances only after the control plane verified the chain itself; the caller names only the DID', async () => {
+    const w = await world();
+    const ap = await person();
+    const pin = (body: unknown) => w.internal('/internal/device-pin/advance', body);
+    // the Authority Server serves nothing for this DID: nothing is pinned, whatever head the caller claims
+    expect((await pin({ did: ap.did, head: { seq: 9, hash: `sha256:${'9'.repeat(64)}` } })).status).toBeGreaterThanOrEqual(400);
+    const get = (did: string) => w.internal('/internal/device-pin/get', { did }).then(r => r.body.head);
+    expect(await get(ap.did)).toBeNull();
+    w.as.otherChains.set(ap.did, ap.entries);
+    const ok = await pin({ did: ap.did, head: { seq: 9, hash: `sha256:${'9'.repeat(64)}` } });
+    expect(ok.status, ok.text).toBe(200);
+    // the pinned head is the verified one, not the claimed one
+    const state = await dk.verifyChain({ expectedRootDid: ap.did, entries: ap.entries });
+    expect(await get(ap.did)).toEqual({ seq: state.head.seq, hash: state.head.hash });
+    // this computer's own chain is never moved here
+    expect((await pin({ did: w.rootDid })).body).toMatchObject({ code: 'own_chain' });
+  });
+
+  it('F4: a confirmation can be withdrawn (page session only)', async () => {
+    const w = await world();
+    const other = await person();
+    const known = (did: string) => w.internal('/internal/mandate-grant/owner-known', { did }).then(r => r.body.known);
+    await w.post('/api/mandate/confirm-identity', { did: other.did, code: await dk.identityCode(other.did) });
+    expect(await known(other.did)).toBe(true);
+    expect((await w.post('/api/mandate/forget-identity', { did: other.did })).status).toBe(200);
+    expect(await known(other.did)).toBe(false);
+    expect((await call(w.gw.port, 'POST', '/api/mandate/forget-identity', { body: { did: other.did } })).status).toBe(401);
+  });
+
+  it('F7: extending moves only the date; a renewal that would change anything else is refused as a change', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const base = { authorizationId: authzOf(first), profileId: SALES.id, groupId: 'g_personal', bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', domain: 'owner', ttlSeconds: 7200 };
+    const before = w.mandates.rows.length;
+    for (const change of [{ intent: 'another intent' }, { bounds: { ...LIMITS, value_max: 5, profile: SALES.id } }, { context: { currency: 'USD' } }]) {
+      const r = await w.post('/api/mandate/renew', { ...base, ...change });
+      expect(r.body, JSON.stringify(change)).toMatchObject({ grantCode: 'renewal_is_a_change' });
+    }
+    expect(w.mandates.rows).toHaveLength(before);
+    expect((await w.post('/api/mandate/renew', base)).status).toBe(200);
+  });
+
+  it('F8: a revoke row the owner\'s chain does not verify is ignored when a change is built', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const g = w.mandates.rows[0];
+    // a forged revoke row the Authority Server serves: no device of the chain signed it
+    w.mandates.rows.push({ ...g, op: 'revoke', version: 1, grantHash: H('f'), grant: { ...(g.grant as object), op: 'revoke' } as never, sig: dk.b64uEncode(new Uint8Array(64)), check: null });
+    const second = await w.sign({ replaces: authzOf(first) });
+    // the gateway did not refuse on the forged row (its own code is lowercase); the stub, like the real AS, refuses a change after any revoke row
+    expect(second.body.grantCode).not.toBe('mandate_revoked');
+    expect(second.body.grantCode).toBe('MANDATE_REVOKED');
+  });
+
+  it('F8: an approver the Authority Server lists twice counts once', async () => {
+    const w = await world();
+    const ap = await person();
+    w.as.otherChains.set(ap.did, ap.entries);
+    w.mandates.users.set('u_ap', { did: ap.did });
+    w.mandates.team = { approvers: ['u_ap'], approvals: 1, caps: { value_max: { value: 500, kind: 'approval' } } };
+    w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did], approvals: 1 };
+    w.mandates.eligibleOverride = [{ user_id: 'u_ap', did: ap.did }, { user_id: 'u_ap', did: ap.did }];
+    const r = await w.sign({ team: 'g_team', confirmedApproverDids: [ap.did] });
+    expect(r.status, r.text).toBe(200);
+    expect((w.mandates.rows[0].grant as Record<string, unknown>).above_cap_approvers).toEqual([ap.did]);
   });
 });
 

@@ -19,12 +19,13 @@ import * as dk from '@hap/core/device-keys';
 import { AttestationCache } from '../src/lib/attestation-cache';
 import { SPClient, type SPProposal } from '../src/lib/sp-client';
 import { makeGrantGate, resyncVerdict, checkMandateGrant } from '../src/lib/mandate-grants';
-import { signedMandateFacts } from '../src/lib/device-decisions';
+import { signedMandateFacts, CpRefused } from '../src/lib/device-decisions';
 import { checkDeviceDecisions, controlPlaneDevice, resolveProposalFacts } from '../src/lib/device-decisions';
 import { createInternalDeviceRouter } from '../../control-plane/src/routes/internal-device';
 import { DeviceChainStore } from '../../control-plane/src/lib/device-chain-store';
 import { DevicePinStore } from '../../control-plane/src/lib/device-pin-store';
 import { MandateGrantStore } from '../../control-plane/src/lib/mandate-grant-store';
+import { pinChainStub } from './helpers/cp-pin-stub';
 import { person, headOf, addDevice, removeDevice, blob, mandatePayload, grantFor, now, MANDATE_ID, AUTHZ, type Person, type GrantRow, type GrantOpts } from './helpers/device-people';
 
 const open: Array<() => Promise<void>> = [];
@@ -41,7 +42,7 @@ class FakeAs {
   /** `GET /api/authorizations/:id` answers 404 (the group is not known) */
   noSummary = false;
   /** The DID `GET /api/auth/session` names (the account), or null (the route answers 401). */
-  sessionDid: string | null = null;
+  sessionDid: string | null = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy1';
   /** What `GET /api/mandates?authorization_id=` answers as `authorization_id` (a mix-up) */
   answerAuthz: string | null = null;
   private server!: Server;
@@ -66,7 +67,7 @@ class FakeAs {
     const json = (status: number, body: unknown): void => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (!/^Bearer [A-Za-z0-9-]+$/.test(String(req.headers.authorization ?? ''))) return json(401, { approved: false, errors: [{ code: 'UNAUTHENTICATED', message: 'Authentication required' }] });
     let m: RegExpExecArray | null;
-    if (req.method === 'GET' && url.pathname === '/api/auth/session') return this.sessionDid ? json(200, { user: { id: 'u1', did: this.sessionDid } }) : json(401, { error: 'no' });
+    if (req.method === 'GET' && url.pathname === '/api/auth/session') return this.sessionDid ? json(200, { user: { id: 'u1', did: this.sessionDid } }) : json(500, { error: 'no' });
     if (req.method === 'GET' && (m = /^\/api\/authorizations\/([^/]+)$/.exec(url.pathname))) return this.noSummary ? json(404, { error: 'no' }) : json(200, { authorization_id: decodeURIComponent(m[1]), profile_id: 'test-pay@1', group_id: 'g1' });
     if (req.method === 'GET' && url.pathname === '/api/devices/chain') {
       const did = url.searchParams.get('did') ?? '';
@@ -122,6 +123,8 @@ interface World {
   /** DIDs the person confirmed by identity code (besides their own). */
   confirmed: Set<string>;
   gate: ReturnType<typeof makeGrantGate>;
+  /** Mark the sticky "a chain was seen here" flag, then the gate must refuse although this gateway says it has none. */
+  gateOnceSeen: () => Promise<void>;
   /** Serve the mandate and its grant(s) like the Authority Server does. */
   serve: (grants?: GrantRow[], blobs?: string[]) => Promise<void>;
 }
@@ -171,7 +174,9 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
       return { sent: true };
     },
   };
-  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, new DevicePinStore(vault as never, store), { store: grantStore, grants: receiptSigner as never }));
+  const pinStore = new DevicePinStore(vault as never, store);
+  (receiptSigner as Record<string, unknown>).pinChain = pinChainStub(as.chains, pinStore, own.did);
+  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, pinStore, { store: grantStore, grants: receiptSigner as never }));
   const cp: Server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   open.push(() => new Promise<void>(r => cp.close(() => r())));
   process.env.SUVEREN_CP_INTERNAL_URL = `http://127.0.0.1:${(cp.address() as { port: number }).port}`;
@@ -181,7 +186,8 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   const sp = new SPClient(as.url, { maxAttempts: 1, delaysMs: [0] });
   sp.setSessionCookie(`Bearer ${randomUUID()}`);
   if (approver) confirmed.add(owner.did);   // an approver's gateway honours the colleague it confirmed
-  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, protectedDids: () => [] });
+  // an approver's gateway also decides on a colleague's mandate it confirmed; a gateway gating its OWN person's tools honours its own owner only
+  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, protectedDids: () => [], allowConfirmedOwners: !!approver });
   const cache = new AttestationCache(sp);
   cache.setGrantGate(gate);
   const payload = mandatePayload(owner, {
@@ -193,7 +199,13 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
     if (grants) as.grants.set(MANDATE_ID, grants);
     else if (!o.noGrant) as.grants.set(MANDATE_ID, [await grantFor(owner, payload)]);
   };
-  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, confirmed, gate, serve };
+  const gateOnceSeen = async (): Promise<void> => {
+    grantStore.markChainSeen();
+    ownState.state = 'none';
+    const r = await gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] });
+    expect(r).toMatchObject({ ok: false, code: 'device_not_set_up_here' });
+  };
+  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, confirmed, gate, gateOnceSeen, serve };
   await serve();
   return w;
 }
@@ -415,7 +427,7 @@ describe('the owner is not the Authority Server\'s to name (a rogue server\'s ow
       w.as.blobs.set(AUTHZ, [blob(payload)]);
       w.as.grants.set(MANDATE_ID, [await grantFor(rogue, payload)]);
       const r = await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] });
-      expect(r, as).toMatchObject({ ok: false, code: 'owner_unknown' });
+      expect(r, as).toMatchObject({ ok: false, code: as === 'owner' ? 'owner_not_this_person' : 'owner_unknown' });
       expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
       expect(w.cache.getAllAuthorizations()).toEqual([]);
       // nothing about the rogue was pinned or remembered
@@ -423,7 +435,7 @@ describe('the owner is not the Authority Server\'s to name (a rogue server\'s ow
       expect(w.grantStore.get(MANDATE_ID)).toBeNull();
       // once the person compared the identity code and accepted that DID, it IS an owner (and only then)
       w.confirmed.add(rogue.did);
-      expect((await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] })).ok).toBe(true);
+      expect((await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] })).ok, as).toBe(as === 'approver');   // the decision path only, never the gateway's own gating
     }
   });
 
@@ -487,6 +499,49 @@ describe('revoke rows, versions per mandate, the answer asked for, the group, th
   });
 });
 
+describe('review round 2', () => {
+  it('F3: only a failure to ASK is transient (the entry stays); a refusal the control plane gives, with its code, drops it at once', async () => {
+    const w = await world();
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    let spy = vi.spyOn(controlPlaneDevice, 'observeGrant');
+    spy.mockRejectedValueOnce(new Error('control plane answered 503'));
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.cache.getAllAuthorizations()).toHaveLength(1);       // a failure to ask: kept until stale
+    for (const code of ['chain_fork', 'chain_rollback', 'grant_invalid', 'owner_unknown', 'grant_not_held']) {
+      spy.mockRejectedValueOnce(new CpRefused(code));
+      expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+      expect(w.cache.withheldReason(AUTHZ)?.code).toBe(code);
+      expect(w.cache.getAllAuthorizations(), code).toEqual([]);   // a refusal: gone
+      spy.mockRestore();
+      await w.cache.syncAuthorization(AUTHZ);                      // honoured again once the refusal is gone
+      spy = vi.spyOn(controlPlaneDevice, 'observeGrant');
+    }
+  });
+
+  it('F1: a revoke of an OLDER version is recorded and refuses; the mandate is not honoured again however the rows are served later', async () => {
+    const w = await world();
+    const v1 = w.as.grants.get(MANDATE_ID)![0];
+    const p2 = mandatePayload(w.owner, { expires_at: (w.payload.expires_at as number) + 600 });
+    const v2 = await grantFor(w.owner, p2, { op: 'change', version: 2 });
+    w.as.grants.set(MANDATE_ID, [v1, v2]);
+    w.as.blobs.set(AUTHZ, [blob(p2)]);
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.grantStore.get(MANDATE_ID)).toMatchObject({ version: 2 });
+    w.as.grants.set(MANDATE_ID, [v1, v2, await grantFor(w.owner, w.payload, { op: 'revoke', version: 1 })]);
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.grantStore.get(MANDATE_ID)).toMatchObject({ revoked: true });
+    w.as.grants.set(MANDATE_ID, [v1, v2]);                          // the revoke row is no longer served
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.cache.withheldReason(AUTHZ)?.code).toBe('mandate_revoked');
+  });
+
+  it('F9: once the grant verified, the group of the mandate is the one the owner signed', async () => {
+    const w = await world();
+    w.as.noSummary = true;
+    expect((await w.cache.syncAuthorization(AUTHZ))?.groupId).toBe('g1');
+  });
+});
+
 describe('a gateway without a chain on an account that has one', () => {
   it('switch on, no chain here, the Authority Server knows a chain for the account: refused; unknown or an error: works as before', async () => {
     const w = await world({ noGrant: true });
@@ -496,8 +551,17 @@ describe('a gateway without a chain on an account that has one', () => {
     expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
     const w2 = await world({ noGrant: true });
     w2.ownState.state = 'none';
-    w2.as.sessionDid = null; // 401: the Authority Server's word can only ADD a refusal
+    w2.as.sessionDid = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy2';   // the Authority Server knows no chain for it: works as before
     expect((await w2.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    // an answer that cannot be had (no session, an error) is NOT "no chain": refused, and not remembered as "no"
+    const w3 = await world({ noGrant: true });
+    w3.ownState.state = 'none';
+    w3.as.sessionDid = null;
+    await refusedWith(w3, 'device_state_unavailable');
+    w3.as.sessionDid = 'did:key:z6MkLegacyLegacyLegacyLegacyLegacyLegacy3';
+    expect((await w3.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    // sticky: once a chain was reported for this account here, "no chain here" never comes back
+    await w3.gateOnceSeen();
   });
 });
 
@@ -553,8 +617,9 @@ describe('the unchanged path', () => {
     const w = await world({ noGrant: true });
     w.ownState.state = 'none';
     expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
-    expect(w.cpHits).toEqual(['GET /internal/device-chain']);
-    expect(w.as.requests.filter(r => r.path.includes('/grants') || r.path.startsWith('/api/devices'))).toEqual([]);
+    expect(w.cpHits).toEqual(['GET /internal/device-chain', 'GET /internal/mandate-grant/chain-seen']);
+    // the Authority Server is asked whether this account has a chain (its answer can only add a refusal); never for grants
+    expect(w.as.requests.filter(r => r.path.includes('/grants') || r.path.startsWith('/api/devices')).map(r => r.path.split('?')[0])).toEqual(['/api/devices/chain']);
   });
 
   it('switch on, the control plane silent: fail closed, never "no chain"', async () => {

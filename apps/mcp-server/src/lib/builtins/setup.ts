@@ -39,6 +39,7 @@ import { CONTEXT_MAX_BYTES, writeContextFile, readContextFile } from '../context
 import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
 import { controlPlaneMandate } from '../cp-mandate';
+import { computeProposalContentHash } from '../proposal-content';
 import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
 import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
@@ -640,7 +641,8 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           // Approval can come long after the proposal: check the fixed rule again before creating.
           const fixed = proposalTargetRefusal(args);
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
-          const r = await controlPlaneMandate(false, mandateRequest(args));
+          // `approvalHash`: the fingerprint of the approved arguments. A gateway with a device chain runs only for what was approved under it.
+          const r = await controlPlaneMandate(false, { ...mandateRequest(args), approvalHash: computeProposalContentHash(args) });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           return builtinText(
             `Mandate created: ${r.authorizationId} — profile ${r.profileId}, ${r.groupName}, mode ${r.mode}, ` +
@@ -659,7 +661,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if ('refusal' in read) return { ...builtinText(`Refused: ${read.refusal}`), isError: true };
           const fixed = proposalTargetRefusal({ profile: read.short });
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
-          const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change } });
+          const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change }, approvalHash: computeProposalContentHash(args) });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           if (r.revokeError) {
             return {

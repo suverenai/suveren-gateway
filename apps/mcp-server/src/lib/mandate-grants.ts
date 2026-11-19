@@ -26,7 +26,7 @@
 import { decodeMandateBlob, buildMandateProjection, getProfile, computeProfileHash, type MandatePayload } from '@hap/core';
 import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import {
-  deviceKeys, deviceKeysEnabled, verifiedChain, GrantRefused,
+  deviceKeys, deviceKeysEnabled, verifiedChain, GrantRefused, CpRefused,
   type DeviceCpClient, type ChainReader,
 } from './device-decisions';
 
@@ -42,6 +42,8 @@ export interface GrantedBlob {
   payload: MandatePayload;
   /** This gateway has not answered this version with its receipt yet (the control plane says so). */
   receiptNeeded: boolean;
+  /** The group the owner SIGNED into the grant: what the cache uses as the mandate's group once the grant verified. */
+  groupId: string;
 }
 
 export type GrantCheck =
@@ -65,6 +67,11 @@ export interface GrantGateDeps extends ChainReader {
    */
   localProfileHash?: (profileId: string) => string | undefined;
   /**
+   * May a mandate of ANOTHER person (one this person confirmed by identity code) be honoured? Only on the decision path (a colleague's
+   * proposal an approver decides on). The gate that admits mandates for this gateway's own gating honours its own person's alone.
+   */
+  allowConfirmedOwners?: boolean;
+  /**
    * Switch on, this gateway has no chain: does the Authority Server know a chain for this account? Its answer can only ADD a
    * refusal (`device_not_set_up_here`); an error or "no" leaves the gateway working as before.
    */
@@ -84,16 +91,14 @@ export type GrantGate = (i: GrantGateInput) => Promise<GrantCheck>;
 /** `protectedDids` is read at every check: the signed identities of the mandates cached right now (their pins are never evicted). */
 export function makeGrantGate(deps: Omit<GrantGateDeps, 'protectedDids' | 'localProfileHash' | 'accountHasChain'> & { protectedDids?: () => string[] }): GrantGate {
   const sp = deps.sp as GrantGateDeps['sp'] & { getSessionDid?: () => Promise<string | null> };
-  // Asked at most every five minutes: the answer changes once, when the person sets up device keys.
-  let asked: { at: number; has: boolean } | null = null;
+  // A definite NO is remembered for five minutes. An error is not an answer: it is not cached and it refuses (see checkMandateGrant).
+  let no: number | null = null;
   const accountHasChain = async (): Promise<boolean> => {
-    if (asked && Date.now() - asked.at < 5 * 60_000) return asked.has;
-    let has = false;
-    try {
-      const did = await sp.getSessionDid?.();
-      if (did) has = (await sp.getDeviceChain(did)) !== null;
-    } catch { has = false; }
-    asked = { at: Date.now(), has };
+    if (no !== null && Date.now() - no < 5 * 60_000) return false;
+    const did = await sp.getSessionDid?.();          // throws on any failure
+    if (!did) throw new Error('no session did');
+    const has = (await sp.getDeviceChain(did)) !== null;   // throws on any failure; null = the Authority Server has none
+    if (!has) no = Date.now();
     return has;
   };
   const localProfileHash = (id: string): string | undefined => { try { const p = getProfile(id); return p ? computeProfileHash(p) : undefined; } catch { return undefined; } };
@@ -112,10 +117,20 @@ export async function checkMandateGrant(d: GrantGateDeps, i: GrantGateInput): Pr
   if (own.state === 'none') {
     // An account that has a chain at the Authority Server, on a gateway that never set it up: its mandates stand on grants this
     // gateway cannot check. The Authority Server's word can only add this refusal.
-    if (d.accountHasChain && await d.accountHasChain()) return refuse('device_not_set_up_here', 'this account has device keys, but this computer has not been set up with them, so its mandates cannot be checked here.');
+    const notHere = refuse('device_not_set_up_here', 'this account has device keys, but this computer has not been set up with them, so its mandates cannot be checked here.');
+    // Sticky: once a chain was ever reported for this account on this computer, "no chain here" never comes back (a wiped chain slot
+    // is not a way out). The remaining limit: an Authority Server that denies a chain this gateway never heard of.
+    try { if (await d.cp.chainSeen()) return notHere; } catch { return refuse('device_state_unavailable', 'the control plane did not say whether a device chain was ever set up here.'); }
+    if (d.accountHasChain) {
+      let has: boolean;
+      try { has = await d.accountHasChain(); } catch { return refuse('device_state_unavailable', 'the Authority Server did not say whether this account has device keys.'); }
+      if (has) { try { await d.cp.markChainSeen(); } catch { /* refused anyway */ } return notHere; }
+    }
     return { ok: true, skipped: true };
   }
   if (own.state !== 'present') return refuse('device_chain_unreadable', 'this gateway\'s stored device chain cannot be read.');
+  // Remembered (best effort): from now on this gateway is never read as "no chain here".
+  try { await d.cp.markChainSeen(); } catch { /* the chain is present; only the memory failed */ }
   if (typeof own.rootDid !== 'string') return refuse('device_state_unavailable', 'this gateway\'s own identity could not be read.');
   if (typeof i.authorizationId !== 'string' || !i.authorizationId) return refuse('mandate_unavailable', 'the authorization is not one this gateway can name.');
 
@@ -157,6 +172,7 @@ async function oneBlob(
   //    proves nothing (a rogue server makes its own root, chain and check key, and a grant that verifies). Only this person's own
   //    identity, or one whose identity code they compared and accepted, is an owner this gateway honours a mandate for.
   if (ownerDid !== ownRootDid) {
+    if (!d.allowConfirmedOwners) return no('owner_not_this_person', 'this gateway gates for its own person; a mandate of someone else is not honoured here.');
     let known = false;
     try { known = await d.cp.ownerConfirmed(ownerDid); } catch { return no('device_state_unavailable', 'the control plane did not say whether this owner was confirmed.'); }
     if (!known) return no('owner_unknown', 'the owner of this mandate is not this person and has not been confirmed by comparing their identity code.');
@@ -231,9 +247,11 @@ async function oneBlob(
           if (e.reason === 'revoked') return no('mandate_revoked', 'this mandate was revoked with a device signature; a revocation is final.');
           return no('grant_version_refused', 'an older version of this mandate\'s grant was served than the highest this gateway verified.');
         }
+        // The control plane looked and said no (it verified the grant itself): a refusal, not a failure to ask.
+        if (e instanceof CpRefused) return no(e.code, `the control plane refused this grant (${e.code}).`);
         return no('device_state_unavailable', 'the control plane could not record the grant it verified.');
       }
-      return { ok: true, blob: { blob, version: c.mandate_version, grantHash, ownerDid, mandateId, payload, receiptNeeded } };
+      return { ok: true, blob: { blob, version: c.mandate_version, grantHash, ownerDid, mandateId, payload, receiptNeeded, groupId } };
     } catch (e) {
       if (!(e instanceof Error && e.name === 'DeviceKeysError')) throw e;
       lastCode = `grant_${(e as Error & { code: string }).code.toLowerCase()}`;
