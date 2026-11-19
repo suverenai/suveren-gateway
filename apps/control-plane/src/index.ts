@@ -253,7 +253,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals, teamJoin: deviceTeamJoin } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals, teamJoin: deviceTeamJoin, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -580,7 +580,9 @@ app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecre
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.
 // See routes/internal-content-crypto.ts.
-app.use('/internal', jsonParser, createInternalContentCryptoRouter(() => internalSecret, vault, SP_URL, DATA_DIR));
+app.use('/internal', jsonParser, createInternalContentCryptoRouter(() => internalSecret, vault, SP_URL, DATA_DIR,
+  // Step 8: with a device chain, proposals are encrypted to every device and re-wrapped for a later one; undefined with the switch off.
+  deviceReaders && deviceRewrap ? { readers: deviceReaders, rewrap: deviceRewrap, store: new DeviceChainStore(vault) } : undefined));
 
 // Vault routes
 app.use('/vault', jsonParser, authGuard, createVaultRouter(vault, loginChangeGate));
@@ -646,7 +648,7 @@ app.use('/api/decrypt-intent', jsonParser, authGuard, createDecryptIntentRouter(
 // decrypt-intent above, generalized to toolArgs/notes. Encrypt (the
 // change-needed note, G5) resolves recipients' keys via the AS, same as
 // the internal route below.
-app.use('/api/decrypt-proposal-content', jsonParser, authGuard, createDecryptProposalContentRouter(vault));
+app.use('/api/decrypt-proposal-content', jsonParser, authGuard, createDecryptProposalContentRouter(vault, deviceKeys ? new DeviceChainStore(vault) : undefined));
 app.use('/api/encrypt-proposal-note', jsonParser, authGuard, createEncryptProposalNoteRouter(vault, SP_URL, DATA_DIR));
 
 // Approved intents local store (P6.4) — approver accountability record

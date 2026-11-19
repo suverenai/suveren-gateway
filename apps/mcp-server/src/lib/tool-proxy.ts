@@ -20,7 +20,8 @@ import { appendVerificationFooter, shouldAttachFooter, stripOwnTrailingFooter, m
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { unclassifiedArgs, sealedArgsRefusalText } from './sealed-args';
 import { hashToolArgs } from './execution-journal';
-import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
+import { computeSubmissionPreviewHash, failedBlockingChecks, getToolDisplayHints } from './preview';
+import { GATEWAY_VERSION } from './client-version';
 import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
 import { candidatesAllowingAttachments, isAttachmentSourceAllowed, attachmentSourcesField, attachmentSourcesValue } from './attachment-policy';
@@ -133,6 +134,46 @@ async function unreadableForNote(unreadableFor: string[], state: SharedState): P
     unreadableFor.map((id) => resolveWhoLabel(state.receiptArchive, id, id)),
   );
   return `\nNote: ${labels.join(', ')} cannot read this proposal's content yet — no device of theirs has registered an end-to-end key.`;
+}
+
+/**
+ * Device keys, step 8: readers that got no wrap, as CODES. The sentence is the maintainer's (approval-card `S8`,
+ * DRAFT); until then the AI is told the code and the person, never an invented explanation.
+ */
+function unreadableReadersNote(readers: Array<{ did: string; code: string }> | undefined): string {
+  if (!readers || readers.length === 0) return '';
+  return `\nNote: ${readers.length} reader(s) of this proposal could not be given a key (${[...new Set(readers.map((r) => r.code))].join(', ')}). Tell the person.`;
+}
+
+/**
+ * Device keys, step 8 (plan 5): what the card needs beyond the arguments, from the gateway's OWN data only: the
+ * connector's display rules for this tool, the mapping from arguments to the execution context, the gateway's
+ * version. `linked_record` is null until the AU10 snapshot is taken at submission (open). Never the AI's text.
+ */
+function cardContextOf(
+  integrationManager: IntegrationManager,
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown } | null },
+): { display: unknown; execution_mapping: unknown; linked_record: unknown; gateway_version: string } | undefined {
+  // The context is optional (the Authority Server may drop it; the card then says so): reading a connector's display
+  // rules must never stop a proposal from being filed.
+  try {
+    return {
+      display: getToolDisplayHints(integrationManager, tool.integrationId, tool.originalName) ?? null,
+      execution_mapping: tool.gating?.executionMapping ?? {},
+      linked_record: null,
+      gateway_version: GATEWAY_VERSION,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function cardContextArg(
+  integrationManager: IntegrationManager,
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown } | null },
+): { cardContext?: NonNullable<ReturnType<typeof cardContextOf>> } {
+  const c = cardContextOf(integrationManager, tool);
+  return c ? { cardContext: c } : {};
 }
 
 /**
@@ -2007,7 +2048,7 @@ function createGatedToolHandlerInner(
               // best effort — proceed with just the domain members
             }
             recipientUserIds = [...new Set(recipientUserIds)];
-            const { proposal, unreadableFor } = await state.spClient.submitProposal({
+            const { proposal, unreadableFor, unreadableReaders } = await state.spClient.submitProposal({
               authorizationId: authzId,
               profileId: auth.profileId,
               path: auth.path,
@@ -2021,6 +2062,7 @@ function createGatedToolHandlerInner(
               boundsHash: auth.boundsHash,
               actionType: declaredActionType,
               ...v08ProposalReaders(auth),
+              ...cardContextArg(integrationManager, tool),
             });
             // AU4 — snapshot a preview read NOW, for a tool whose declared
             // preview carries no `version` (the connector has no revision
@@ -2053,6 +2095,7 @@ function createGatedToolHandlerInner(
                   `"${auth.deferredCommitmentDomains.join('", "')}" for tool ${tool.originalName}.\n` +
                   `Proposal ID: ${proposal.id}. Check status with check-pending-commitments(proposal_id: "${proposal.id}").` +
                   (await unreadableForNote(unreadableFor ?? [], state)) +
+                  unreadableReadersNote(unreadableReaders) +
                   // Optional wait (2026-10-19): the AI can stay on the line instead of ending its turn.
                   `\nTell the person what you proposed and that it waits for their approval in the gateway; ` +
                   `then you may wait for the decision: check-pending-commitments(proposal_id: "${proposal.id}", wait_seconds: 50).`,
@@ -2491,7 +2534,7 @@ function createGatedToolHandlerInner(
               // Item 7 — never put scope-constrained values on the wire;
               // see wireExecutionContext's doc comment.
               const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-              const { proposal, unreadableFor } = await state.spClient.submitProposal({
+              const { proposal, unreadableFor, unreadableReaders } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
                 path: auth.path,
@@ -2507,6 +2550,7 @@ function createGatedToolHandlerInner(
                 boundsHash: auth.boundsHash,
                 actionType: declaredActionType,
                 ...v08ProposalReaders(auth),
+                ...cardContextArg(integrationManager, tool),
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(
@@ -2531,7 +2575,8 @@ function createGatedToolHandlerInner(
                   type: 'text',
                   text: `Action exceeds team cap. Approval required from ${uniqueApprovers.length} reviewer(s).\n` +
                     `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.` +
-                    (await unreadableForNote(unreadableFor ?? [], state)),
+                    (await unreadableForNote(unreadableFor ?? [], state)) +
+                    unreadableReadersNote(unreadableReaders),
                 }],
               };
             } catch (proposalErr) {

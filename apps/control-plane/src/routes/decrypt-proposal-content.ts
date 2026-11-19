@@ -17,16 +17,17 @@
  * Auth: session must be active (requireAuth middleware applied by caller in index.ts).
  */
 import { Router, type Request, type Response } from 'express';
-import { decryptProposalContent } from '../lib/content-crypto';
+import { decryptProposalContent, decryptProposalContext, NoWrapError } from '../lib/content-crypto';
+import type { DeviceChainStore } from '../lib/device-chain-store';
 import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
 
-export function createDecryptProposalContentRouter(vault: Vault): Router {
+export function createDecryptProposalContentRouter(vault: Vault, deviceStore?: DeviceChainStore): Router {
   const router = Router();
 
   router.post('/', async (req: Request, res: Response) => {
-    const { ciphertext, hash, proposalContentHash } = req.body as {
-      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
+    const { ciphertext, hash, proposalContentHash, device_keys: deviceKeysIn, context } = req.body as {
+      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; device_keys?: unknown; context?: unknown; hash?: unknown; proposalContentHash?: unknown;
     };
     // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
     // `keys` by account id (the same CEK); under 0.7 they are the same wraps.
@@ -51,24 +52,27 @@ export function createDecryptProposalContentRouter(vault: Vault): Router {
 
     try {
       const kp = await loadOrGenerateKeyPair(vault);
-      const plaintext = await decryptProposalContent(
-        {
-          ciphertext,
-          keys: keys as Record<string, { ct: string; enc: string }>,
-          // v0.8 rule 8: when the caller passes the proposal's fingerprint, the
-          // decrypted content is checked against it before it is shown.
-          ...(typeof hash === 'string' ? { hash } : {}),
-          ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
-        },
-        me.id,
-        kp.privateKey,
-        me.did,
-      );
-      res.json({ plaintext });
+      // Device keys, step 8: this computer's own entry in `device_keys` is read first, then the legacy wrap.
+      let myKeyId: string | undefined;
+      try { myKeyId = deviceStore?.read()?.keyId; } catch { /* an unreadable slot: the legacy wrap is tried */ }
+      const wire = {
+        ciphertext,
+        keys: keys as Record<string, { ct: string; enc: string }>,
+        ...(typeof deviceKeysIn === 'object' && deviceKeysIn !== null && !Array.isArray(deviceKeysIn) ? { device_keys: deviceKeysIn as Record<string, { ct: string; enc: string }> } : {}),
+        ...(typeof context === 'string' ? { context } : {}),
+        // v0.8 rule 8: when the caller passes the proposal's fingerprint, the
+        // decrypted content is checked against it before it is shown.
+        ...(typeof hash === 'string' ? { hash } : {}),
+        ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
+      };
+      const plaintext = await decryptProposalContent(wire, me.id, kp.privateKey, me.did, myKeyId);
+      // The card context is checked on open, bound to this proposal; a failure never hides the arguments.
+      const ctx = await decryptProposalContext(wire, me.id, kp.privateKey, me.did, myKeyId);
+      res.json({ plaintext, ...(ctx ? ctx : {}) });
     } catch (err) {
       console.error('[Control Plane] decrypt-proposal-content error:', err);
       const msg = err instanceof Error ? err.message : 'Decryption failed';
-      res.status(msg.includes('No key wrap') ? 403 : 500).json({ error: msg });
+      res.status(msg.includes('No key wrap') ? 403 : 500).json({ error: msg, ...(err instanceof NoWrapError ? { code: err.code } : {}) });
     }
   });
 

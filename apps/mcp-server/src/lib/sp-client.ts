@@ -12,7 +12,7 @@ import { clientVersionHeaders } from './client-version';
 import { readPairing } from './as-pairing';
 import { resolvePinTls } from './as-config';
 import { fetchAs, AsTlsMismatchError, type AsFetchPinning } from './as-tls-pin';
-import { cpEncryptContent, type ProposalContentWire } from './cp-content-client';
+import { cpEncryptContent, type ProposalContentWire, type UnreadableReader, type CardContextInput } from './cp-content-client';
 
 /** Why the client currently has no session — distinguishes the default
  *  boot-locked state from one that WAS active and ended, and carries the
@@ -635,8 +635,10 @@ export class SPClient {
      *  `unreadable` and `encrypted_keys` by DID (the owner plus the signed
      *  deciders); `keys` stays keyed by account id for 0.40 gateways. */
     readers?: { ownerDid: string; deciders: string[] };
-  }): Promise<{ proposal: SPProposal; unreadableFor: string[] }> {
-    const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds, data.readers);
+    /** Device keys, step 8: the gateway's own display rules, execution mapping, linked record and version, sealed beside the content. */
+    cardContext?: CardContextInput;
+  }): Promise<{ proposal: SPProposal; unreadableFor: string[]; unreadableReaders?: UnreadableReader[] }> {
+    const { content, unreadableFor, unreadableReaders } = await cpEncryptContent(data.toolArgs, data.recipientUserIds, data.readers, data.cardContext);
 
     const res = await this.fetch('/api/proposals', {
       method: 'POST',
@@ -678,7 +680,7 @@ export class SPClient {
     void notifyControlPlane('proposal-added');
 
     const body = await res.json() as { proposal: SPProposal };
-    return { proposal: body.proposal, unreadableFor };
+    return { proposal: body.proposal, unreadableFor, ...(unreadableReaders && unreadableReaders.length > 0 ? { unreadableReaders } : {}) };
   }
 
   /**

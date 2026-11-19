@@ -37,6 +37,8 @@ import { isBearerCredential } from '../lib/as-credential';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
 import { TeamTrustStore } from '../lib/team-trust-store';
 import { MandateGrants, type TeamTrustPort } from '../lib/mandate-grants';
+import { DeviceReaders } from '../lib/device-readers';
+import { ProposalRewrap } from '../lib/proposal-rewrap';
 import { DeviceApprovals } from '../lib/device-approvals';
 import { TeamJoin } from '../lib/team-join';
 
@@ -119,10 +121,13 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   teamMembers?: () => Promise<ReadonlySet<string> | null>;
   /** The join screens' logic (DEC-73 step 4): only with device set-up. */
   teamJoin?: TeamJoin;
+  /** Step 8: who can read a proposal (verified chains), and the re-wrap of open proposals for a later device. Only with device set-up. */
+  readers?: DeviceReaders;
+  rewrap?: ProposalRewrap;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; readers: DeviceReaders; rewrap: ProposalRewrap } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -135,8 +140,24 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now,
     });
     o.vault.onLocked(() => alarm.forget());
+    // Step 8: readers of a proposal come from verified chains; a person whose chain does not verify is an alarm on the page.
+    const pins = new DevicePinStore(o.vault, store);
+    // Grants (and with them step 3's team trust) exist BEFORE the readers and the join: both take their verified list from it.
+    const grantStore = new MandateGrantStore(o.vault);
+    const grants = new MandateGrants({
+      vault: o.vault, store, client, pins, grants: grantStore, teamTrust: new TeamTrustStore(o.vault),
+      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+      now: o.device.now,
+    });
+    const readers = new DeviceReaders({ vault: o.vault, store, client, pins, teamMembers: () => grants.teamMembers(), onAlarm: (did, code) => eventBus.emit('reader-chain-alarm', { did, code }) });
+    const rewrap = new ProposalRewrap({ vault: o.vault, client, readers });
+    // A device added since the last sign-in is learned from the verified chain: open proposals get a wrap for it.
+    const establish: typeof o.device.establish = async (session, first) => {
+      await o.device!.establish(session, first);
+      void rewrap.run().catch(() => { /* a re-wrap that fails never fails a sign-in */ });
+    };
     const signin = new DeviceSignin({
-      vault: o.vault, store, client, checkAs: o.device.checkAs, establish: o.device.establish,
+      vault: o.vault, store, client, checkAs: o.device.checkAs, establish,
       onAlarm: o.device.onAlarm, onPendingReset: p => alarm.observe(p), discard: o.device.discard, now: o.device.now, timers: o.device.timers,
     });
     // `setup` and `recovery` refuse to start while the other is running; each asks the other through a late-bound closure.
@@ -153,19 +174,12 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    const pins = new DevicePinStore(o.vault, store);
-    const grantStore = new MandateGrantStore(o.vault);
-    const grants = new MandateGrants({
-      vault: o.vault, store, client, pins, grants: grantStore, teamTrust: new TeamTrustStore(o.vault),
-      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
-      now: o.device.now,
-    });
     const approvals = new DeviceApprovals({ vault: o.vault, client, grants, pins, now: o.device.now });
     const teamJoin = new TeamJoin({
       vault: o.vault, store, grants, trust: grants.teamTrustPort(), now: o.device.now,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin };
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, readers, rewrap };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -232,6 +246,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, readers: device.readers, rewrap: device.rewrap } : {}),
   };
 }

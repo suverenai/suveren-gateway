@@ -25,6 +25,8 @@ import { fetchAs, type AsFetchPinning } from './as-tls-pin';
 import { readPairing } from './as-pairing';
 import { resolvePinTls } from './as-config';
 import { asAuthHeaders } from './as-credential';
+import type { DeviceReaders, UnreadableCode } from './device-readers';
+import { openContentKey, sealContext, openContext, ContextError, type CardContext } from './content-wraps';
 
 /** Wire `alg` value — see the PE1 brief's wire contract. */
 export const CONTENT_ALG = 'HPKE-X25519-HKDF-SHA256-AES256GCM' as const;
@@ -49,6 +51,14 @@ export interface ProposalContentWire {
   encrypted_keys: Record<string, { ct: string; enc: string }>;
   readers: string[];
   unreadable: string[];
+  /**
+   * Device keys, step 8 (plan 5): one wrap per ACTIVE device of each reader, by device key id. Additive:
+   * `keys` and `encrypted_keys` keep their meaning (for a reader with a chain, `encrypted_keys[did]` is the
+   * wrap for that person's active device with the lowest `added_seq`, so `readers` still equals its key set).
+   */
+  device_keys?: Record<string, { ct: string; enc: string }>;
+  /** The card context, a second ciphertext (base64url) under a key derived from the content key (content-wraps.ts). */
+  context?: string;
 }
 
 /**
@@ -85,7 +95,16 @@ export interface ContentCryptoDeps {
    *  locally, never an AS-served one (protocol.md → Proposals, rule 2). */
   selfDid?: string;
   selfPublicKey?: Uint8Array;
+  /**
+   * Device keys, step 8: set only on a gateway that has a device chain. Readers then come from verified chains
+   * (lib/device-readers.ts) and every active device of each gets a wrap. `selfPrivateKey` is this gateway's own
+   * reading key from its vault: it opens the content key once, to seal the card context, and is never sent anywhere.
+   */
+  device?: { readers: DeviceReaders; selfPrivateKey: Uint8Array };
 }
+
+/** Which reader could not get a wrap and why: codes only (the page's wording is approval-card `S8`). */
+export interface UnreadableReader { did: string; code: UnreadableCode | 'no_reading_key' }
 
 /** v0.8 — who a proposal under a 0.8 mandate is encrypted to, by DID. */
 export interface V08Readers {
@@ -100,7 +119,7 @@ export interface V08Readers {
  * (v0.8) by DID. `did` is the account's current DID when the AS reports it.
  * null = unregistered (404) or unreachable.
  */
-async function fetchUserPubkeyEntry(userIdOrDid: string, deps: ContentCryptoDeps): Promise<{ pubkey: string; did?: string } | null> {
+async function fetchUserPubkeyEntry(userIdOrDid: string, deps: ContentCryptoDeps): Promise<{ pubkey: string; did?: string; userId?: string } | null> {
   const pin = readPairing(deps.dataDir);
   const pinning: AsFetchPinning = {
     enforce: resolvePinTls(deps.dataDir),
@@ -113,9 +132,9 @@ async function fetchUserPubkeyEntry(userIdOrDid: string, deps: ContentCryptoDeps
       pinning,
     );
     if (!res.ok) return null;
-    const data = (await res.json().catch(() => ({}))) as { pubkey?: string; did?: string };
+    const data = (await res.json().catch(() => ({}))) as { pubkey?: string; did?: string; userId?: string };
     if (typeof data.pubkey !== 'string') return null;
-    return { pubkey: data.pubkey, ...(typeof data.did === 'string' ? { did: data.did } : {}) };
+    return { pubkey: data.pubkey, ...(typeof data.did === 'string' ? { did: data.did } : {}), ...(typeof data.userId === 'string' ? { userId: data.userId } : {}) };
   } catch {
     return null;
   }
@@ -201,7 +220,13 @@ export async function encryptProposalContent(
   deps: ContentCryptoDeps,
   /** v0.8 only: name readers by DID (protocol.md → Proposals, rule 2). Omit under a 0.7 mandate. */
   v08?: V08Readers,
-): Promise<{ content: ProposalContentWire; unreadableFor: string[] }> {
+  /** Device keys only: the card context to seal beside the content (plan 5). */
+  cardContext?: CardContext,
+): Promise<{ content: ProposalContentWire; unreadableFor: string[]; unreadableReaders?: UnreadableReader[] }> {
+  // A gateway with a device chain under a 0.8 mandate: readers and their devices come from verified chains.
+  if (v08 && deps.device && deps.device.readers.active()) {
+    return encryptToDevices(toolArgs, v08, deps as ContentCryptoDeps & { device: NonNullable<ContentCryptoDeps['device']> }, cardContext);
+  }
   const { resolved, unreadableFor } = await resolveRecipientPubkeys(recipientUserIds, deps);
   if (v08) {
     // v0.8: ONE content key, wrapped twice — by DID for the signed readers
@@ -253,6 +278,79 @@ export async function encryptProposalContent(
       encrypted_keys: env.encrypted_keys, readers: env.readers, unreadable: env.unreadable,
     },
     unreadableFor,
+  };
+}
+
+/**
+ * Device keys, step 8 (plan 5). ONE content key, wrapped once per ACTIVE device of every reader, each reader's
+ * devices taken from a chain this gateway verified (lib/device-readers.ts):
+ *   - `device_keys[keyId]`: the wrap of every such device;
+ *   - `encrypted_keys[did]`: for a reader with a chain, the wrap of that person's device with the lowest `added_seq`
+ *     (v0.8 requires `readers` to equal the key set of `encrypted_keys`, and this keeps it true);
+ *   - a reader WITHOUT a chain gets today's wrap to their legacy key (`encrypted_keys[did]` and, by account id,
+ *     `keys[userId]` for a released gateway) — it still opens the proposal;
+ *   - a reader whose chain fails verification gets none: they are in `unreadable`, with a code in `unreadableReaders`.
+ * The owner's own devices come from the own chain and this gateway's vault key, never from the Authority Server.
+ */
+async function encryptToDevices(
+  toolArgs: Record<string, unknown>,
+  v08: V08Readers,
+  deps: ContentCryptoDeps & { device: NonNullable<ContentCryptoDeps['device']> },
+  cardContext: CardContext | undefined,
+): Promise<{ content: ProposalContentWire; unreadableFor: string[]; unreadableReaders: UnreadableReader[] }> {
+  if (deps.selfPublicKey?.length !== 32) throw new Error('This gateway has no reading key of its own to encrypt with.');
+  const expected = Array.from(new Set([v08.ownerDid, ...v08.deciders]));
+  const res = await deps.device.readers.resolve(expected, deps.selfPublicKey, { deciders: v08.deciders });
+
+  const hapReaders: Array<{ did: string; publicKey: Uint8Array }> = [];
+  for (const devs of res.chain.values()) for (const dev of devs) hapReaders.push({ did: dev.keyId, publicKey: dev.readPub });
+
+  // A reader the Authority Server holds no chain for: the legacy key, as today.
+  const legacyUser = new Map<string, string>();
+  const unreadableReaders: UnreadableReader[] = [...res.unreadable];
+  for (const did of res.legacy) {
+    const entry = await fetchUserPubkeyEntry(did, deps);
+    // The answer must NAME this DID: an Authority Server that answers for a DID with a key and no DID (or another) is not believed.
+    const bytes = entry && entry.did === did ? decodeReaderKey(entry.pubkey) : null;
+    if (!bytes) { unreadableReaders.push({ did, code: 'no_reading_key' }); continue; }
+    hapReaders.push({ did, publicKey: bytes });
+    if (entry?.userId) legacyUser.set(did, entry.userId);
+  }
+  const unreadableDids = new Set(unreadableReaders.map((u) => u.did));
+
+  const readerDids = expected.filter((d) => !unreadableDids.has(d));
+  if (readerDids.length === 0) {
+    throw new Error('No reader of this proposal (the mandate owner or a signed decider) can be encrypted to — cannot encrypt this proposal.');
+  }
+  const { content: env, proposalContentHash } = await hapEncryptProposalContent(toolArgs, hapReaders, { unreadable: [...unreadableDids] });
+
+  const deviceKeys: Record<string, { ct: string; enc: string }> = {};
+  for (const devs of res.chain.values()) for (const dev of devs) deviceKeys[dev.keyId] = env.encrypted_keys[dev.keyId];
+  const encryptedKeys: Record<string, { ct: string; enc: string }> = {};
+  const keys: Record<string, { ct: string; enc: string }> = {};
+  for (const did of readerDids) {
+    const devs = res.chain.get(did);
+    if (devs && devs.length > 0) { encryptedKeys[did] = env.encrypted_keys[devs[0].keyId]; continue; }
+    encryptedKeys[did] = env.encrypted_keys[did];
+    const uid = legacyUser.get(did);
+    if (uid) keys[uid] = env.encrypted_keys[did];
+  }
+
+  let context: string | undefined;
+  if (cardContext) {
+    // Open the content key from this computer's own wrap, seal the context under the key derived from it, forget it.
+    const cek = await openContentKey(env.encrypted_keys[res.self.keyId], deps.device.selfPrivateKey);
+    try { context = await sealContext(cek, cardContext, proposalContentHash); } finally { cek.fill(0); }
+  }
+
+  return {
+    content: {
+      v: 1, alg: CONTENT_ALG, ciphertext: env.ciphertext, keys, hash: proposalContentHash,
+      encrypted_keys: encryptedKeys, readers: readerDids, unreadable: [...unreadableDids],
+      device_keys: deviceKeys, ...(context ? { context } : {}),
+    },
+    unreadableFor: [],
+    unreadableReaders,
   };
 }
 
@@ -310,11 +408,82 @@ export function assertContentFingerprint(plaintext: string, wire: { hash?: strin
 
 const STRICT_B64URL = /^[A-Za-z0-9_-]+$/;
 
+type Wrap = { ct: string; enc: string };
+
+/** This device holds no wrap of the proposal (yet): not a decryption failure. The message keeps its old wording; the code is stable. */
+export class NoWrapError extends Error {
+  readonly code = 'no_wrap_for_this_device';
+  constructor() {
+    super('No key wrap for this account in this content — this device cannot read it.');
+    this.name = 'NoWrapError';
+  }
+}
+
+/** The parts of a proposal's `content` this module reads. */
+export interface ContentWire {
+  ciphertext: string;
+  keys?: Record<string, Wrap>;
+  encrypted_keys?: Record<string, Wrap>;
+  /** Device keys, step 8: what the Authority Server serves a device session is its OWN entry only. */
+  device_keys?: Record<string, Wrap>;
+  context?: string;
+  hash?: string;
+  proposalContentHash?: string;
+}
+
+/**
+ * This reader's wrap: the device entry first (this computer's own key id; failing that the single entry a device
+ * session is served), then the wrap by DID, then by account id (the legacy path, which every released gateway reads).
+ */
+function pickWrap(wire: ContentWire, myUserId: string, myDid?: string, myKeyId?: string): Wrap | undefined {
+  const dev = wire.device_keys;
+  if (dev && typeof dev === 'object') {
+    const own = myKeyId ? dev[myKeyId] : Object.keys(dev).length === 1 ? Object.values(dev)[0] : undefined;
+    if (own) return own;
+  }
+  const keys = { ...(wire.keys ?? {}), ...(wire.encrypted_keys ?? {}) };
+  return (myDid ? keys[myDid] : undefined) ?? keys[myUserId];
+}
+
+/** The card context of this proposal, opened (null: the proposal carries none), or the code that says why it could not be. */
+export type ContextResult = { context: CardContext } | { contextError: string } | null;
+
+/**
+ * Open the card context on this device (plan 5): the content key comes from this reader's own wrap, the context key is
+ * derived from it, and the associated data binds the context to THIS proposal's fingerprint. A context moved to another
+ * proposal, a tampered one, or a wrap that does not open fails with a code; the arguments are shown in full regardless.
+ */
+export async function decryptProposalContext(
+  wire: ContentWire,
+  myUserId: string,
+  myPrivateKey: Uint8Array,
+  myDid?: string,
+  myKeyId?: string,
+): Promise<ContextResult> {
+  if (wire.context === undefined) return null;
+  const fingerprint = wire.proposalContentHash ?? wire.hash;
+  const wrap = pickWrap(wire, myUserId, myDid, myKeyId);
+  if (!fingerprint || !wrap || typeof wire.context !== 'string' || !STRICT_B64URL.test(wire.context) || !STRICT_B64URL.test(wrap.ct) || !STRICT_B64URL.test(wrap.enc)) {
+    return { contextError: 'context_unreadable' };
+  }
+  let cek: Uint8Array;
+  try { cek = await openContentKey(wrap, myPrivateKey); } catch { return { contextError: 'context_unreadable' }; }
+  try {
+    return { context: await openContext(cek, wire.context, fingerprint) };
+  } catch (e) {
+    return { contextError: e instanceof ContextError ? e.code : 'context_unreadable' };
+  } finally {
+    cek.fill(0);
+  }
+}
+
 export async function decryptProposalContent(
   wire: {
     ciphertext: string;
     keys?: Record<string, { ct: string; enc: string }>;
     encrypted_keys?: Record<string, { ct: string; enc: string }>;
+    device_keys?: Record<string, { ct: string; enc: string }>;
+    context?: string;
     hash?: string;
     proposalContentHash?: string;
   },
@@ -323,11 +492,13 @@ export async function decryptProposalContent(
   /** v0.8 — this user's DID: under a 0.8 mandate the reader wrap is keyed by
    *  DID (`encrypted_keys`), with the same CEK by account id in `keys`. */
   myDid?: string,
+  /** Device keys, step 8: this computer's own device key id; its `device_keys` entry is read first. */
+  myKeyId?: string,
 ): Promise<string> {
-  const keys = { ...(wire.keys ?? {}), ...(wire.encrypted_keys ?? {}) };
-  const wrap = (myDid ? keys[myDid] : undefined) ?? keys[myUserId];
+  const wrap = pickWrap(wire, myUserId, myDid, myKeyId);
   if (!wrap) {
-    throw new Error('No key wrap for this account in this content — this device cannot read it.');
+    // A device added after the proposal was made holds no wrap until another device of the person passes it on.
+    throw new NoWrapError();
   }
   const fingerprint = wire.proposalContentHash ?? wire.hash;
   // v0.8 content (base64url, a fingerprint to check against): hap-core's
