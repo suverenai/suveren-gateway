@@ -54,6 +54,15 @@ describe('validatePlan', () => {
     expect(() => validatePlan([{ kind: 'remove', path: '/etc/hosts' }], { prefix: prefix() })).toThrow(/outside/);
     expect(() => validatePlan([{ kind: 'remove', path: `${prefix()}/../x` }], { prefix: prefix() })).toThrow(/outside/);
   });
+  it('refuses a copy into its own source (a --prefix inside the package folder)', () => {
+    const inside = buildInstallPlan({
+      version: '1.0.0', packageDir: pkg, nodeBinary: node, freeId: 260, cpPort: 3400, mcpPort: 3430,
+      prefix: join(pkg, 'root'),
+    });
+    expect(() => validatePlan(inside.steps, { prefix: join(pkg, 'root') })).toThrow(/into itself/);
+    expect(() => executePlan(inside, { prefix: join(pkg, 'root') })).toThrow(/into itself/);
+    expect(existsSync(join(pkg, 'root'))).toBe(false); // nothing was created
+  });
   it('refuses a forbidden program in a plan', () => {
     expect(() => validatePlan([{ kind: 'run', argv: ['sudo', 'sh'] }])).toThrow(/Refusing/);
   });

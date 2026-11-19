@@ -49,6 +49,14 @@ export function validatePlan(steps, { prefix = '' } = {}) {
     if (s.kind === 'run' && !isAllowedCommand(s.argv)) {
       throw new Error(`Refusing to run: ${s.argv.join(' ')}`);
     }
+    // A copy into its own source would recurse until the disk is full.
+    if (s.kind === 'copy') {
+      const from = resolve(s.from);
+      const to = resolve(s.to);
+      if (to === from || to.startsWith(from + sep)) {
+        throw new Error(`Refusing to copy ${s.from} into itself (${s.to}). Choose a --prefix outside the package folder.`);
+      }
+    }
     if (prefix) {
       for (const p of stepPaths(s)) {
         if (resolve(p) !== resolve(prefix) && !resolve(p).startsWith(resolve(prefix) + sep)) {
