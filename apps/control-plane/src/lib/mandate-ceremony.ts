@@ -116,7 +116,9 @@ export interface CeremonyDeps {
    */
   grants?: MandateGrants;
   /** Told the moment the Authority Server ACCEPTED a mandate request of a device-chain ceremony: from here a retry would make a second live mandate. */
-  onIssued?: () => void;
+  onIssued?: (info: { mandateId: string }) => void;
+  /** The mandate id a NEW mandate must get (chosen when the approval was claimed); undefined: the grant picks one. */
+  newMandateId?: () => string | undefined;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -476,12 +478,14 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   const disclosed = await subjectsDisclosed(deps, req.discloseIdentity);
 
   const authorizationId = deps.newAuthorizationId();
+  const preChosenMandateId = deps.newMandateId?.();
   let issued: Issued;
   try {
     issued = await grants.issue({
       ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
       bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
       authorizationId, ...(req.replaces ? { replaces: req.replaces } : {}),
+      ...(preChosenMandateId ? { mandateId: preChosenMandateId } : {}),
       hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
       ...(enc ? { intentDisclosureHash: enc.intentDisclosureHash } : {}),
       subjectsDisclosed: disclosed, team: plan.team,
@@ -516,7 +520,7 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   if (res.status >= 300) {
     refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
-  deps.onIssued?.();
+  deps.onIssued?.({ mandateId: issued.mandateId });
   try {
     await deps.deliverGateContent({
       authorizationId, boundsHash, contextHash: scopeHash, context: plan.context,

@@ -33,7 +33,6 @@ import { AsTlsMismatchError } from './as-tls-pin';
 import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { computeProposalContentHash, decryptProposalContent, type ProposalContentWire } from './content-crypto';
-import type { MandateApprovals } from './mandate-approvals';
 
 export type DecisionRoute = 'approve' | 'reject' | 'resolve' | 'withdraw';
 export const DECISION_ROUTES: readonly DecisionRoute[] = ['approve', 'reject', 'resolve', 'withdraw'];
@@ -61,8 +60,6 @@ export interface DeviceDecisionDeps {
   client: DeviceAsClient;
   /** Ask the MCP server (its signed mandate, its manifests). Throws when it cannot say. */
   facts: (p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }) => Promise<ProposalFacts>;
-  /** What the person approved for the Setup tools is kept here, for the one call that raises Touch ID on their behalf (lib/mandate-approvals.ts). */
-  approvals?: MandateApprovals;
   /** Told after the Authority Server accepted a decision (events, the executor nudge). */
   onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
   /** Epoch seconds. */
@@ -189,8 +186,6 @@ export class DeviceDecisions {
       throw err;
     }
     if (reply.status >= 200 && reply.status < 300) {
-      // the arguments this person just approved, under the fingerprint their device signed over
-      if (kind === 'commit' && opened.plain) d.approvals?.record(proposal.tool, contentHash, opened.plain);
       d.onDecided?.(route, kind);
     }
     return { status: reply.status, body: reply.body };
