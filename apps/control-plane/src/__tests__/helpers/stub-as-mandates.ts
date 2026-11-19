@@ -149,12 +149,20 @@ export class StubMandates {
       return this.storeGrant(c, id, ok, refuse);
     }
     if (method === 'POST' && path === '/api/mandates/prepared') return this.storePrepared(c, ok, refuse);
-    if (method === 'GET' && path === '/api/mandates/prepared') return ok(200, { prepared: [] });
+    if (method === 'GET' && path === '/api/mandates/prepared') {
+      // like `preparedFor`: the owner's waiting bodies (no grant stored at that version yet), the caller's own wrap only, expired ones swept first
+      this.sweep();
+      return ok(200, { prepared: this.bodies.filter(b => b.userId === session.userId && !this.grantsOf(b.mandateId).some(g => g.version === b.version && g.op !== 'revoke'))
+        .map(b => ({ mandate_id: b.mandateId, mandate_version: b.version, submitted_by_key_id: b.submittedBy, ciphertext: b.ciphertext, device_key: b.deviceKeys[session.keyId] ?? null, stored_at: b.storedAt, expires_at: b.expiresAt })) });
+    }
     if ((m = /^\/api\/mandates\/([^/]+)\/body$/.exec(path))) {
       const id = decodeURIComponent(m[1]);
+      if (!MANDATE_ID.test(id)) return refuse(400, 'MALFORMED', 'not a mandate id');
       if (method === 'GET') {
-        return ok(200, { bodies: this.bodies.filter(b => b.mandateId === id && b.userId === session.userId).map(b => ({ mandate_id: b.mandateId, mandate_version: b.version, submitted_by_key_id: b.submittedBy, ciphertext: b.ciphertext, device_key: b.deviceKeys[session.keyId] ?? null, granted: this.grantsOf(id).some(g => g.version === b.version && g.op !== 'revoke'), stored_at: b.storedAt, expires_at: b.expiresAt })) });
+        this.sweep();
+        return ok(200, { bodies: this.bodies.filter(b => b.mandateId === id && b.userId === session.userId).sort((a, b) => a.version - b.version).map(b => ({ mandate_id: b.mandateId, mandate_version: b.version, submitted_by_key_id: b.submittedBy, ciphertext: b.ciphertext, device_key: b.deviceKeys[session.keyId] ?? null, granted: this.grantsOf(id).some(g => g.version === b.version && g.op !== 'revoke'), stored_at: b.storedAt, expires_at: b.expiresAt })) });
       }
+      if (method === 'POST') return this.addWraps(c, id, ok, refuse);
     }
     if ((m = /^\/api\/mandates\/([^/]+)\/receipts$/.exec(path))) {
       const id = decodeURIComponent(m[1]);
@@ -257,6 +265,38 @@ export class StubMandates {
       if (op === 'change') this.bodies.splice(0, this.bodies.length, ...this.bodies.filter(b => !(b.mandateId === mandateId && b.version < version)));
     }
     return ok(201, { stored: true, mandate_id: mandateId, mandate_version: version, op, grant_hash: hash, as_chain_seq: chain.head.seq });
+  }
+
+  /** Like `sweepExpiredBodies`: a body whose time ran out is gone, on the stub's clock. */
+  private sweep(): void {
+    const now = this.now();
+    this.bodies.splice(0, this.bodies.length, ...this.bodies.filter(b => b.expiresAt > now));
+  }
+
+  // ─── POST /api/mandates/:id/body (a device adds wraps for other active devices, 20.19 item 3) ───
+
+  private async addWraps(c: ExtraRouteContext, mandateId: string, ok: (s: number, b: unknown) => boolean, refuse: (s: number, c: string, m?: string, e?: Record<string, unknown>) => boolean): Promise<boolean> {
+    const session = c.session!;
+    const body = c.body;
+    const members = Object.keys(body).sort();
+    if (members.length !== 2 || members[0] !== 'device_keys' || members[1] !== 'mandate_version') return refuse(400, 'MALFORMED', 'the body is exactly { mandate_version, device_keys }');
+    const version = body.mandate_version as number;
+    if (!Number.isSafeInteger(version) || version < 1) return refuse(400, 'MALFORMED', 'mandate_version must be an integer from 1');
+    if (!body.device_keys || typeof body.device_keys !== 'object' || Array.isArray(body.device_keys) || Object.keys(body.device_keys).length === 0) return refuse(400, 'MALFORMED', 'device_keys is empty');
+    const wraps = body.device_keys as Record<string, any>;
+    for (const [k, w] of Object.entries(wraps)) {
+      try { b64uBytes(k, 32, 'key id'); } catch { return refuse(400, 'MALFORMED', 'a device_keys name must be a device key id'); }
+      const wm = w && typeof w === 'object' ? Object.keys(w).sort() : [];
+      if (wm.length !== 2 || wm[0] !== 'ct' || wm[1] !== 'enc' || !B64U.test(w.ct) || !B64U.test(w.enc) || w.ct.length > 512 || w.enc.length > 512) return refuse(400, 'MALFORMED', 'a wrap is exactly { ct, enc } of base64url strings');
+    }
+    const active = new Set(activeDevices(await this.chain()).map(d => d.key_id));
+    for (const k of Object.keys(wraps)) if (!active.has(k)) return refuse(409, 'DEVICE_KEYS_INVALID', 'a wrap is for a key that is not an active device of the owner', { key_id: k });
+    this.sweep();
+    const row = this.bodies.find(b => b.mandateId === mandateId && b.version === version && b.userId === session.userId);
+    if (!row) return refuse(404, 'BODY_NOT_FOUND', 'no sealed body of yours for this mandate version');
+    for (const k of Object.keys(wraps)) if (row.deviceKeys[k]) return refuse(409, 'WRAP_EXISTS', 'a wrap for this device is already stored; it is never replaced', { key_id: k });
+    row.deviceKeys = { ...row.deviceKeys, ...wraps };
+    return ok(201, { added: Object.keys(wraps) });
   }
 
   // ─── POST /api/mandates/prepared ────────────────────────────────────────

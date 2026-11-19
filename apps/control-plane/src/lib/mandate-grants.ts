@@ -19,7 +19,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { buildMandateProjection, checkGroupCeilings, encryptProposalContent, decodeMandateBlob, HapError, type AgentProfile, type MandatePayload } from '@hap/core';
+import { buildMandateProjection, checkGroupCeilings, encryptProposalContent, decryptProposalContent, decodeMandateBlob, HapError, type AgentProfile, type MandatePayload } from '@hap/core';
 import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import type { ChainState, MandateGrant } from '@hap/core/device-keys';
 import { platformCheckKey, platformCheckProof } from '@suveren/unlock-helper';
@@ -29,7 +29,7 @@ import type { DeviceChainStore, StoredDeviceChain } from './device-chain-store';
 import { DeviceAsClient, AsUnreachableError, asErrorCode } from './device-as-client';
 import { AsTlsMismatchError } from './as-tls-pin';
 import { isBearerCredential } from './as-credential';
-import { loadDeviceSigningKey } from './e2e-key-manager';
+import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { PinRefusedError, type DevicePinStore } from './device-pin-store';
 import { MandateGrantStore } from './mandate-grant-store';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
@@ -53,6 +53,7 @@ const asMessage = (body: unknown): string => {
   // text of the Authority Server that reaches the page: no control characters, bounded
   return m.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ').slice(0, 400);
 };
+const BODY_MAX_CHARS = 128 * 1024;
 const DID = /^did:key:z[1-9A-HJ-NP-Za-km-z]{20,128}$/;
 const MANDATE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -541,6 +542,61 @@ export class MandateGrants {
       throw e;
     }
     return { ownerDid, op: grant.op };
+  }
+
+  // ─── the sealed body (plan 20.19, DEC-58) ───────────────────────────────
+
+  /**
+   * Open the sealed body (scope and intent) of a mandate version for THIS computer. The Authority Server only carries it.
+   *
+   *   - the grant it belongs to is verified here first (`verifyHeld`: the owner's chain, the device signature, the check);
+   *     only the owner's own computers are recipients, so any other owner is refused;
+   *   - the wrap is the one under THIS computer's key id, and it is opened only with this computer's own read key after that key
+   *     equals the `read_pub` of this computer's record in the chain this gateway verified (never the Authority Server's word);
+   *   - the opened content must name exactly this mandate and version and have exactly the members of a body;
+   *   - the caller (the MCP server) compares scope and intent with the hashes of the verified mandate before anything is used.
+   *
+   * A missing body or wrap is `body_not_received`: shown as not yet received, never replaced by anything the Authority Server
+   * says in the clear. Nothing of the body, a wrap or a key is logged or put into an error text.
+   */
+  async openBody(input: { mandateId: string; version: number; grantHash: string }): Promise<{ scope: Record<string, string | number>; intent: string }> {
+    const { d } = this;
+    const dk = await deviceKeys();
+    if (!MANDATE_ID.test(input.mandateId) || !Number.isSafeInteger(input.version) || input.version < 1 || !/^sha256:[0-9a-f]{64}$/.test(input.grantHash)) return refuse('bad_request', 'Bad request.');
+    const s = await this.session();
+    const held = await this.verifyHeld(input);
+    if (held.ownerDid !== s.stored.rootDid || held.op === 'revoke') return refuse('not_own_mandate', 'Only the owner\'s own computers receive the sealed body of a mandate.');
+    const got = await this.call('GET', `/api/mandates/${encodeURIComponent(input.mandateId)}/body`, s.credential);
+    if (got.status !== 200 || !isObj(got.body) || !Array.isArray(got.body.bodies)) return refuse('as_answer_invalid', 'The Authority Server answered with something unexpected.');
+    const row = got.body.bodies.find((b: unknown) => isObj(b) && b.mandate_id === input.mandateId && b.mandate_version === input.version);
+    if (!isObj(row) || !isObj(row.device_key)) return refuse('body_not_received', 'The sealed mandate has not reached this computer yet.');
+    const { ciphertext, device_key: wrap } = row as { ciphertext?: unknown; device_key: Record<string, unknown> };
+    const B64U = /^[A-Za-z0-9_-]+$/;
+    if (typeof ciphertext !== 'string' || !ciphertext || ciphertext.length > BODY_MAX_CHARS || !B64U.test(ciphertext)
+      || Object.keys(wrap).sort().join() !== 'ct,enc' || typeof wrap.ct !== 'string' || typeof wrap.enc !== 'string' || !B64U.test(wrap.ct) || !B64U.test(wrap.enc)) {
+      return refuse('body_invalid', 'The sealed mandate is not in the shape of one.');
+    }
+    // This computer's reading key is the one its own record in the verified chain names.
+    const record = s.own.devices[s.stored.keyId];
+    const kp = await loadOrGenerateKeyPair(d.vault);
+    if (!record || record.read_pub !== dk.b64uEncode(kp.publicKey)) return refuse('key_mismatch', 'This computer\'s reading key does not match the stored chain.');
+    let content: unknown;
+    try {
+      const opened = await decryptProposalContent({ ciphertext, encrypted_keys: { [s.stored.keyId]: { ct: wrap.ct, enc: wrap.enc } }, readers: [s.stored.keyId], unreadable: [] }, s.stored.keyId, kp.privateKey);
+      content = opened.arguments;
+    } catch {
+      return refuse('body_unreadable', 'The sealed mandate cannot be opened with this computer\'s key.');
+    }
+    if (!isObj(content) || Object.keys(content).sort().join() !== 'intent,mandate_id,mandate_version,scope,v'
+      || content.v !== 1 || content.mandate_id !== input.mandateId || content.mandate_version !== input.version) {
+      return refuse('body_invalid', 'The sealed mandate does not name this mandate and version.');
+    }
+    const { scope, intent } = content;
+    if (typeof intent !== 'string' || intent.length > 20_000 || !isObj(scope) || Object.keys(scope).length > 64
+      || Object.entries(scope).some(([k, v]) => k.length > 100 || !(typeof v === 'string' ? v.length <= 4_000 : typeof v === 'number' && Number.isFinite(v)))) {
+      return refuse('body_invalid', 'The sealed mandate is not in the shape of one.');
+    }
+    return { scope: scope as Record<string, string | number>, intent };
   }
 
   // ─── receipt (DEC-23) ────────────────────────────────────────────────────

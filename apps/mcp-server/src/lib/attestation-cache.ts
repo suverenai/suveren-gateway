@@ -422,7 +422,7 @@ export class AttestationCache {
       if (!g.ok) {
         // A check that could not be MADE (the Authority Server or the control plane unreachable) does not end what was verified a
         // moment ago: the entry stays until it is stale (GRANT_MAX_AGE_MS). Every other refusal drops it at once.
-        const transient = ['grants_unavailable', 'chain_unavailable', 'device_state_unavailable'].includes(g.code);
+        const transient = ['grants_unavailable', 'chain_unavailable', 'device_state_unavailable', 'body_unavailable'].includes(g.code);
         if (!transient) this.authorizations.delete(result.authorization_id);
         this.withheld.set(result.authorization_id, { code: g.code, text: g.text });
         return null;

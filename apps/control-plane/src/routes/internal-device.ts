@@ -9,6 +9,7 @@
  *   POST /internal/device-pin/get        { did }        -> { head: { seq, hash } | null }
  *   POST /internal/device-pin/advance    { did, head, keep? } -> { head } | 409 { code: 'rollback' | 'fork' | 'own_chain' | 'full' }
  *                                        never moves THIS computer's own head (only sign-in does)
+ *   POST /internal/mandate-grant/body    { mandateId, version, grantHash } -> { scope, intent } | 404/422 { code } (plan 20.19)
  *   POST /internal/device-ledger/consume { proposalId, nonces } -> 409 { code: 'proposal_id_reused' | 'nonce_reused' }
  *
  * The control plane only remembers heads (lib/device-pin-store.ts). It checks nothing
@@ -136,6 +137,27 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
       } catch (err) {
         if (err instanceof GrantStoreRefused) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'grant_refused', code: err.reason }); return; }
         if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; if (isTransientGrantCode(code)) { res.status(502).json({ error: 'unavailable' }); return; } res.status(code === 'bad_request' ? 400 : 403).json({ error: 'grant_refused', code }); return; }
+        res.status(423).json({ error: 'unavailable', code: 'unavailable' });
+      }
+    });
+
+    // The sealed body of a verified grant, opened with THIS computer's key (plan 20.19). The grant is verified here again; the MCP server
+    // compares what comes back with the hashes of the mandate before it uses any of it. Not a log line, not an error text carries a body.
+    router.post('/mandate-grant/body', async (req: Request, res: Response) => {
+      if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+      res.setHeader('Cache-Control', 'no-store');
+      const { mandateId, version, grantHash } = (req.body ?? {}) as { mandateId?: unknown; version?: unknown; grantHash?: unknown };
+      try {
+        const body = await mandates.grants.openBody({ mandateId: mandateId as string, version: version as number, grantHash: grantHash as string });
+        res.json({ ok: true, ...body });
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'GrantRefusal') {
+          const code = (err as { code: string }).code;
+          // like the other routes: could not ask / check now -> 502 with NO code; a real refusal -> 4xx with its code
+          if (isTransientGrantCode(code)) { res.status(502).json({ error: 'unavailable' }); return; }
+          res.status(code === 'bad_request' ? 400 : code === 'body_not_received' ? 404 : 422).json({ error: 'body_refused', code });
+          return;
+        }
         res.status(423).json({ error: 'unavailable', code: 'unavailable' });
       }
     });

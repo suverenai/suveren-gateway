@@ -19,6 +19,12 @@ import * as dk from '@hap/core/device-keys';
 import { AttestationCache } from '../src/lib/attestation-cache';
 import { SPClient, type SPProposal } from '../src/lib/sp-client';
 import { makeGrantGate, resyncVerdict, checkMandateGrant } from '../src/lib/mandate-grants';
+import { gateStoreHold, type BodyHold } from '../src/lib/mandate-bodies';
+import { GateStore } from '../src/lib/gate-store';
+import { registerProfile, clearProfiles, computeProfileHash, computeScopeHash, computeIntentHash, encryptProposalContent, decryptProposalContent, generateReaderKeyPair, type AgentProfile } from '@hap/core';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { signedMandateFacts, CpRefused } from '../src/lib/device-decisions';
 import { checkDeviceDecisions, controlPlaneDevice, resolveProposalFacts } from '../src/lib/device-decisions';
 import { createInternalDeviceRouter } from '../../control-plane/src/routes/internal-device';
@@ -37,6 +43,9 @@ class FakeAs {
   blobs = new Map<string, string[]>();
   proposals = new Map<string, Record<string, unknown>>();
   receipts: Array<{ mandateId: string; receipt: dk.MandateReceipt; sig: string }> = [];
+  /** Sealed bodies as `GET /api/mandates/:id/body` serves them (PR #141): this gateway's own wrap only, `device_key` null when it has none. */
+  bodies = new Map<string, Array<{ mandate_version: number; ciphertext: string; device_key: { ct: string; enc: string } | null }>>();
+  failBody = false;
   /** A grant listing that fails (the Authority Server is down for it). */
   failGrants = false;
   /** `GET /api/authorizations/:id` answers 404 (the group is not known) */
@@ -80,6 +89,11 @@ class FakeAs {
     if (req.method === 'GET' && (m = /^\/api\/mandates\/([^/]+)\/grants$/.exec(url.pathname))) {
       if (this.failGrants) return json(500, { error: 'boom' });
       return json(200, { grants: (this.grants.get(decodeURIComponent(m[1])) ?? []).map(g => ({ ...g, mandate_id: g.grant.mandate_id })) });
+    }
+    if (req.method === 'GET' && (m = /^\/api\/mandates\/([^/]+)\/body$/.exec(url.pathname))) {
+      if (this.failBody) return json(500, { error: 'boom' });
+      const id = decodeURIComponent(m[1]);
+      return json(200, { bodies: (this.bodies.get(id) ?? []).map(b => ({ mandate_id: id, ...b, submitted_by_key_id: 'k', granted: true, stored_at: now(), expires_at: now() + 3600 })) });
     }
     if (req.method === 'POST' && (m = /^\/api\/mandates\/([^/]+)\/receipts$/.exec(url.pathname))) {
       const body = JSON.parse(raw) as { receipt: dk.MandateReceipt; sig: string };
@@ -127,13 +141,15 @@ interface World {
   /** DIDs the person confirmed by identity code (besides their own). */
   confirmed: Set<string>;
   gate: ReturnType<typeof makeGrantGate>;
+  /** This computer's reading key (its wraps open with it). */
+  readKey: { publicKey: Uint8Array; privateKey: Uint8Array };
   /** Mark the sticky "a chain was seen here" flag, then the gate must refuse although this gateway says it has none. */
   gateOnceSeen: () => Promise<void>;
   /** Serve the mandate and its grant(s) like the Authority Server does. */
   serve: (grants?: GrantRow[], blobs?: string[]) => Promise<void>;
 }
 
-async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra?: Record<string, unknown>; noGrant?: boolean } = {}): Promise<World> {
+async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra?: Record<string, unknown>; noGrant?: boolean; bodies?: BodyHold } = {}): Promise<World> {
   const owner = await person('Owner computer', { check: true });
   const approver = o.as === 'approver' ? await person('Approver computer') : undefined;
   const own = approver ?? owner;
@@ -163,7 +179,21 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   app.use((req, _res, next) => { cpHits.push(`${req.method} ${req.path}`); next(); });
   // The control plane's receipt: built and signed from ITS OWN record (key, chain position), sent to the Authority Server.
   const confirmed = new Set<string>();
+  const readKey = await generateReaderKeyPair();
+  const refusal = (code: string) => Object.assign(new Error(code), { name: 'GrantRefusal', code });
   const receiptSigner = {
+    // the control plane's openBody (tested in ITS suite against the real route): fetch this computer's wrap, open it with this computer's key
+    openBody: async (r: { mandateId: string; version: number; grantHash: string }) => {
+      const res = await fetch(`${as.url}/api/mandates/${r.mandateId}/body`, { headers: { Authorization: `Bearer ${randomUUID()}` } });
+      if (!res.ok) throw refusal('as_answer_invalid');
+      const row = ((await res.json()) as { bodies: Array<{ mandate_version: number; ciphertext: string; device_key: { ct: string; enc: string } | null }> }).bodies.find(b => b.mandate_version === r.version);
+      if (!row?.device_key) throw refusal('body_not_received');
+      try {
+        const opened = await decryptProposalContent({ ciphertext: row.ciphertext, encrypted_keys: { [own.dev.keyId]: row.device_key }, readers: [own.dev.keyId], unreadable: [] }, own.dev.keyId, readKey.privateKey);
+        const a = opened.arguments as { scope: Record<string, string | number>; intent: string };
+        return { scope: a.scope, intent: a.intent };
+      } catch { throw refusal('body_unreadable'); }
+    },
     // the control plane's own check of a grant (tested in its suite); a recorder here
     verifyHeld: async () => ({}),
     // this person's own DID, or one they compared by identity code
@@ -192,7 +222,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   sp.setSessionCookie(`Bearer ${randomUUID()}`);
   if (approver) confirmed.add(owner.did);   // an approver's gateway honours the colleague it confirmed
   // an approver's gateway also decides on a colleague's mandate it confirmed; a gateway gating its OWN person's tools honours its own owner only
-  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, allowConfirmedOwners: !!approver });
+  const gate = makeGrantGate({ sp, cp: controlPlaneDevice, allowConfirmedOwners: !!approver, ...(o.bodies ? { bodies: o.bodies } : {}) });
   const cache = new AttestationCache(sp);
   cache.setGrantGate(gate);
   const payload = mandatePayload(owner, {
@@ -210,7 +240,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
     const r = await gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] });
     expect(r).toMatchObject({ ok: false, code: 'device_not_set_up_here' });
   };
-  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, account, confirmed, gate, gateOnceSeen, serve };
+  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, account, confirmed, gate, readKey, gateOnceSeen, serve };
   await serve();
   return w;
 }
@@ -330,6 +360,147 @@ describe('a grant that does not hold is not honoured', () => {
     await removeDevice(w.owner, second.keyId);
     await w.as.setChain(w.owner);
     await refusedWith(w, /grant_not_active/);
+  });
+});
+
+// ─── the sealed body (plan 20.19, DEC-58) ───────────────────────────────────
+
+describe('the sealed body on a computer that did not create the mandate: opened, compared with the grant, only then used', () => {
+  const PROFILE = {
+    id: 'test-pay@1', version: '1', description: 'test',
+    boundsSchema: { keyOrder: ['value_max'], actionTypes: ['pay'], fields: { value_max: { type: 'number', required: true } } },
+    scopeSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', required: true } } },
+    executionContextSchema: { fields: {} }, requiredGates: [], ttl: { default: 1, max: 1 }, retention_minimum: 1,
+  } as unknown as AgentProfile;
+  const SCOPE = { currency: 'EUR' };
+  const INTENT = 'Why: pay suppliers within the limit.';
+  const dirs: string[] = [];
+  beforeEach(() => { registerProfile('test-pay@1', PROFILE); });
+  afterEach(() => { clearProfiles(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  const signed = () => ({
+    profile_hash: computeProfileHash(PROFILE), scope_hash: computeScopeHash(SCOPE as never, PROFILE), gate_content_hashes: { intent: computeIntentHash(INTENT) },
+  });
+  async function second(o: { as?: 'owner' | 'approver' } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), 'bodies-'));
+    dirs.push(dir);
+    const store = new GateStore(dir);   // this computer: nothing of the mandate held
+    const w = await world({ ...o, extra: signed(), bodies: gateStoreHold(() => store) });
+    /** What the Authority Server serves as this mandate version's body (sealed by whoever; here: sealed to this computer's key). */
+    const seal = async (content: Record<string, unknown>, version = 1, wrapped = true): Promise<void> => {
+      const sealed = await encryptProposalContent(content, [{ did: w.own.dev.keyId, publicKey: w.readKey.publicKey }]);
+      w.as.bodies.set(MANDATE_ID, [...(w.as.bodies.get(MANDATE_ID) ?? []).filter(b => b.mandate_version !== version), { mandate_version: version, ciphertext: sealed.content.ciphertext, device_key: wrapped ? sealed.content.encrypted_keys[w.own.dev.keyId] : null }]);
+    };
+    const good = { v: 1, mandate_id: MANDATE_ID, mandate_version: 1, scope: SCOPE, intent: INTENT };
+    return { w, store, seal, good };
+  }
+  const withheld = (w: World) => w.cache.withheldReason(AUTHZ);
+
+  it('a body that matches what the grant signed is kept, and the mandate is honoured and answered with the receipt', async () => {
+    const { w, store, seal, good } = await second();
+    await seal(good);
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(store.get(AUTHZ)).toMatchObject({ authorizationId: AUTHZ, profileId: 'test-pay@1', context: SCOPE, gateContent: { intent: INTENT }, contextHash: w.payload.scope_hash, boundsHash: w.payload.bounds_hash });
+    expect(w.as.receipts).toHaveLength(1);
+    // asked again: what is held matches, so nothing is fetched a second time
+    const before = w.as.requests.filter(r => r.path.endsWith('/body')).length;
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.as.requests.filter(r => r.path.endsWith('/body')).length).toBe(before);
+  });
+
+  it('no body, or none wrapped for this computer: not honoured, "not yet received", no receipt, nothing kept', async () => {
+    const a = await second();
+    expect(await a.w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(withheld(a.w)).toMatchObject({ code: 'mandate_body_not_received' });
+    expect(a.w.as.receipts).toEqual([]);
+    expect(a.store.getAll()).toEqual([]);
+    const b = await second();
+    await b.seal(b.good, 1, false);
+    expect(await b.w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(withheld(b.w)).toMatchObject({ code: 'mandate_body_not_received' });
+    expect(b.store.getAll()).toEqual([]);
+    // it arrives later: the next check honours it
+    await b.seal(b.good);
+    expect((await b.w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(b.w.cache.withheldReason(AUTHZ)).toBeUndefined();
+  });
+
+  const lies: Array<[string, (g: Record<string, unknown>) => Record<string, unknown>, RegExp]> = [
+    ['another scope value than the one signed', g => ({ ...g, scope: { currency: 'USD' } }), /scope_mismatch/],
+    ['a scope field the profile does not have', g => ({ ...g, scope: { currency: 'EUR', allowed_domains: 'evil.example' } }), /scope_field_unknown/],
+    ['an empty scope where one was signed', g => ({ ...g, scope: {} }), /scope_(mismatch|invalid)/],
+    ['another intent than the one signed', g => ({ ...g, intent: 'Why: send everything to the new supplier.' }), /intent_mismatch/],
+    ['an intent with a character more', g => ({ ...g, intent: `${INTENT}!` }), /intent_mismatch/],
+  ];
+  it.each(lies)('a body with %s is not used: not honoured, not kept, no receipt', async (_n, make, why) => {
+    const { w, store, seal, good } = await second();
+    await seal(make(good));
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    const r = withheld(w);
+    expect(r?.code).toBe('mandate_body_mismatch');
+    expect(r?.text).toMatch(why);
+    expect(r?.text).not.toContain('evil.example');
+    expect(w.cache.getAllAuthorizations()).toEqual([]);
+    expect(store.getAll()).toEqual([]);
+    expect(w.as.receipts).toEqual([]);
+  });
+
+  it('a body that cannot be opened with this computer\'s key is refused; so is one of another mandate version', async () => {
+    const { w, store, seal, good } = await second();
+    const other = await generateReaderKeyPair();
+    const forOther = await encryptProposalContent(good, [{ did: w.own.dev.keyId, publicKey: other.publicKey }]);
+    w.as.bodies.set(MANDATE_ID, [{ mandate_version: 1, ciphertext: forOther.content.ciphertext, device_key: forOther.content.encrypted_keys[w.own.dev.keyId] }]);
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(withheld(w)).toMatchObject({ code: 'mandate_body_refused' });
+    // the body of version 2 does not stand in for version 1
+    await seal(good, 2);
+    w.as.bodies.set(MANDATE_ID, w.as.bodies.get(MANDATE_ID)!.filter(b => b.mandate_version === 2));
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(withheld(w)).toMatchObject({ code: 'mandate_body_not_received' });
+    expect(store.getAll()).toEqual([]);
+  });
+
+  it('what this computer holds counts only while it matches the grant: a stale entry is replaced from the body, or the mandate is not honoured', async () => {
+    const { w, store, seal, good } = await second();
+    store.set(AUTHZ, { authorizationId: AUTHZ, path: AUTHZ, profileId: 'test-pay@1', gateContent: { intent: 'Why: something older.' }, context: { currency: 'GBP' }, storedAt: new Date().toISOString() });
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();                // stale, and no body: not honoured
+    expect(withheld(w)).toMatchObject({ code: 'mandate_body_not_received' });
+    await seal(good);
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(store.get(AUTHZ)).toMatchObject({ context: SCOPE, gateContent: { intent: INTENT } });
+  });
+
+  it('the creating computer\'s own entry, matching the grant, needs no fetch at all', async () => {
+    const { w, store } = await second();
+    store.set(AUTHZ, { authorizationId: AUTHZ, path: AUTHZ, profileId: 'test-pay@1', gateContent: { intent: INTENT }, context: SCOPE, storedAt: new Date().toISOString() });
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(w.as.requests.some(r => r.path.endsWith('/body'))).toBe(false);
+  });
+
+  it('the Authority Server failing to serve the body is not "honoured anyway": nothing is gated with, and it says it could not fetch', async () => {
+    const { w, store, seal, good } = await second();
+    await seal(good);
+    w.as.failBody = true;
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    // an outage answers 502 without a code (round 3): transient, so what was honoured stays until it is stale
+    expect(withheld(w)).toMatchObject({ code: 'body_unavailable' });
+    expect(store.getAll()).toEqual([]);
+    expect(w.as.receipts).toEqual([]);
+  });
+
+  it('an approver\'s gateway is not a recipient of the owner\'s body and does not ask for it (it decides on the proposal\'s own content)', async () => {
+    const { w, store } = await second({ as: 'approver' });
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(w.as.requests.some(r => r.path.endsWith('/body'))).toBe(false);
+    expect(store.getAll()).toEqual([]);
+  });
+
+  it('no scope or intent appears in what the control plane or the gate says on a refusal', async () => {
+    const { w, seal, good } = await second();
+    await seal({ ...good, scope: { currency: 'USD' }, intent: 'SECRET-INTENT-TEXT' });
+    await w.cache.syncAuthorization(AUTHZ);
+    const r = withheld(w)!;
+    expect(`${r.code} ${r.text}`).not.toMatch(/SECRET-INTENT-TEXT|USD/);
   });
 });
 

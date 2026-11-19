@@ -555,6 +555,98 @@ describe('what the MCP server asks of the control plane: the highest version, a 
   });
 });
 
+describe('the sealed body on this computer (plan 20.19, DEC-58): fetched, opened with its own key, never trusted from the Authority Server', () => {
+  const asBody = (w: W, g = w.mandates.rows[0]) => w.internal('/internal/mandate-grant/body', { mandateId: g.mandateId, version: g.version, grantHash: g.grantHash });
+
+  /** What a lying Authority Server can do best: seal other content to THIS computer's real reading key from the chain. */
+  async function sealTo(w: W, content: Record<string, unknown>): Promise<void> {
+    const { encryptProposalContent } = await import('@hap/core');
+    const chain = await dk.verifyChain({ expectedRootDid: w.rootDid, entries: w.as.chainEntries() });
+    const sealed = await encryptProposalContent(content, [{ did: w.keyId, publicKey: dk.b64uDecode(chain.devices[w.keyId].read_pub) }]);
+    Object.assign(w.mandates.bodies[0], { ciphertext: sealed.content.ciphertext, deviceKeys: sealed.content.encrypted_keys });
+  }
+
+  it('opens the body of a verified grant with this computer\'s own key and answers scope and intent only', async () => {
+    const w = await world();
+    expect((await w.sign()).status).toBe(200);
+    const r = await asBody(w);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toEqual({ ok: true, scope: { currency: 'EUR' }, intent: REQ.intent });
+    expect(w.mandates.posts.filter(p => p.path.endsWith('/body'))).toEqual([]);   // it only reads
+  });
+
+  it('is the control plane\'s own check that decides: a grant it does not see verify, another version, a wrong secret', async () => {
+    const w = await world();
+    await w.sign();
+    const g = w.mandates.rows[0];
+    expect((await w.internal('/internal/mandate-grant/body', { mandateId: g.mandateId, version: 1, grantHash: `sha256:${'c'.repeat(64)}` })).body).toMatchObject({ code: 'grant_not_held' });
+    expect((await w.internal('/internal/mandate-grant/body', { mandateId: g.mandateId, version: 2, grantHash: g.grantHash })).body).toMatchObject({ code: 'grant_not_held' });
+    expect((await w.internal('/internal/mandate-grant/body', { mandateId: 'x', version: 1, grantHash: 'no' })).status).toBe(400);
+    expect((await call(w.gw.port, 'POST', '/internal/mandate-grant/body', { headers: { 'x-internal-secret': 'wrong' }, body: { mandateId: g.mandateId, version: 1, grantHash: g.grantHash }, origin: null })).status).toBe(401);
+  });
+
+  it('no body, or no wrap for this computer: "not yet received", never a guess', async () => {
+    const w = await world();
+    await w.sign();
+    const stored = w.mandates.bodies[0];
+    const wrap = stored.deviceKeys[w.keyId];
+    stored.deviceKeys = {};                                        // the body is there, this computer\'s wrap is not (a computer added later, not yet re-wrapped)
+    expect(await asBody(w)).toMatchObject({ status: 404, body: { code: 'body_not_received' } });
+    stored.deviceKeys = { [w.keyId]: wrap };
+    expect((await asBody(w)).status).toBe(200);
+    w.mandates.bodies.splice(0);                                   // swept / revoked: nothing stored
+    expect(await asBody(w)).toMatchObject({ status: 404, body: { code: 'body_not_received' } });
+  });
+
+  it('a revoked mandate\'s body is deleted at the Authority Server, and nothing is opened any more', async () => {
+    const w = await world();
+    const first = await w.sign();
+    const g = w.mandates.rows[0];
+    expect((await asBody(w)).status).toBe(200);
+    await w.post('/api/mandate/revoke', { authorizationId: authzOf(first) });
+    expect(w.mandates.bodies).toHaveLength(0);
+    expect(await w.internal('/internal/mandate-grant/body', { mandateId: g.mandateId, version: 1, grantHash: g.grantHash })).toMatchObject({ status: 404, body: { code: 'body_not_received' } });
+  });
+
+  it('an altered envelope is refused: changed ciphertext, a wrap of another key, content that names another version or carries more', async () => {
+    const w = await world();
+    await w.sign();
+    const g = w.mandates.rows[0];
+    const good = { ...w.mandates.bodies[0], deviceKeys: { ...w.mandates.bodies[0].deviceKeys } };
+    const flip = good.ciphertext.slice(0, -4) + (good.ciphertext.endsWith('AAAA') ? 'BBBB' : 'AAAA');
+    w.mandates.bodies[0].ciphertext = flip;
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_unreadable' } });
+    Object.assign(w.mandates.bodies[0], good);
+    // a wrap made for somebody else's key
+    const other = await (await import('@hap/core')).generateReaderKeyPair();
+    const { encryptProposalContent } = await import('@hap/core');
+    const forOther = await encryptProposalContent({ v: 1, mandate_id: g.mandateId, mandate_version: 1, scope: {}, intent: 'x' }, [{ did: w.keyId, publicKey: other.publicKey }]);
+    Object.assign(w.mandates.bodies[0], { ciphertext: forOther.content.ciphertext, deviceKeys: forOther.content.encrypted_keys });
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_unreadable' } });
+    // opens, but is not this mandate's body
+    await sealTo(w, { v: 1, mandate_id: g.mandateId, mandate_version: 2, scope: { currency: 'EUR' }, intent: REQ.intent });
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_invalid' } });
+    await sealTo(w, { v: 1, mandate_id: 'mandate-other-1', mandate_version: 1, scope: { currency: 'EUR' }, intent: REQ.intent });
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_invalid' } });
+    await sealTo(w, { v: 1, mandate_id: g.mandateId, mandate_version: 1, scope: { currency: 'EUR' }, intent: REQ.intent, note: 'more' });
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_invalid' } });
+    await sealTo(w, { v: 1, mandate_id: g.mandateId, mandate_version: 1, scope: { currency: { nested: 1 } }, intent: REQ.intent });
+    expect(await asBody(w)).toMatchObject({ status: 422, body: { code: 'body_invalid' } });
+    await sealTo(w, { v: 1, mandate_id: g.mandateId, mandate_version: 1, scope: { currency: 'EUR' }, intent: REQ.intent });
+    expect((await asBody(w)).status).toBe(200);
+  });
+
+  it('a refusal never carries scope or intent', async () => {
+    const w = await world();
+    await w.sign();
+    const g = w.mandates.rows[0];
+    w.mandates.bodies[0].deviceKeys = {};
+    const r = await asBody(w);
+    expect(r.text).not.toContain(REQ.intent);
+    expect(r.text).not.toContain('EUR');
+  });
+});
+
 describe('review round 2', () => {
   const H = (c: string) => `sha256:${c.repeat(64)}`;
 
