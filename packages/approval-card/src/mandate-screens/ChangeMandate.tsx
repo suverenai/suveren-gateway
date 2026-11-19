@@ -119,7 +119,7 @@ export function ChangeMandate({ profileName, diff, team, intentByAi, names = {},
       )}
       {diff.intent && (
         <Section title={S13.changeWhy}>
-          <div data-testid="change-why" style={intentByAi ? { borderLeft: '3px solid var(--warning, #b45309)', paddingLeft: '0.5rem' } : undefined}>
+          <div data-testid="change-why" style={intentByAi ? { borderLeft: '3px solid var(--prov-ai)', paddingLeft: '0.5rem' } : undefined}>
             <WordDiff parts={diff.intent} />
             {intentByAi && <small>{S13.changeFromAi}</small>}
           </div>
