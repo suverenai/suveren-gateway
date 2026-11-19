@@ -7,6 +7,7 @@
  * Logout: requires auth (prevents anonymous DoS).
  */
 
+import { withTransientRetry } from '../lib/transient-retry';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { credentialsToPush } from '../lib/sign-in-group';
 import { runReplacements } from '../lib/connector-replacement';
@@ -608,6 +609,9 @@ export function createAuthRouter(
           const kp = await loadOrGenerateKeyPair(vault);
           const localPubkeyB64 = Buffer.from(kp.publicKey).toString('base64');
 
+          // Once per sign-in: a reset connection here must not leave the account without a key
+          // (every proposal to it would be refused) — retried on network errors only.
+          await withTransientRetry(async () => {
           // Fetch currently registered key from SP and compare.
           const spCookie = vault.getSpCookie();
           const { res: meKeyRes } = await fetchAs(
@@ -646,6 +650,7 @@ export function createAuthRouter(
           } else {
             console.error('[Control Plane] E2EE pubkey already up to date');
           }
+          }, { onRetry: (n, err) => console.error(`[Control Plane] E2EE pubkey auto-register: network error, retry ${n}:`, err instanceof Error ? err.message : err) });
         } catch (err) {
           if (err instanceof AsTlsMismatchError) {
             console.error('[Control Plane] E2EE pubkey auto-register aborted — TLS pin mismatch:', err.message);
