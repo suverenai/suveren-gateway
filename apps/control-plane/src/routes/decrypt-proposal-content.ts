@@ -17,7 +17,7 @@
  * Auth: session must be active (requireAuth middleware applied by caller in index.ts).
  */
 import { Router, type Request, type Response } from 'express';
-import { decryptProposalContent, decryptProposalContext } from '../lib/content-crypto';
+import { decryptProposalContent, decryptProposalContext, NoWrapError } from '../lib/content-crypto';
 import type { DeviceChainStore } from '../lib/device-chain-store';
 import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
@@ -72,7 +72,7 @@ export function createDecryptProposalContentRouter(vault: Vault, deviceStore?: D
     } catch (err) {
       console.error('[Control Plane] decrypt-proposal-content error:', err);
       const msg = err instanceof Error ? err.message : 'Decryption failed';
-      res.status(msg.includes('No key wrap') ? 403 : 500).json({ error: msg });
+      res.status(msg.includes('No key wrap') ? 403 : 500).json({ error: msg, ...(err instanceof NoWrapError ? { code: err.code } : {}) });
     }
   });
 

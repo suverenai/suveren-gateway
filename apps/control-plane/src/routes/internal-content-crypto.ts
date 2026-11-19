@@ -14,7 +14,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { encryptProposalContent, decryptProposalContent, decryptProposalContext, type V08Readers } from '../lib/content-crypto';
+import { encryptProposalContent, decryptProposalContent, decryptProposalContext, NoWrapError, type V08Readers } from '../lib/content-crypto';
 import type { CardContext } from '../lib/content-wraps';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
@@ -168,7 +168,7 @@ export function createInternalContentCryptoRouter(
       res.json({ plaintext, ...(ctx ? ctx : {}) });
     } catch (err) {
       console.error('[Control Plane] /internal/decrypt-content failed:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'decryption failed' });
+      res.status(500).json({ error: err instanceof Error ? err.message : 'decryption failed', ...(err instanceof NoWrapError ? { code: err.code } : {}) });
     }
   });
 

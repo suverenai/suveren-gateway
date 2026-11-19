@@ -15,6 +15,21 @@
  *     `unreadable`, with a code, and a doorbell event for the page. No wrap is made for them.
  *
  * Never logged: a chain, a key, a wrap. Only the codes below.
+ *
+ * Downgrade guard: "no chain" is the Authority Server's word and can be a lie. A DID this gateway has EVER verified a
+ * chain for (it has a pin), or that the team's verified member list names (port `teamMembers`, DEC-73), is never
+ * given the legacy wrap: a 404 for it is an alarm (`chain_missing`) and the person is unreadable. The legacy wrap
+ * is only for a DID that is neither pinned nor a verified member.
+ *
+ * KNOWN LIMITS (stated in the release notes, not closed by this code):
+ *  - First sight of a person's chain is verified against their DID but pinned only from then on (trust on first use):
+ *    an Authority Server that has served a person's chain to this gateway NEVER, can present a forged one made with a
+ *    DID of its own choosing only if the mandate names that DID, which the owner's signed grant covers. Until the team
+ *    member list (DEC-73) is wired, a colleague who was never seen has no second anchor.
+ *  - The Authority Server can withhold a wrap, drop the card context, or serve a person an older state of the list:
+ *    the person then sees "not yet openable" and cannot read; it can never make anyone read what they should not.
+ *  - A person's chain is verified when a proposal is made and when it is re-wrapped, not continuously: a device
+ *    removed a moment ago can still hold a wrap of a proposal made just before its removal (content, not authority).
  */
 import type { ChainState, DeviceState } from '@hap/core/device-keys';
 import type { Vault } from './vault';
@@ -34,10 +49,11 @@ import { PinRefusedError, type DevicePinStore } from './device-pin-store';
  */
 export type UnreadableCode =
   | 'chain_invalid' | 'chain_fork' | 'chain_rollback' | 'head_mismatch'
+  | 'chain_missing' | 'not_a_team_member'
   | 'no_active_device' | 'device_key_invalid'
   | 'as_answer_invalid' | 'as_unreachable' | 'not_signed_in';
 
-export const ALARM_CODES: ReadonlySet<UnreadableCode> = new Set(['chain_invalid', 'chain_fork', 'chain_rollback', 'head_mismatch']);
+export const ALARM_CODES: ReadonlySet<UnreadableCode> = new Set(['chain_invalid', 'chain_fork', 'chain_rollback', 'head_mismatch', 'chain_missing', 'not_a_team_member']);
 
 export interface ReaderDevice {
   keyId: string;
@@ -69,6 +85,13 @@ export interface DeviceReadersDeps {
   pins: DevicePinStore;
   /** A person's chain failed verification: the page's doorbell. Never fails the encryption. */
   onAlarm?: (did: string, code: UnreadableCode) => void;
+  /**
+   * DEC-73 port: the DIDs of the team's VERIFIED member list (admin-signed, checked against the member's anchor), or null when
+   * there is no verified list (no team, or the team-trust code is not merged). Until it is wired it answers null. When it
+   * answers a set: every decider must be in it (else `not_a_team_member`), and a member with no chain is never given the
+   * legacy wrap (`chain_missing`).
+   */
+  teamMembers?: () => Promise<ReadonlySet<string> | null>;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -156,17 +179,26 @@ export class DeviceReaders {
    * The devices of every reader DID. The own person comes from {@link own}; anyone else from their verified chain.
    * A reader that cannot be verified is `unreadable`, never skipped silently and never trusted.
    */
-  async resolve(readerDids: readonly string[], ownReadPub: Uint8Array): Promise<ResolvedReaders & { self: { rootDid: string; keyId: string } }> {
+  async resolve(readerDids: readonly string[], ownReadPub: Uint8Array, opts: { deciders?: readonly string[] } = {}): Promise<ResolvedReaders & { self: { rootDid: string; keyId: string } }> {
     const me = await this.own(ownReadPub);
     const credential = this.credential();
+    let members: ReadonlySet<string> | null = null;
+    try { members = (await this.d.teamMembers?.()) ?? null; } catch { members = null; }
     const out: ResolvedReaders = { chain: new Map(), legacy: [], unreadable: [] };
     const dids = [...new Set([me.rootDid, ...readerDids])];
     for (const did of dids) {
       if (did === me.rootDid) { out.chain.set(did, me.devices); continue; }
+      // An approver who is not on the team's verified member list is no reader (the Authority Server's list is not enough).
+      if (members && (opts.deciders ?? []).includes(did) && !members.has(did)) { this.mark(out, did, 'not_a_team_member'); continue; }
       let pin: { seq: number; hash: string } | null;
       try { pin = this.d.pins.get(did); } catch { out.unreadable.push({ did, code: 'chain_invalid' }); continue; }
       const got = await this.fetchChain(did, credential, pin);
-      if (got.kind === 'none') { out.legacy.push(did); continue; }
+      if (got.kind === 'none') {
+        // "No chain" for a DID seen with one, or named by the verified member list, is a downgrade attempt, never a legacy reader.
+        if (pin !== null || members?.has(did)) { this.mark(out, did, 'chain_missing'); continue; }
+        out.legacy.push(did);
+        continue;
+      }
       if (got.kind === 'bad') { this.mark(out, did, got.code); continue; }
       try {
         this.d.pins.advance(did, got.state.head, readerDids.filter(x => x !== did));

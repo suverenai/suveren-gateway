@@ -16,7 +16,8 @@ import type { DeviceAsClient } from './device-as-client';
 import type { DeviceReaders } from './device-readers';
 import { isBearerCredential } from './as-credential';
 import { loadOrGenerateKeyPair } from './e2e-key-manager';
-import { openContentKey, sealContentKey } from './content-wraps';
+import { openContentKey, sealContentKey, openContentWithKey } from './content-wraps';
+import { computeProposalContentHash } from './content-crypto';
 
 const MAX_PROPOSALS_PER_RUN = 100;
 const MAX_REMEMBERED = 2000;
@@ -27,11 +28,13 @@ export interface RewrapResult {
   /** Proposals the Authority Server took at least one new wrap for. */
   rewrapped: number;
   failed: number;
+  /** Proposals skipped, with a code: `no_wrap_for_this_device`, `content_key_mismatch`. Ids and codes only. */
+  skippedProposals?: Array<{ id: string; code: 'content_key_mismatch' | 'content_unavailable' }>;
   /** Why nothing was done, when the run could not start: a code. */
   skipped?: 'locked' | 'not_signed_in' | 'no_other_device' | 'own_chain_unusable';
 }
 
-interface OpenProposal { id: string; status?: string; content?: { device_keys?: Record<string, { ct: string; enc: string }> } | null }
+interface OpenProposal { id: string; status?: string; contentHash?: string; content?: { ciphertext?: string; hash?: string; proposalContentHash?: string; device_keys?: Record<string, { ct: string; enc: string }> } | null }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -90,6 +93,22 @@ export class ProposalRewrap {
       result.checked += 1;
       try {
         const cek = await openContentKey(ownWrap, kp.privateKey);
+        // The key opened from the AS-served wrap must decrypt THIS proposal's content to its stored fingerprint before it is
+        // wrapped for anyone: a wrap the AS swapped for another proposal's must not be passed on.
+        const fingerprint = p.content?.proposalContentHash ?? p.content?.hash ?? p.contentHash;
+        let genuine = false;
+        if (typeof p.content?.ciphertext === 'string' && typeof fingerprint === 'string') {
+          try { genuine = computeProposalContentHash(JSON.parse(await openContentWithKey(cek, p.content.ciphertext))) === fingerprint; } catch { genuine = false; }
+        } else {
+          (result.skippedProposals ??= []).push({ id: p.id, code: 'content_unavailable' });
+          cek.fill(0);
+          continue;
+        }
+        if (!genuine) {
+          (result.skippedProposals ??= []).push({ id: p.id, code: 'content_key_mismatch' });
+          cek.fill(0);
+          continue;
+        }
         const wraps: Record<string, { ct: string; enc: string }> = {};
         try {
           for (const dev of missing) wraps[dev.keyId] = await sealContentKey(cek, dev.readPub);

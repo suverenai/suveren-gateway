@@ -300,7 +300,7 @@ async function encryptToDevices(
 ): Promise<{ content: ProposalContentWire; unreadableFor: string[]; unreadableReaders: UnreadableReader[] }> {
   if (deps.selfPublicKey?.length !== 32) throw new Error('This gateway has no reading key of its own to encrypt with.');
   const expected = Array.from(new Set([v08.ownerDid, ...v08.deciders]));
-  const res = await deps.device.readers.resolve(expected, deps.selfPublicKey);
+  const res = await deps.device.readers.resolve(expected, deps.selfPublicKey, { deciders: v08.deciders });
 
   const hapReaders: Array<{ did: string; publicKey: Uint8Array }> = [];
   for (const devs of res.chain.values()) for (const dev of devs) hapReaders.push({ did: dev.keyId, publicKey: dev.readPub });
@@ -310,7 +310,8 @@ async function encryptToDevices(
   const unreadableReaders: UnreadableReader[] = [...res.unreadable];
   for (const did of res.legacy) {
     const entry = await fetchUserPubkeyEntry(did, deps);
-    const bytes = entry && (entry.did === undefined || entry.did === did) ? decodeReaderKey(entry.pubkey) : null;
+    // The answer must NAME this DID: an Authority Server that answers for a DID with a key and no DID (or another) is not believed.
+    const bytes = entry && entry.did === did ? decodeReaderKey(entry.pubkey) : null;
     if (!bytes) { unreadableReaders.push({ did, code: 'no_reading_key' }); continue; }
     hapReaders.push({ did, publicKey: bytes });
     if (entry?.userId) legacyUser.set(did, entry.userId);
@@ -409,6 +410,15 @@ const STRICT_B64URL = /^[A-Za-z0-9_-]+$/;
 
 type Wrap = { ct: string; enc: string };
 
+/** This device holds no wrap of the proposal (yet): not a decryption failure. The message keeps its old wording; the code is stable. */
+export class NoWrapError extends Error {
+  readonly code = 'no_wrap_for_this_device';
+  constructor() {
+    super('No key wrap for this account in this content — this device cannot read it.');
+    this.name = 'NoWrapError';
+  }
+}
+
 /** The parts of a proposal's `content` this module reads. */
 export interface ContentWire {
   ciphertext: string;
@@ -473,6 +483,7 @@ export async function decryptProposalContent(
     keys?: Record<string, { ct: string; enc: string }>;
     encrypted_keys?: Record<string, { ct: string; enc: string }>;
     device_keys?: Record<string, { ct: string; enc: string }>;
+    context?: string;
     hash?: string;
     proposalContentHash?: string;
   },
@@ -486,7 +497,8 @@ export async function decryptProposalContent(
 ): Promise<string> {
   const wrap = pickWrap(wire, myUserId, myDid, myKeyId);
   if (!wrap) {
-    throw new Error('No key wrap for this account in this content — this device cannot read it.');
+    // A device added after the proposal was made holds no wrap until another device of the person passes it on.
+    throw new NoWrapError();
   }
   const fingerprint = wire.proposalContentHash ?? wire.hash;
   // v0.8 content (base64url, a fingerprint to check against): hap-core's

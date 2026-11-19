@@ -71,7 +71,23 @@ export function contextAad(proposalContentHash: string): Uint8Array {
 }
 
 async function aesKey(cek: Uint8Array, usage: 'encrypt' | 'decrypt'): ReturnType<typeof crypto.subtle.importKey> {
-  return crypto.subtle.importKey('raw', contextKey(cek), { name: 'AES-GCM', length: 256 }, false, [usage]);
+  const k = contextKey(cek);
+  try {
+    return await crypto.subtle.importKey('raw', k, { name: 'AES-GCM', length: 256 }, false, [usage]);
+  } finally {
+    k.fill(0);   // the derived key is not kept: the imported key is non-extractable
+  }
+}
+
+/**
+ * Open the CONTENT with a content key (hap-core rule 3: AES-256-GCM, IV ‖ ct ‖ tag, no associated data) and return its
+ * plaintext JCS. Used to check that a content key really belongs to the proposal before it is wrapped for another device.
+ */
+export async function openContentWithKey(cek: Uint8Array, ciphertext: string): Promise<string> {
+  const bytes = fromBase64Url(ciphertext);
+  if (bytes.length < 12 + 16) throw new Error('short');
+  const key = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  return Buffer.from(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12) }, key, bytes.subarray(12))).toString('utf8');
 }
 
 /** Seal the card context: JCS of the object, then the construction in the file header. Returns base64url. */

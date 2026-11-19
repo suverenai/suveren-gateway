@@ -33,19 +33,19 @@ import { DeviceChainStore } from '../lib/device-chain-store';
 import { DevicePinStore } from '../lib/device-pin-store';
 import { DeviceReaders, OwnChainError } from '../lib/device-readers';
 import { ProposalRewrap } from '../lib/proposal-rewrap';
-import { encryptProposalContent, decryptProposalContent, decryptProposalContext } from '../lib/content-crypto';
+import { encryptProposalContent, decryptProposalContent, decryptProposalContext, NoWrapError } from '../lib/content-crypto';
 import { sealContext, openContentKey, type CardContext } from '../lib/content-wraps';
 import { generateKeyPair, type KeyPair } from '../lib/e2e-crypto';
 import { loadOrGenerateKeyPair } from '../lib/e2e-key-manager';
 import { AsUnreachableError, type DeviceAsClient } from '../lib/device-as-client';
 
 // The legacy reading-key lookup (`GET /api/users/:id/pubkey`) goes through fetchAs; a person without a chain has one.
-const legacy: Array<{ userId: string; did: string; pub: Uint8Array }> = [];
+const legacy: Array<{ userId: string; did: string; pub: Uint8Array; omitDid?: boolean }> = [];
 vi.mock('../lib/as-tls-pin', () => ({
   fetchAs: async (url: string) => {
     const seg = decodeURIComponent(url.split('/api/users/')[1].split('/')[0]);
     const a = legacy.find((x) => x.userId === seg || x.did === seg);
-    return { res: { ok: !!a, status: a ? 200 : 404, json: async () => (a ? { userId: a.userId, pubkey: Buffer.from(a.pub).toString('base64'), did: a.did } : { error: 'nope' }) } };
+    return { res: { ok: !!a, status: a ? 200 : 404, json: async () => (a ? { userId: a.userId, pubkey: Buffer.from(a.pub).toString('base64'), did: a.omitDid ? undefined : a.did } : { error: 'nope' }) } };
   },
   AsTlsMismatchError: class extends Error {},
 }));
@@ -135,7 +135,7 @@ class FakeAs {
 interface Gateway { vault: Vault; store: DeviceChainStore; pins: DevicePinStore; readers: DeviceReaders; me: Person; dev: Dev; alarms: Array<{ did: string; code: string }>; as: FakeAs }
 
 /** One gateway: it is `dev` of person `me`. Its vault holds the reading key of `dev` (the chain's record of it is the check). */
-async function boot(me: Person, dev: Dev, as: FakeAs): Promise<Gateway> {
+async function boot(me: Person, dev: Dev, as: FakeAs, teamMembers?: () => Promise<ReadonlySet<string> | null>): Promise<Gateway> {
   const vault = new Vault(mkdtempSync(join(tmpdir(), 'dk-readers-')), { ...FAST, deviceKeys: true });
   await vault.createWithPassword('correct horse battery', 'u-me');
   vault.setCredential('e2eKey', { privateKey: Buffer.from(dev.read.privateKey).toString('base64'), publicKey: Buffer.from(dev.read.publicKey).toString('base64') } as never);
@@ -145,7 +145,7 @@ async function boot(me: Person, dev: Dev, as: FakeAs): Promise<Gateway> {
   store.create({ v: 1, rootDid: me.root.did, keyId: dev.record.key_id, head: await headOf(me), asUrl: 'https://as.example', label: dev.record.label, setUpAt: 1794000000 });
   const pins = new DevicePinStore(vault, store);
   const alarms: Array<{ did: string; code: string }> = [];
-  const readers = new DeviceReaders({ vault, store, client: as.client, pins, onAlarm: (did, code) => alarms.push({ did, code }) });
+  const readers = new DeviceReaders({ vault, store, client: as.client, pins, onAlarm: (did, code) => alarms.push({ did, code }), ...(teamMembers ? { teamMembers } : {}) });
   return { vault, store, pins, readers, me, dev, alarms, as };
 }
 
@@ -496,5 +496,91 @@ describe('device keys step 8: the internal routes the MCP server uses', () => {
       expect((await post(withDevice.url, '/internal/rewrap-proposals', {})).status).toBe(200);
       expect((await post(without.url, '/internal/rewrap-proposals', {})).status).toBe(404);
     } finally { await withDevice.close(); await without.close(); }
+  });
+});
+
+describe('device keys step 8: review fixes', () => {
+  const dec = { deciders: [] as string[] };
+  it('H1a: a DID seen with a chain before, answered "no chain" by the AS, is an alarm and never gets the legacy wrap', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    const appr = await newPerson();
+    as.serve(me); as.serve(appr);
+    const g = await boot(me, me.devs[0], as);
+    expect((await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [appr.root.did] })).unreadableReaders).toEqual([]);   // pinned now
+    // A hacked AS: no chain for the approver any more, and a reading key of its own for that DID.
+    as.chains.delete(appr.root.did);
+    const attacker = await generateKeyPair();
+    legacy.push({ userId: 'u-appr', did: appr.root.did, pub: attacker.publicKey });
+    const r = await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [appr.root.did] });
+    expect(r.unreadableReaders).toEqual([{ did: appr.root.did, code: 'chain_missing' }]);
+    expect(r.content.readers).toEqual([me.root.did]);
+    expect(r.content.keys).toEqual({});
+    expect(g.alarms).toEqual([{ did: appr.root.did, code: 'chain_missing' }]);
+    await expect(hapDecrypt({ ciphertext: r.content.ciphertext, encrypted_keys: { [appr.root.did]: r.content.encrypted_keys[me.root.did] }, readers: [appr.root.did], unreadable: [] }, appr.root.did, attacker.privateKey)).rejects.toThrow();
+  });
+
+  it('H1b: on a chain gateway a legacy answer that does not name the DID is not believed', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    as.serve(me);
+    const k = await generateKeyPair();
+    legacy.push({ userId: 'u-old', did: 'did:key:z6MkOld', pub: k.publicKey, omitDid: true });
+    const g = await boot(me, me.devs[0], as);
+    const r = await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: ['did:key:z6MkOld'] });
+    expect(r.unreadableReaders).toEqual([{ did: 'did:key:z6MkOld', code: 'no_reading_key' }]);
+    expect(r.content.keys).toEqual({});
+  });
+
+  it('H1c/M1: with a verified member list, a member without a chain is no legacy reader, and a decider not on the list is unreadable', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    const member = await newPerson();     // on the list, but the AS says it has no chain
+    const outsider = await newPerson();   // not on the list, chain fine
+    as.serve(me); as.serve(outsider);
+    const k = await generateKeyPair();
+    legacy.push({ userId: 'u-m', did: member.root.did, pub: k.publicKey });
+    const g = await boot(me, me.devs[0], as, async () => new Set([me.root.did, member.root.did]));
+    const r = await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [member.root.did, outsider.root.did] });
+    expect((r.unreadableReaders ?? []).sort((a, b) => a.did.localeCompare(b.did))).toEqual([
+      { did: member.root.did, code: 'chain_missing' }, { did: outsider.root.did, code: 'not_a_team_member' },
+    ].sort((a, b) => a.did.localeCompare(b.did)));
+    expect(r.content.readers).toEqual([me.root.did]);
+    expect(Object.keys(r.content.device_keys!)).toEqual([me.devs[0].record.key_id]);
+    // No port wired (null): today's behaviour, the legacy reader is wrapped.
+    const g2 = await boot(me, me.devs[0], as, async () => null);
+    expect((await encryptProposalContent(ARGS, [], deps(g2), { ownerDid: me.root.did, deciders: [member.root.did] })).content.readers.sort()).toEqual([me.root.did, member.root.did].sort());
+    void dec;
+  });
+
+  it('L1: a wrap that does not open THIS proposal\'s content is not passed on', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    as.serve(me);
+    const g = await boot(me, me.devs[0], as);
+    const a = (await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [] })).content;
+    const b = (await encryptProposalContent({ other: 1 }, [], deps(g), { ownerDid: me.root.did, deciders: [] })).content;
+    const own = me.devs[0].record.key_id;
+    await addDevice(me); as.serve(me); g.store.advance(await headOf(me));
+    // The AS serves B's ciphertext with A's wrap (and A's fingerprint): the key opens nothing of it.
+    as.proposals = [{ id: 'p-x', status: 'pending', content: { ...b, hash: a.hash, device_keys: { [own]: a.device_keys![own] } } }];
+    const res = await new ProposalRewrap({ vault: g.vault, client: as.client, readers: g.readers }).run();
+    expect(res.skippedProposals).toEqual([{ id: 'p-x', code: 'content_key_mismatch' }]);
+    expect(as.posted).toHaveLength(0);
+    // The genuine one goes through.
+    as.proposals = [{ id: 'p-y', status: 'pending', content: { ...a, device_keys: { [own]: a.device_keys![own] } } }];
+    expect((await new ProposalRewrap({ vault: g.vault, client: as.client, readers: g.readers }).run()).rewrapped).toBe(1);
+  });
+
+  it('L4: a device with no wrap of its own gets the code no_wrap_for_this_device, not a decryption failure', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    as.serve(me);
+    const g = await boot(me, me.devs[0], as);
+    const { content } = await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [] });
+    const later = await newDev();
+    const err = await decryptProposalContent({ ...content, keys: {}, encrypted_keys: {}, device_keys: {} }, 'u', later.read.privateKey, undefined, later.record.key_id).catch((e) => e);
+    expect(err).toBeInstanceOf(NoWrapError);
+    expect(err.code).toBe('no_wrap_for_this_device');
   });
 });
