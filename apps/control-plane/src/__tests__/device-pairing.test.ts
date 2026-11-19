@@ -50,15 +50,16 @@ async function gateway(as: FakeAs, o: { helper?: boolean } = {}) {
   const checks = o.helper === false ? undefined : new PlatformChecks(host);
   const checkStore = new CheckKeyStore(vault, store);
   const signIns: Array<{ probe: boolean }> = [];
+  const probe = { ok: false };
   const signin = {
     signIn: async () => { signIns.push({ probe: false }); return { ok: true as const, session: { expiresAt: 0, user: { id: 'u', did: store.read()!.rootDid }, head: store.read()!.head } }; },
-    performSignIn: async () => { signIns.push({ probe: true }); return { ok: false as const, code: 'signin_refused', transient: false }; },
+    performSignIn: async () => { signIns.push({ probe: true }); return probe.ok ? { ok: true as const, session: { expiresAt: 0, user: { id: 'u', did: '' }, head: { seq: 0, hash: '' } } } : { ok: false as const, code: 'signin_refused', transient: false }; },
   };
   const pairing = new DevicePairing({
     vault, store, client: { asUrl: AS_URL, call: (m, p, opts) => as.call(m as never, p, opts as never) }, signin: signin as never,
     checkAs: async () => ({ ok: true, publicKeyHex: as.keyHex }), ...(checks ? { checks, checkStore } : {}), now: as.now,
   });
-  return { dir, vault, store, checks, checkStore, pairing, signIns };
+  return { dir, vault, store, checks, checkStore, pairing, signIns, probe };
 }
 
 /** The gateway is the account's first device, with a check key: set up as DeviceSetup does, written straight into the fake server. */
@@ -430,6 +431,31 @@ describe('"Add this computer": the phone admits this computer (shown_by: joiner)
     await g2.pairing.cancel();
     g2.vault.clearKey();
     expect(await refusalOf(g2.pairing.joinStart())).toBe('locked');
+  });
+
+  it('a lost done: the mailbox runs out after the phone appended; a sign-in that finds this computer\'s entry stores the chain, and one that does not stores nothing', async () => {
+    for (const found of [true, false]) {
+      const w = await world();
+      const { as, admit, g } = w;
+      const { v0, compare } = await toCompare(w);
+      if (v0.flow !== 'join' || v0.step !== 'qr' || compare.flow !== 'join' || compare.step !== 'compare') throw new Error('compare');
+      await admit.choose(compare.code);
+      expect(as.entries).toHaveLength(2);
+      // the phone's done never reaches this computer, and the mailbox is gone
+      as.mailboxes.clear();
+      g.probe.ok = found;
+      as.clock += 700;
+      const v = await g.pairing.status();
+      if (found) {
+        expect(v).toEqual({ flow: 'join', step: 'done', signedIn: true });
+        expect(g.store.read()?.head.seq).toBe(1);
+        expect(g.signIns[0]).toEqual({ probe: true });
+      } else {
+        expect(v).toEqual({ flow: 'join', step: 'failed', code: 'qr_expired' });
+        expect(g.store.exists()).toBe(false);
+        expect(g.checkStore.has()).toBe(false);
+      }
+    }
   });
 
   it('a done that names another entry than the one this computer built stores nothing', async () => {
