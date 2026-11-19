@@ -100,8 +100,9 @@ async function fetchWindow(env: TeamTrustEnv, teamId: string, from: number): Pro
         leaves,
       };
     }
-    if (!Number.isSafeInteger(r.body.leaves_next_after) || r.body.leaves_next_after <= after) throw new TeamTrustFailure('team_list_invalid');
-    after = r.body.leaves_next_after;
+    const nextAfter = r.body.leaves_next_after;
+    if (typeof nextAfter !== 'number' || !Number.isSafeInteger(nextAfter) || nextAfter <= after) throw new TeamTrustFailure('team_list_invalid');
+    after = nextAfter;
   }
   throw new TeamTrustFailure('team_list_invalid');
 }

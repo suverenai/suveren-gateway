@@ -197,7 +197,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
     // the control plane's own check of a grant (tested in its suite); a recorder here
     verifyHeld: async () => ({}),
     // this person's own DID, or one they compared by identity code
-    ownerKnown: (did: string) => did === own.did || confirmed.has(did),
+    ownerKnownFresh: async (did: string) => did === own.did || confirmed.has(did),   // the real one: this person or the VERIFIED team list (control-plane suite); `confirmed` stands in for the list here
     receipt: async (r: { mandateId: string; version: number; grantHash: string }) => {
       if (grantStore.isReceipted(r.mandateId, r.version)) return { sent: false };
       const h = await headOf(own);
