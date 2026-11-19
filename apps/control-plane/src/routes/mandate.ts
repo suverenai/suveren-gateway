@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, prepareMandate, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 
@@ -116,10 +116,27 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     } catch (err) { answerRefusal(res, err); }
   });
 
+  // A dry run of the give (chain gateways): exactly what would be granted and what the give would refuse before the touch. No touch, no write.
+  router.post('/prepare', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
+      const request = (req.body ?? {}) as MandateRequest;
+      res.json(await prepareMandate(request, { ...d, newAuthorizationId: () => `authz_${randomUUID()}` }));
+    } catch (err) { answerRefusal(res, err); }
+  });
+
   router.post('/sign', async (req, res) => {
     const request = (req.body ?? {}) as MandateRequest;
     try {
       const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      // A chain gateway gives only what was prepared for this page: the request is prepared again here and must hash to what the page echoed.
+      if (d.grants?.active()) {
+        const echoed = (req.body as { planHash?: unknown } | undefined)?.planHash;
+        if (typeof echoed !== 'string') { res.status(422).json({ error: 'mandate_refused', code: 'prepare_required', message: 'The mandate was not prepared on this page; nothing was signed.' }); return; }
+        const now = await prepareMandate(request, d);
+        if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was signed. Look at it again.' }); return; }
+      }
       const { authorizationId, revokeError } = await createMandate(request, d);
       res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}) });
     } catch (err) { answerRefusal(res, err); }

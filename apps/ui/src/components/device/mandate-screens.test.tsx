@@ -237,3 +237,33 @@ describe('screen 1: give a mandate (review step, chain accounts)', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('prepare (the gateway\'s checked plan) and the bound give', () => {
+  const answer = (status: number, body: unknown) => vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('prepare posts the request as it would be given and returns the gateway\'s plan; a refusal is the gateway\'s own message', async () => {
+    const plan = { planHash: 'sha256:x', profileId: 'sales@0.4', profileName: 'Sales', profileHash: 'sha256:p', mode: 'review', ttlSeconds: 3600, expiresAt: 1, bounds: [], scope: [], intent: 'why', team: null, blocked: null };
+    const spy = answer(200, plan);
+    const r = await spClient.prepareMandate({ team: 'personal', profile: 'sales' });
+    expect(r).toEqual({ ok: true, prepared: plan });
+    expect(String(spy.mock.calls[0][0])).toContain('/api/mandate/prepare');
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({ team: 'personal', profile: 'sales' });
+    answer(422, { code: 'mandate_refused', message: 'Unknown field' });
+    expect(await spClient.prepareMandate({})).toMatchObject({ ok: false });
+  });
+
+  it('the give echoes the plan hash; a changed plan has its own sentence', async () => {
+    const spy = answer(200, { authorizationId: 'a' });
+    await spClient.signMandate({ team: 'personal', profile: 'p', limits: {}, scope: {}, intent: 'i', mode: 'review', ttlSeconds: 1, title: 't', discloseIdentity: false, planHash: 'sha256:abc' });
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body)).planHash).toBe('sha256:abc');
+    expect(giveErrorText({ code: 'changed_since_prepare' })).toBe(S13.giveErrChanged);
+    expect(giveErrorText({ code: 'prepare_required' })).toBe(S13.giveErrChanged);
+  });
+
+  it('approver states come from the gateway\'s plan: before it answers nothing is known, then confirmed or unconfirmed', () => {
+    const lines = (ids: Set<string> | null) => approverLines([{ userId: 'a', name: 'Anna' }, { userId: 'b', name: 'Bernd' }], ids).map(l => l.state);
+    expect(lines(null)).toEqual(['unknown', 'unknown']);
+    expect(lines(new Set(['b']))).toEqual(['confirmed', 'unconfirmed']);
+  });
+});

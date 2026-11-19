@@ -27,13 +27,14 @@ export const S13 = {
   giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. She cannot approve until ${admin} confirms her.`, // 214
   giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm her.`, // 215
   /** DRAFT: shown until the check can read confirmations before the touch (DEC-73 member list). */
-  giveApproversChecked: 'Checked when you give the mandate.',
+  giveApproversChecked: 'Checking with the team settings…', // DRAFT: shown only until the gateway has answered
   giveDone: (area: string, end: string): string => `Done. The mandate for ${area} is active until ${end}.`, // 217
   giveErrCap: 'A limit is higher than your team allows. Nothing changed. Lower it and try again.', // 218
   giveErrApprovers: 'suveren.ai did not say who may approve for this team. Nothing changed. Try again.', // 219
   giveErrNoChain: 'An approver has not finished setting up Suveren yet. Nothing changed. Ask them to finish it.', // 220
   giveErrCancelled: 'Cancelled. Nothing changed.', // 221
   giveErrTouch: 'Touch ID did not work this time. Nothing changed. Try again.', // 222
+  giveErrChanged: 'What would be granted changed since you looked. Look at it again.', // DRAFT
   giveErrNotAccepted: 'suveren.ai did not accept the mandate. Try again.', // 223
   giveErrNotDelivered: 'The mandate could not reach the gateway, so it was ended again. Give it again.', // 224
   giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // 225

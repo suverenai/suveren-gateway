@@ -20,7 +20,7 @@ import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
 import { unmetForMandate, atLeastOneSignHint } from '@hap/core/scope-rules';
 import { MandateChangeDiff } from '@suveren/approval-card/components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
-import { effectiveGrantors, MandateSignError, type ProfileConfig } from '../lib/sp-client';
+import { effectiveGrantors, MandateSignError, type ProfileConfig, type PreparedMandate } from '../lib/sp-client';
 import { useDeviceChain } from '../lib/use-device-chain';
 import {
   S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, scopeLabel, durationText, endDateText, giveErrorText,
@@ -70,8 +70,11 @@ export function AgentReviewPage() {
   const chain = useDeviceChain();
   const [adminName, setAdminName] = useState('');
   const [approverIds, setApproverIds] = useState<string[]>([]);
-  // INTERIM confirmation source (until DEC-73's member list): the gateway's own refusal that names the unconfirmed approvers. null = not asked yet.
-  const [unconfirmedIds, setUnconfirmedIds] = useState<Set<string> | null>(null);
+  // What the gateway checked (POST /api/mandate/prepare): the plan, the approvers with their confirmation, and any refusal before the touch.
+  const [prepared, setPrepared] = useState<PreparedMandate | null>(null);
+  const [prepareError, setPrepareError] = useState('');
+  const [prepareTick, setPrepareTick] = useState(0);
+  const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
   const [given, setGiven] = useState<{ authorizationId: string; text: string } | null>(null);
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
@@ -315,6 +318,34 @@ export function AgentReviewPage() {
     return () => { cancelled = true; };
   }, [gateData, profile, existingSameProfile]);
 
+  // The request the give would send, as one object: prepared here (chain gateways) and given from here, so they cannot differ.
+  const giveRequest = authData && gateData && authData.groupId && authTitle.trim() && ttlSeconds > 0 ? {
+    team: authData.isPersonal ? 'personal' : authData.groupId,
+    profile: authData.profileId,
+    limits: gateData.bounds as Record<string, string | number>,
+    scope: gateData.context as Record<string, string | number>,
+    contextLabels: gateData.contextLabels,
+    intent: gateData.gateContent.intent,
+    mode: toProtocolMode(commitMode),
+    ttlSeconds,
+    title: authTitle.trim(),
+    discloseIdentity,
+    replaces: sessionStorage.getItem('agentEditReplaces') || undefined,
+  } : null;
+  const giveRequestKey = giveRequest ? JSON.stringify(giveRequest) : '';
+  useEffect(() => {
+    if (!chain || !giveRequest) { setPrepared(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      void spClient.prepareMandate(giveRequest).then(r => {
+        if (!live) return;
+        if (r.ok) { setPrepared(r.prepared); setPrepareError(''); } else { setPrepared(null); setPrepareError(r.message); }
+      });
+    }, 300);
+    return () => { live = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chain, giveRequestKey, prepareTick]);
+
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
@@ -348,6 +379,8 @@ export function AgentReviewPage() {
         title: authTitle.trim(),
         discloseIdentity,
         replaces: replacesId,
+        // a chain gateway gives only what it prepared for this page
+        ...(chain && prepared ? { planHash: prepared.planHash } : {}),
       });
 
       // A failed revoke of the old mandate must be told, never swallowed
@@ -405,8 +438,8 @@ export function AgentReviewPage() {
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
       if (chain && e instanceof MandateSignError) {
-        if (e.code === 'approver_identity_unconfirmed') setUnconfirmedIds(new Set((e.approvers ?? []).map(a => a.userId)));
-        else setError(giveErrorText({ code: e.code, reason: e.reason }));
+        if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(t => t + 1);   // look at the plan again
+        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason }));
         return;
       }
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');
@@ -722,13 +755,19 @@ export function AgentReviewPage() {
               <button className="info-edit" onClick={() => navigate('/mandates/new/intent?step=2')}>edit in step 2</button>
             </div>
             <dl className="info-kv">
-              {contextEntries.map(([k, v]) => (
+              {chain && prepared && prepared.scope.map(r => (
+                <span key={`p-${r.field}`} style={{ display: 'contents' }}><dt>{r.label}</dt><dd>{limitValueText({ unit: r.unit }, r.value)}</dd></span>
+              ))}
+              {chain && prepared && prepared.bounds.map(r => (
+                <span key={`p-${r.field}`} style={{ display: 'contents' }}><dt>{r.label}</dt><dd>{limitValueText({ unit: r.unit }, r.value)}</dd></span>
+              ))}
+              {!(chain && prepared) && contextEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
                   <dt>{chain ? scopeLabel(k, profile?.scopeSchema) : k}</dt>
                   <dd>{formatScopeFieldValue(k, v, profile?.scopeSchema?.fields?.[k], sourceManifests, gateData.contextLabels)}</dd>
                 </span>
               ))}
-              {boundsEntries.map(([k, v]) => (
+              {!(chain && prepared) && boundsEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
                   <dt>{chain ? (profile?.boundsSchema?.fields?.[k]?.displayName ?? k) : k}</dt>
                   <dd>{chain ? limitValueText(profile?.boundsSchema?.fields?.[k], v as string | number) : String(v)}</dd>
@@ -849,10 +888,14 @@ export function AgentReviewPage() {
           </p>
         )}
 
+        {chain && prepared?.blocked && prepared.blocked.code !== 'approver_identity_unconfirmed' && (
+          <p role="alert" data-testid="give-prepare-blocked" className="msg-error">{giveErrorText({ code: prepared.blocked.code })}</p>
+        )}
+        {chain && !prepared && prepareError && <p role="alert" data-testid="give-prepare-error" className="msg-error">{prepareError}</p>}
         {chain && (
           <p className="cta-helper" data-testid="give-touch-note" style={{ marginBottom: '0.5rem' }}>
             {S13.giveTouchNote.replace('{area}', profileDisplayName(authData.profileId))}
-            {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setUnconfirmedIds(null)}>{S13.heldCheckAgain}</button></>}
+            {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setPrepareTick(t => t + 1)}>{S13.heldCheckAgain}</button></>}
           </p>
         )}
 
@@ -862,7 +905,7 @@ export function AgentReviewPage() {
             className="btn btn-primary btn-lg"
             style={{ flex: 1 }}
             onClick={handleCommit}
-            disabled={submitting || approverBlocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+            disabled={submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
           >
             {chain ? (submitting ? S13.giveBusy : S13.giveButton) : submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
           </button>

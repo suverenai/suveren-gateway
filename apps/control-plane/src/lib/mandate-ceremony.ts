@@ -33,7 +33,9 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
-import type { MandateGrants, Issued } from './mandate-grants';
+import type { MandateGrants, Issued, PreparedGrant } from './mandate-grants';
+import { createHash } from 'node:crypto';
+import { canonicalize } from '@hap/core';
 import { GrantRefusal } from './mandate-grants';
 
 export interface MandateRequest {
@@ -535,6 +537,70 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   // The Authority Server ended the authorization this one replaces in the same moment the new version was issued.
   if (req.replaces) void deps.resyncGates?.().catch(() => {});
   return { authorizationId, plan };
+}
+
+/** One shown value: the profile's label and unit for the field, from this gateway's copy of the profile. */
+export interface PreparedRow { field: string; label: string; value: string | number; unit?: string }
+
+/** What a give would grant, as this gateway checked it. The page shows exactly this and echoes `planHash` back with the give. */
+export interface PreparedMandate {
+  /** Binds the give to this plan: the gateway refuses a give whose request, or whose team part, differs (`changed_since_prepare`). */
+  planHash: string;
+  profileId: string;
+  profileName: string;
+  profileHash: string;
+  mode: PreparedGrant['mode'];
+  ttlSeconds: number;
+  expiresAt: number;
+  bounds: PreparedRow[];
+  scope: PreparedRow[];
+  intent: string;
+  team: { approvers: PreparedGrant['approvers']; approvals: number | null; caps: PreparedRow[] } | null;
+  /** The first refusal the real give would meet before the touch, or null. */
+  blocked: PreparedGrant['blocked'];
+}
+
+type FieldDef = { displayName?: string; unit?: string };
+const rowsOf = (values: Record<string, string | number>, fields: Record<string, FieldDef> | undefined, skip: string[] = []): PreparedRow[] =>
+  Object.entries(values).filter(([k]) => !skip.includes(k)).map(([field, value]) => ({ field, label: fields?.[field]?.displayName ?? field, value, ...(fields?.[field]?.unit ? { unit: fields[field]!.unit } : {}) }));
+
+/**
+ * A dry run of a give on a gateway with a device chain: the same validation and the same team computation as the real give, WITHOUT the touch
+ * and without any write at the Authority Server or here (nothing is remembered, no grant, no body, no mandate). Refusals of the validation
+ * (rights, limits, scope, duration) are thrown as {@link MandateRefused}, as the real give would; those the team part meets before the touch come
+ * back as `blocked`, with the approvers that still need their identity code compared.
+ */
+export async function prepareMandate(req: MandateRequest, deps: CeremonyDeps): Promise<PreparedMandate> {
+  const grants = deps.grants;
+  if (!grants?.active()) refuse('Device keys are not set up on this gateway.');
+  const plan = await planMandate(req, deps);
+  const user = deps.user!;
+  const profileHash = computeProfileHash(plan.profile);
+  const disclosed = await subjectsDisclosed(deps, req.discloseIdentity);
+  const pg = await grants.prepare({
+    ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
+    bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
+    authorizationId: deps.newAuthorizationId(), ...(req.replaces ? { replaces: req.replaces } : {}),
+    hashes: { profile: profileHash, bounds: computeBoundsHash(plan.bounds as never, plan.profile), scope: computeScopeHash(plan.context as never, plan.profile), intent: computeIntentHash(plan.intent), executionContext: computeExecutionContextHash(plan.profile) },
+    subjectsDisclosed: disclosed, team: plan.team,
+    ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
+    as: deps.as,
+  });
+  const caps = pg.caps ?? {};
+  const planHash = `sha256:${createHash('sha256').update(canonicalize({
+    profile_id: plan.profile.id, profile_hash: profileHash, group_id: plan.groupId, bounds: plan.bounds, scope: plan.context, intent: plan.intent,
+    ttl_seconds: plan.ttlSeconds, title: plan.title, disclose_identity: req.discloseIdentity ?? null, replaces: req.replaces ?? null,
+    mode: pg.mode, caps: pg.caps, approvals: pg.approvals, approvers: pg.approvers.map(a => a.did).sort(),
+  } as never)).digest('hex')}`;
+  return {
+    planHash, profileId: plan.profile.id, profileName: plan.profile.name ?? plan.profile.id.replace(/@.*$/, '').split('/').pop() ?? plan.profile.id,
+    profileHash, mode: pg.mode, ttlSeconds: plan.ttlSeconds, expiresAt: pg.expiresAt,
+    bounds: rowsOf(plan.bounds as Record<string, string | number>, plan.profile.boundsSchema?.fields as Record<string, FieldDef> | undefined, ['profile', 'path']),
+    scope: rowsOf(plan.context, plan.profile.scopeSchema?.fields as Record<string, FieldDef> | undefined),
+    intent: plan.intent,
+    team: plan.isPersonal ? null : { approvers: pg.approvers, approvals: pg.approvals, caps: rowsOf(caps, plan.profile.boundsSchema?.fields as Record<string, FieldDef> | undefined) },
+    blocked: pg.blocked,
+  };
 }
 
 export interface RenewRequest {

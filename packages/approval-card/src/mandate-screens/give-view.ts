@@ -49,6 +49,7 @@ export function giveErrorText(e: GiveError): string {
     case 'as_unreachable': case 'as_tls_mismatch': return S13.endOffline;
     case 'approver_has_no_chain': return S13.giveErrNoChain;
     case 'check_failed': return e.reason === 'user_cancelled' ? S13.giveErrCancelled : S13.giveErrTouch;
+    case 'changed_since_prepare': case 'prepare_required': return S13.giveErrChanged;
     case 'delivery_failed': return S13.giveErrNotDelivered;
     default: return S13.giveErrNotAccepted;
   }

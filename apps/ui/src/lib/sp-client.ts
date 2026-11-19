@@ -529,6 +529,17 @@ export interface BuiltinStatus {
  * below, instead of re-deriving this per method (and re-missing the new
  * envelope per method, which is exactly how this bug happened).
  */
+/** What a give would grant, as the gateway checked it (POST /api/mandate/prepare); the page shows this and echoes `planHash` with the give. */
+export interface PreparedMandate {
+  planHash: string; profileId: string; profileName: string; profileHash: string;
+  mode: 'automatic' | 'review' | 'review_above_cap'; ttlSeconds: number; expiresAt: number;
+  bounds: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  scope: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  intent: string;
+  team: { approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>; approvals: number | null; caps: Array<{ field: string; label: string; value: string | number; unit?: string }> } | null;
+  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+}
+
 /** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
 export class MandateSignError extends Error {
   constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string) { super(message); this.name = 'MandateSignError'; }
@@ -2340,6 +2351,16 @@ class SPClient {
     return data.authorizations ?? [];
   }
 
+  /** A dry run of the give on a chain gateway: what would be granted and what would be refused before the touch. Writes and touches nothing. */
+  async prepareMandate(request: Record<string, unknown>): Promise<{ ok: true; prepared: PreparedMandate } | { ok: false; message: string; code?: string }> {
+    try {
+      const res = await this.fetch('/api/mandate/prepare', { method: 'POST', body: JSON.stringify(request) });
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true, prepared: body as unknown as PreparedMandate };
+      return { ok: false, message: asErrorMessage(body, `Preparing failed: ${res.status}`), code: (body.grantCode ?? body.code) as string | undefined };
+    } catch { return { ok: false, message: 'The gateway could not be reached.', code: 'offline' }; }
+  }
+
   /** Sign a mandate through the control plane: the same steps as the AI path. */
   async signMandate(request: {
     team: string;
@@ -2353,6 +2374,8 @@ class SPClient {
     title: string;
     discloseIdentity: boolean;
     replaces?: string;
+    /** A chain gateway: the hash of the plan `prepareMandate` returned for this request. */
+    planHash?: string;
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));

@@ -83,7 +83,13 @@ async function world(o: { checkKey?: boolean } = {}) {
   const fin = await post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: as.issueEnrolmentCode() });
   expect(fin.status).toBe(200);
   mandates.users.set('u1', { did: String(start.body.rootDid) });
-  const sign = (body: Record<string, unknown> = {}) => post('/api/mandate/sign', { ...REQ, ...body });
+  // The page prepares first and echoes the plan's hash with the give (the gateway refuses a give that differs from what was prepared).
+  const sign = async (body: Record<string, unknown> = {}) => {
+    const req = { ...REQ, ...body };
+    const p = await post('/api/mandate/prepare', req);
+    if (p.status !== 200) return p;
+    return post('/api/mandate/sign', { planHash: p.body.planHash, ...req });
+  };
   const internal = (path: string, body: unknown) => call(gw.port, 'POST', path, { headers: { 'x-internal-secret': 'sekret' }, body, origin: null });
   const spy = vi.spyOn(PlatformChecks.prototype, 'sign');
   /** From now on the helper behaves like this (set-up needed its own good touch first). */
@@ -843,14 +849,14 @@ describe('step 13 screens: held back list, change preview, Touch ID change', () 
     const touchesBefore = w.touches.mock.calls.length;
     const prev = await call(w.gw.port, 'GET', `/api/mandate/change-preview?authorizationId=${id}&changes=${encodeURIComponent(JSON.stringify(changes))}`, { headers: w.h });
     expect(prev.status, prev.text).toBe(200);
-    expect(prev.body.diff.lastsUntil).toBeTruthy();
-    expect(prev.body.before).toBeNull();
+    expect((prev.body as any).diff.lastsUntil).toBeTruthy();
+    expect((prev.body as any).before).toBeNull();
     expect(w.touches.mock.calls.length).toBe(touchesBefore);       // a preview never touches
     // a different change than the one shown is refused and signs nothing
-    const other = await w.post('/api/mandate/change', { authorizationId: id, changes: { limits: { value_max: 5 } }, sealedDiff: prev.body.diff });
+    const other = await w.post('/api/mandate/change', { authorizationId: id, changes: { limits: { value_max: 5 } }, sealedDiff: (prev.body as any).diff });
     expect([other.status, other.body.code]).toEqual([422, 'changed_since_proposal']);
     expect(w.touches.mock.calls.length).toBe(touchesBefore);
-    const done = await w.post('/api/mandate/change', { authorizationId: id, changes, sealedDiff: prev.body.diff });
+    const done = await w.post('/api/mandate/change', { authorizationId: id, changes, sealedDiff: (prev.body as any).diff });
     expect(done.status, done.text).toBe(200);
     expect(w.touches).toHaveBeenCalledTimes(touchesBefore + 1);
     const g = w.mandates.rows.at(-1)!;
@@ -874,10 +880,79 @@ describe('step 13 screens: held back list, change preview, Touch ID change', () 
     const prev = await call(w.gw.port, 'GET', `/api/mandate/change-preview?authorizationId=${old.authorizationId}&changes=${encodeURIComponent(JSON.stringify({ durationHours: 5 }))}`, { headers: w.h });
     // (the stub's member list is not served: labels fall back to the id; the point is the shape and the numbers)
     expect(prev.status, prev.text).toBe(200);
-    expect(prev.body.before).toMatchObject({ approvals: 1, limits: [expect.objectContaining({ field: 'value_max', value: 300 })] });
-    expect(prev.body.before.approvers).toHaveLength(1);
-    expect(prev.body.after).toMatchObject({ approvals: 2, limits: [expect.objectContaining({ field: 'value_max', value: 500 })] });
-    expect(prev.body.after.approvers.sort()).toEqual(['u_ap', 'u_ap2']);
+    expect((prev.body as any).before).toMatchObject({ approvals: 1, limits: [expect.objectContaining({ field: 'value_max', value: 300 })] });
+    expect((prev.body as any).before.approvers).toHaveLength(1);
+    expect((prev.body as any).after).toMatchObject({ approvals: 2, limits: [expect.objectContaining({ field: 'value_max', value: 500 })] });
+    expect((prev.body as any).after.approvers.sort()).toEqual(['u_ap', 'u_ap2']);
+  });
+});
+
+describe('prepare: what a give would grant, before the touch', () => {
+  it('shows the checked plan with the profile\'s own labels, touches nothing, writes nothing at the Authority Server or here', async () => {
+    const w = await world();
+    const before = w.mandates.posts.length;
+    const r = await w.post('/api/mandate/prepare', REQ);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ profileId: SALES.id, profileHash: computeProfileHash(SALES), mode: 'review', ttlSeconds: 3600, team: null, blocked: null, intent: REQ.intent });
+    expect(r.body.planHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const value = (r.body.bounds as Array<{ field: string; label: string; value: unknown }>).find(b => b.field === 'value_max')!;
+    expect(value).toMatchObject({ value: 1000, label: SALES.boundsSchema.fields.value_max.displayName ?? 'value_max' });
+    expect((r.body.bounds as Array<{ field: string }>).some(b => b.field === 'profile')).toBe(false);
+    expect(w.touches).not.toHaveBeenCalled();
+    expect(w.mandates.posts.length).toBe(before);           // no grant, no body, no mandate request
+    expect(w.mandates.rows).toEqual([]);
+    // a request the real give would refuse for its content is refused the same way
+    const bad = await w.post('/api/mandate/prepare', { ...REQ, limits: { ...LIMITS, bogus_max: 1 } });
+    expect(bad.status).toBe(422);
+    // not a chain gateway / no session
+    expect((await call(w.gw.port, 'POST', '/api/mandate/prepare', { body: REQ })).status).toBe(401);
+  });
+
+  it('a team: approvers with DIDs, identity codes and confirmation state from the gateway\'s own record; the unconfirmed one blocks, nothing is remembered by asking', async () => {
+    const w = await world();
+    const ap = await person();
+    const ap2 = await person();
+    w.as.otherChains.set(ap.did, ap.entries);
+    w.as.otherChains.set(ap2.did, ap2.entries);
+    w.mandates.users.set('u_ap', { did: ap.did });
+    w.mandates.users.set('u_ap2', { did: ap2.did });
+    w.mandates.team = { approvers: ['u_ap', 'u_ap2'], approvals: 2, caps: { value_max: { value: 500, kind: 'approval' } } };
+    w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did, ap2.did].sort(), approvals: 2 };
+    const store = new MandateGrantStore(w.gw.vault);
+    const r = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team' });
+    expect(r.status, r.text).toBe(200);
+    expect((r.body as any).team.approvals).toBe(2);
+    expect(((r.body as any).team.approvers as Array<{ did: string; confirmed: boolean; identityCode: string }>).map(a => [a.did, a.confirmed]).sort()).toEqual([[ap.did, false], [ap2.did, false]].sort());
+    expect((r.body as any).team.caps).toEqual([expect.objectContaining({ field: 'value_max', value: 500 })]);
+    expect(r.body).toMatchObject({ blocked: { code: 'approver_identity_unconfirmed' } });
+    expect((r.body as any).blocked.approvers).toHaveLength(2);
+    // asking again with the codes "compared" in the request shows them confirmed, but REMEMBERS nothing
+    const again = await w.post('/api/mandate/prepare', { ...REQ, team: 'g_team', confirmedApproverDids: [ap.did, ap2.did] });
+    expect(again.body.blocked).toBeNull();
+    expect(store.approverConfirmed(ap.did)).toBe(false);
+    expect(w.touches).not.toHaveBeenCalled();
+    // the plan hash does not depend on who was confirmed
+    expect(again.body.planHash).toBe(r.body.planHash);
+  });
+
+  it('the give is bound to what was prepared: no hash, another hash, or a request that differs refuses with nothing signed', async () => {
+    const w = await world();
+    const p = await w.post('/api/mandate/prepare', REQ);
+    const hash = p.body.planHash as string;
+    const none = await w.post('/api/mandate/sign', REQ);
+    expect([none.status, none.body.code]).toEqual([422, 'prepare_required']);
+    const wrong = await w.post('/api/mandate/sign', { ...REQ, planHash: `sha256:${'a'.repeat(64)}` });
+    expect([wrong.status, wrong.body.code]).toEqual([422, 'changed_since_prepare']);
+    for (const change of [{ limits: { ...LIMITS, value_max: 5000 } }, { intent: 'another why' }, { ttlSeconds: 7200 }, { scope: { currency: 'USD' } }, { mode: 'automatic' }]) {
+      const r = await w.post('/api/mandate/sign', { ...REQ, ...change, planHash: hash });
+      expect([r.status, r.body.code], JSON.stringify(change)).toEqual([422, 'changed_since_prepare']);
+    }
+    expect(w.touches).not.toHaveBeenCalled();
+    expect(w.mandates.rows).toEqual([]);
+    // the request that was prepared is given
+    const ok = await w.post('/api/mandate/sign', { ...REQ, planHash: hash });
+    expect(ok.status, ok.text).toBe(200);
+    expect(w.touches).toHaveBeenCalledTimes(1);
   });
 });
 
