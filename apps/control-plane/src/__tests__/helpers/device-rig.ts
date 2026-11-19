@@ -122,6 +122,7 @@ export interface GatewayRig {
   checkStore: CheckKeyStore;
   /** Grants mandates on this computer (step 13); undefined with the switch off. */
   grants: MandateGrants | undefined;
+  approvals: import('../../lib/mandate-approvals').MandateApprovals | undefined;
   /** What the mandate router handed to the intent delivery and the gate resync. */
   delivered: Array<{ authorizationId: string }>;
   resynced: { count: number };
@@ -176,7 +177,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   // Wired like index.ts: with the helper, the check key's slot decides whether the password still confirms.
   const checkStore = new CheckKeyStore(vault, new DeviceChainStore(vault));
   const confirmations = new ChangeConfirmations(o.platform ? { checkRequired: () => checkStore.has() } : {});
-  const { deviceChainState, signin, loginChangeGate, grants } = mountDeviceKeyRoutes(app, {
+  const { deviceChainState, signin, loginChangeGate, grants, approvals } = mountDeviceKeyRoutes(app, {
     enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations,
     hasCheckKey: o.platform ? () => checkStore.has() : () => false, internalSecret: () => 'sekret', jsonParser: json,
     platform: o.platform ? { host: o.platform, checkStore, opensPageSession: o.opensPageSession } : undefined,
@@ -227,12 +228,12 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       ...(grants ? { grants } : {}),
     });
     app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps));
-    app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps));
+    app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps, approvals));
   }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
   const port = (server.address() as { port: number }).port;
   return {
-    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, delivered, resynced,
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, approvals, delivered, resynced,
     unlock: async () => {
       const r = await call(port, 'POST', '/auth/unlock', { body: { password: PW }, connectTo: o.listenHost });
       if (r.status !== 200) throw new Error(`unlock failed: ${r.status} ${r.text}`);

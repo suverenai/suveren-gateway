@@ -431,6 +431,8 @@ export class AttestationCache {
       if (!g.skipped) {
         const granted = new Set(g.granted.map(x => x.blob));
         attestations = attestations.filter(a => granted.has(a.blob));
+        // The group is what the owner SIGNED into the grant, not what the Authority Server's summary said.
+        groupId = g.granted[0]?.groupId ?? groupId;
       }
     }
 

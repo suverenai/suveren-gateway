@@ -116,8 +116,14 @@ export class PinRefused extends Error {
 export interface DeviceCpClient {
   chainState(): Promise<{ state: 'none' | 'present' | 'unreadable'; rootDid?: string }>;
   getPin(did: string): Promise<Head | null>;
-  /** `keep`: signed identities of the mandates cached now; their pins are never the ones dropped when the table is full. */
-  advancePin(did: string, head: Head, keep?: string[]): Promise<void>;
+  /**
+   * Pin this person's chain head. The control plane fetches and verifies the chain ITSELF before it moves the pin (and decides which
+   * pins to protect); what this process verified is not taken on its word.
+   */
+  advancePin(did: string): Promise<void>;
+  /** Has a device chain ever been reported for this account on this computer (sticky)? */
+  chainSeen(): Promise<boolean>;
+  markChainSeen(): Promise<void>;
   /** This proposal runs on these decisions (their nonces): refused for a reused proposal id or nonce. */
   consume(proposalId: string, nonces: string[]): Promise<void>;
   /** A mandate grant was verified here: remember its version (a lower one is refused later, a revoke is final). Throws {@link GrantRefused}. */
@@ -149,6 +155,14 @@ export class GrantRefused extends Error {
   }
 }
 
+/** The control plane answered and said NO (a refusal with its code): never a reason to keep what was honoured. Not a transient failure. */
+export class CpRefused extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'CpRefused';
+  }
+}
+
 function cpBase(): string {
   return process.env.SUVEREN_CP_INTERNAL_URL ?? `http://127.0.0.1:${process.env.SUVEREN_CP_PORT ?? '3402'}`;
 }
@@ -169,8 +183,15 @@ export const controlPlaneDevice: DeviceCpClient = {
     if (!h || typeof h.seq !== 'number' || typeof h.hash !== 'string') throw new Error('unreadable answer');
     return { seq: h.seq, hash: h.hash };
   },
-  async advancePin(did, head, keep) {
-    await cpCall('POST', '/internal/device-pin/advance', { did, head, ...(keep?.length ? { keep } : {}) });
+  async advancePin(did) {
+    await cpCall('POST', '/internal/device-pin/advance', { did });
+  },
+  async chainSeen() {
+    const body = await cpCall('GET', '/internal/mandate-grant/chain-seen');
+    return (body as { seen?: unknown }).seen === true;
+  },
+  async markChainSeen() {
+    await cpCall('POST', '/internal/mandate-grant/chain-seen', {});
   },
   async consume(proposalId, nonces) {
     await cpCall('POST', '/internal/device-ledger/consume', { proposalId, nonces });
@@ -208,6 +229,10 @@ async function cpCall(method: 'GET' | 'POST', path: string, body?: unknown): Pro
   if (res.status === 409 && (parsed.code === 'lower_version' || parsed.code === 'same_version_other_grant' || parsed.code === 'revoked')) throw new GrantRefused(parsed.code);
   if (res.status === 409 && (parsed.code === 'rollback' || parsed.code === 'fork' || parsed.code === 'own_chain' || parsed.code === 'full'
     || parsed.code === 'proposal_id_reused' || parsed.code === 'nonce_reused')) throw new PinRefused(parsed.code);
+  // 4xx with a code (403 chain_fork, grant_invalid, owner_unknown, grant_not_held, ...) is a refusal; 401 (no secret), 423 (locked),
+  // 5xx, timeouts and network errors are failures to ASK and stay plain errors.
+  if (res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 408 && res.status !== 423 && res.status !== 429
+    && typeof parsed.code === 'string') throw new CpRefused(parsed.code);
   if (!res.ok) throw new Error(`control plane answered ${res.status}`);
   return parsed;
 }
@@ -439,11 +464,12 @@ export async function verifiedChain(i: ChainReader, dk: DeviceKeys, did: string)
     return { ok: false, check: refuse('chain_head_mismatch', 'the Authority Server named another chain head than its entries end in.') };
   }
   try {
-    await i.cp.advancePin(did, state.head, i.protectedDids);
+    await i.cp.advancePin(did);
   } catch (e) {
     // This computer's own head is moved by sign-in only; the chain was verified against it above.
     if (e instanceof PinRefused && e.reason === 'own_chain') return { ok: true, state };
     if (e instanceof PinRefused && (e.reason === 'rollback' || e.reason === 'fork')) return { ok: false, check: refuse(e.reason === 'rollback' ? 'chain_rollback' : 'chain_fork', 'an approver\'s device chain moved against the head this gateway pinned.') };
+    if (e instanceof CpRefused) return { ok: false, check: refuse(e.code, 'the control plane refused to pin an approver\'s chain head.') };
     return { ok: false, check: refuse('device_state_unavailable', 'the control plane could not pin an approver\'s chain head.') };
   }
   return { ok: true, state };

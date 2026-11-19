@@ -33,6 +33,7 @@ import { AsTlsMismatchError } from './as-tls-pin';
 import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { computeProposalContentHash, decryptProposalContent, type ProposalContentWire } from './content-crypto';
+import type { MandateApprovals } from './mandate-approvals';
 
 export type DecisionRoute = 'approve' | 'reject' | 'resolve' | 'withdraw';
 export const DECISION_ROUTES: readonly DecisionRoute[] = ['approve', 'reject', 'resolve', 'withdraw'];
@@ -60,6 +61,8 @@ export interface DeviceDecisionDeps {
   client: DeviceAsClient;
   /** Ask the MCP server (its signed mandate, its manifests). Throws when it cannot say. */
   facts: (p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }) => Promise<ProposalFacts>;
+  /** What the person approved for the Setup tools is kept here, for the one call that raises Touch ID on their behalf (lib/mandate-approvals.ts). */
+  approvals?: MandateApprovals;
   /** Told after the Authority Server accepted a decision (events, the executor nudge). */
   onDecided?: (route: DecisionRoute, kind: DecisionKind) => void;
   /** Epoch seconds. */
@@ -125,7 +128,8 @@ export class DeviceDecisions {
     if (proposal.status !== 'pending') throw new DecisionRefusal(409, 'proposal_not_pending');
 
     // 2. the fingerprint of what this computer can show
-    const contentHash = await this.fingerprint(proposal, kind);
+    const opened = await this.fingerprint(proposal, kind);
+    const contentHash = opened.hash;
     // 2b. what the PERSON saw is what is signed. The page sends the hash of the content it decrypted and
     //     showed; a commit requires it and it must be the hash computed here from the proposal this call
     //     read. An Authority Server that shows the page content A and this call content B is caught here.
@@ -184,7 +188,11 @@ export class DeviceDecisions {
       if (err instanceof AsUnreachableError) throw new DecisionRefusal(502, 'as_unreachable');
       throw err;
     }
-    if (reply.status >= 200 && reply.status < 300) d.onDecided?.(route, kind);
+    if (reply.status >= 200 && reply.status < 300) {
+      // the arguments this person just approved, under the fingerprint their device signed over
+      if (kind === 'commit' && opened.plain) d.approvals?.record(proposal.tool, contentHash, opened.plain);
+      d.onDecided?.(route, kind);
+    }
     return { status: reply.status, body: reply.body };
   }
 
@@ -208,15 +216,15 @@ export class DeviceDecisions {
   }
 
   /** The hash of the content this computer opened; the proposal's own fingerprint where it need not (and cannot) open it. */
-  private async fingerprint(p: ProposalRead, kind: DecisionKind): Promise<string> {
+  private async fingerprint(p: ProposalRead, kind: DecisionKind): Promise<{ hash: string; plain: Record<string, unknown> | null }> {
     const plain = await this.openContent(p);
     if (plain) {
       if (computeProposalContentHash(plain) !== p.contentHash) throw new DecisionRefusal(409, 'content_mismatch');
-      return p.contentHash;
+      return { hash: p.contentHash, plain };
     }
     // Nothing can be approved that this computer cannot show.
     if (kind === 'commit') throw new DecisionRefusal(409, 'content_unreadable');
-    return p.contentHash;
+    return { hash: p.contentHash, plain: null };
   }
 
   private async openContent(p: ProposalRead): Promise<Record<string, unknown> | null> {

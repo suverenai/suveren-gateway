@@ -33,6 +33,7 @@ import { testReceiptKeypair, makeSignedReceipt, echoTicketRequest } from './help
 import { createInternalDeviceRouter } from '../../control-plane/src/routes/internal-device';
 import { DeviceChainStore } from '../../control-plane/src/lib/device-chain-store';
 import { DevicePinStore } from '../../control-plane/src/lib/device-pin-store';
+import { pinChainStub } from './helpers/cp-pin-stub';
 import { MandateGrantStore } from '../../control-plane/src/lib/mandate-grant-store';
 
 // ─── people with real device chains ──────────────────────────────────────
@@ -266,8 +267,9 @@ async function world(o: {
   // the grant memory is the real one too; the receipt signer is the real route's job (tested in the control plane), a recorder here
   const receipts: Array<{ mandateId: string; version: number }> = [];
   const grantStore = new MandateGrantStore(vault as never);
-  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, new DevicePinStore(vault as never, store), {
-    store: grantStore, grants: { receipt: async (r: { mandateId: string; version: number }) => { receipts.push(r); return { sent: true }; }, ownerKnown: (d: string) => d === owner.did, verifyHeld: async () => ({}) } as never,
+  const pinStore = new DevicePinStore(vault as never, store);
+  app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, pinStore, {
+    store: grantStore, grants: { receipt: async (r: { mandateId: string; version: number }) => { receipts.push(r); return { sent: true }; }, ownerKnown: (d: string) => d === owner.did, verifyHeld: async () => ({}), pinChain: pinChainStub(as.chains, pinStore, owner.did) } as never,
   }));
   const cp: Server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   toClose.push(() => new Promise<void>(r => cp.close(() => r())));

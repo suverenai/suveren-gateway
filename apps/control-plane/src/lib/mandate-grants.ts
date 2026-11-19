@@ -30,7 +30,7 @@ import { DeviceAsClient, AsUnreachableError, asErrorCode } from './device-as-cli
 import { AsTlsMismatchError } from './as-tls-pin';
 import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
-import type { DevicePinStore } from './device-pin-store';
+import { PinRefusedError, type DevicePinStore } from './device-pin-store';
 import { MandateGrantStore } from './mandate-grant-store';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
 
@@ -207,7 +207,9 @@ export class MandateGrants {
     // identity code is shown before a person first accepts it. Without the list the grant is not made.
     const identities: Issued['approvers'] = [];
     if (team.approvers.length > 0 && !Array.isArray(team.eligible)) return refuse('approvers_unavailable', 'The Authority Server did not say who may approve for this team.');
+    const seenDid = new Set<string>();
     for (const e of team.eligible ?? []) {
+      if (typeof e.did === 'string') { if (seenDid.has(e.did)) continue; seenDid.add(e.did); }
       if (!team.approvers.includes(e.user_id)) return refuse('approver_unresolved', 'The Authority Server named an approver this team does not have.');
       if (e.did === null) return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.');
       if (typeof e.did !== 'string' || !DID.test(e.did)) return refuse('approver_unresolved', 'An approver of this team could not be identified.');
@@ -221,7 +223,7 @@ export class MandateGrants {
         if (e instanceof GrantRefusal && e.code === 'chain_unknown') return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.');
         throw e;
       }
-      try { this.d.pins.advance(a.did, state.head); } catch (e) {
+      try { this.d.pins.advance(a.did, state.head, this.protectedDids()); } catch (e) {
         const reason = (e as { reason?: string })?.reason;
         if (reason === 'rollback') return refuse('chain_rollback', 'A device chain is shorter than the one verified before.');
         if (reason === 'fork') return refuse('chain_fork', 'A device chain differs from the one verified before.');
@@ -266,8 +268,18 @@ export class MandateGrants {
     const g = await this.call('GET', `/api/mandates/${encodeURIComponent(mandateId)}/grants`, s.credential);
     if (g.status !== 200 || !isObj(g.body) || !Array.isArray(g.body.grants)) return refuse('as_answer_invalid', 'The Authority Server answered with something unexpected.');
     const grants = g.body.grants.filter(isObj);
-    if (grants.some(e => e.op === 'revoke')) return refuse('mandate_revoked', 'This mandate was revoked on a device; a revocation is final.');
-    const live = grants.filter(e => isObj(e.grant) && typeof e.mandate_version === 'number');
+    // A revoke row counts only when it verifies as a revoke of a device of THIS chain; an unverified one is ignored.
+    const fixedNames = new Set(GRANT_FIXED_MEMBERS);
+    for (const e of grants.filter(x => x.op === 'revoke' && isObj(x.grant) && Number.isSafeInteger(x.mandate_version))) {
+      const rg = e.grant as MandateGrant;
+      const rf: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rg)) if (!fixedNames.has(k)) rf[k] = v;
+      try {
+        await dk.verifyGrant({ grant: rg, sig: e.sig, check: e.check ?? undefined }, { chain: s.own, mandateFields: rf, expect: { ops: ['revoke'], mandate_id: mandateId, mandate_version: e.mandate_version as number } });
+        return refuse('mandate_revoked', 'This mandate was revoked on a device; a revocation is final.');
+      } catch (err) { if (!isDeviceKeysError(err)) throw err; }
+    }
+    const live = grants.filter(e => e.op !== 'revoke' && isObj(e.grant) && typeof e.mandate_version === 'number');
     live.sort((a, b) => (b.mandate_version as number) - (a.mandate_version as number));
     const top = live[0];
     if (!top) return refuse('mandate_unknown', 'No grant is on file for this mandate.');
@@ -304,11 +316,13 @@ export class MandateGrants {
     let op: 'grant' | 'change' = 'grant';
     let replaces: string | null = null;
     let authorizationId = i.authorizationId;
+    let prevGrant: Record<string, unknown> | undefined;
     let intentDisclosureHash = i.intentDisclosureHash;
     let subjectsDisclosed = i.subjectsDisclosed;
     if (i.replaces || i.renewal) {
       const prev = await this.held(i.replaces ?? i.authorizationId, s);
       const was = prev.grant as Record<string, unknown>;
+      prevGrant = was;
       // The mandate the AS named must be the one the owner granted for THIS authorization.
       if (typeof was.authorization_id !== 'string' || was.authorization_id !== (i.replaces ?? i.authorizationId)) {
         return refuse('mandate_mismatch', 'The mandate to change was already replaced by another.');
@@ -347,6 +361,14 @@ export class MandateGrants {
       issued_at: now, expires_at: expiresAt,
     } as unknown as MandatePayload;
     const members = grantMembersOf(payload, { authorizationId, groupId: i.groupId, replaces, chainDids: team.chainDids });
+    // A renewal moves only the expiry. Everything else the previous VERIFIED grant said must be equal; otherwise it is a change of what
+    // the mandate IS and goes through the change flow (a new authorization and the diff the person sees).
+    if (i.renewal && prevGrant) {
+      for (const k of Object.keys(members)) {
+        if (k === 'expires_at') continue;
+        if (dk.jcs({ x: members[k] }) !== dk.jcs({ x: prevGrant[k] ?? null })) return refuse('renewal_is_a_change', `Extending only moves the end date; "${k}" differs from what was granted, so this is a change.`, { member: k });
+      }
+    }
 
     // 4. this computer's check key must be the one its chain names, BEFORE anything is asked of the person
     let checkKey;
@@ -431,6 +453,37 @@ export class MandateGrants {
     return { mandateId, version };
   }
 
+  /** Pins that are never dropped when the table is full: this person's own chain and every identity they confirmed. */
+  protectedDids(): string[] {
+    let own: string[] = [];
+    try { const r = this.d.store.read()?.rootDid; if (r) own = [r]; } catch { /* locked */ }
+    try { return [...own, ...this.d.grants.confirmedList()]; } catch { return own; }
+  }
+
+  /**
+   * Pin a person's chain head AFTER verifying the chain here (the Authority Server's copy, from the genesis on, against the head pinned
+   * before). A caller names only the DID; what it verified itself is not taken on its word. Throws {@link PinRefusedError} for a
+   * rollback, a fork and for this computer's own chain (moved by sign-in only).
+   */
+  async pinChain(did: string): Promise<{ seq: number; hash: string }> {
+    if (typeof did !== 'string' || !DID.test(did)) throw new PinRefusedError('bad_request');
+    const s = await this.session();
+    if (did === s.stored.rootDid) throw new PinRefusedError('own_chain');
+    let state: ChainState;
+    try { state = await this.chainOf(did, s.credential, this.d.pins.get(did)); } catch (e) {
+      if (e instanceof GrantRefusal && e.code === 'chain_rollback') throw new PinRefusedError('rollback');
+      if (e instanceof GrantRefusal && e.code === 'chain_fork') throw new PinRefusedError('fork');
+      throw e;
+    }
+    return this.d.pins.advance(did, state.head, this.protectedDids());
+  }
+
+  /** The person withdraws a confirmation of someone's identity. */
+  forgetIdentity(did: unknown): void {
+    if (typeof did !== 'string' || !DID.test(did)) throw new GrantRefusal('bad_request', 'Bad request.');
+    this.d.grants.forgetApprover(did);
+  }
+
   // ─── what the MCP server asks to have remembered: only what this control plane verified itself ───
 
   /** Is this DID this person's own, or one whose identity code they compared and accepted? */
@@ -472,7 +525,7 @@ export class MandateGrants {
     let chain = s.own;
     if (ownerDid !== s.stored.rootDid) {
       chain = await this.chainOf(ownerDid, s.credential, this.d.pins.get(ownerDid));
-      try { this.d.pins.advance(ownerDid, chain.head); } catch (e) {
+      try { this.d.pins.advance(ownerDid, chain.head, this.protectedDids()); } catch (e) {
         const reason = (e as { reason?: string })?.reason;
         if (reason === 'rollback') return refuse('chain_rollback', 'A device chain is shorter than the one verified before.');
         if (reason === 'fork') return refuse('chain_fork', 'A device chain differs from the one verified before.');

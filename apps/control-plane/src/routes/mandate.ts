@@ -56,6 +56,15 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       res.json({ ok: true });
     } catch (err) { answerRefusal(res, err); }
   });
+  // The person withdraws a confirmation. Page session only (this router sits behind it); never the AI path.
+  router.post('/forget-identity', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active()) { res.status(409).json({ error: 'not_set_up', message: 'Device keys are not set up.', code: 'not_set_up' }); return; }
+      d.grants.forgetIdentity((req.body as { did?: unknown } | undefined)?.did);
+      res.json({ ok: true });
+    } catch (err) { answerRefusal(res, err); }
+  });
   router.post('/renew', async (req, res) => {
     const request = (req.body ?? {}) as RenewRequest;
     try {
