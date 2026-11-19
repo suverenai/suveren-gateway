@@ -91,7 +91,7 @@ export class FakeAs implements Transport {
 
   private async signChallenge(body: Json): Promise<string> {
     const bytes = concat(utf8('hap-as-challenge\u0000'), utf8(jcs({ typ: body.typ, nonce: body.nonce, issuedAt: body.issuedAt })));
-    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, this.challengeKey ?? this.key.privateKey, bytes));
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, this.challengeKey ?? this.key.privateKey, new Uint8Array(bytes)));
     return btoa(String.fromCharCode(...sig));
   }
 
