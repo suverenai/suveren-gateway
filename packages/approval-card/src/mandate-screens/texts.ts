@@ -178,7 +178,7 @@ export const S13 = {
   joinRequestsTitle: 'Requests to join', // DRAFT
   joinRequestsNone: 'No one is asking to join.', // DRAFT
   joinOpen: 'Compare identity codes', // DRAFT: the button on a request
-  colleaguesTitle: 'Colleagues', // 331
+  colleaguesTitle: 'Members', // 331
   confirmedBy: (name: string): string => `confirmed by ${name}`, // 330
   confirmedByYou: 'confirmed by you', // 333
   colleaguesWhy: (admin: string): string => `You trust them because ${admin}, your admin, compared codes with each of them. You do not compare codes yourself.`, // 332
