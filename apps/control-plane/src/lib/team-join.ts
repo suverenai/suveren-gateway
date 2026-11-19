@@ -393,7 +393,7 @@ export class TeamJoin {
     const prev = await this.headList(s, teamId);
     if (prev.list.admin_did !== s.stored.rootDid) return refuse('not_admin', 403);
     if (prev.list.members.some(m => m.did === q.memberDid)) return refuse('already_member', 409);
-    const name = Array.from(q.memberName.replace(/[\u0000-\u001f\u007f-\u009f  ]/g, ' ').trim()).slice(0, dk.TEAM_MAX_NAME).join('') || userId;
+    const name = Array.from(q.memberName.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim()).slice(0, dk.TEAM_MAX_NAME).join('') || userId;
     let added: TeamMember;
     try { added = await dk.buildTeamMember(q.memberDid, name); } catch { return refuse('list_invalid'); }
     const members = [...prev.list.members, added].sort((a, b) => (a.did < b.did ? -1 : a.did > b.did ? 1 : 0));
