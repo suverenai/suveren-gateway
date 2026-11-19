@@ -33,6 +33,7 @@ import { DeviceDecisions, type DecisionRoute, type DecisionKind, type ProposalFa
 import { createDeviceDecisionRouter } from './device-decision';
 import { DevicePinStore } from '../lib/device-pin-store';
 import { createInternalDeviceRouter } from './internal-device';
+import { isBearerCredential } from '../lib/as-credential';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
 import { MandateGrants } from '../lib/mandate-grants';
 import { MandateApprovals } from '../lib/mandate-approvals';
@@ -194,7 +195,15 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
-    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, device.pins, { store: device.grantStore, grants: device.grants }));
+    app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, device.pins, {
+      store: device.grantStore, grants: device.grants,
+      // A Bearer credential is a device session (a chain exists then); the account's DID is known here from the API-key sign-in only.
+      account: () => {
+        const cookie = o.vault.getSpCookie();
+        const user = o.vault.getSessionUser();
+        return { signedIn: !!cookie && !(isBearerCredential(cookie) && !user), did: user?.did ?? null };
+      },
+    }));
     if (o.device?.decision) {
       app.use('/device-decision', json, createDeviceDecisionRouter({
         vault: o.vault,
