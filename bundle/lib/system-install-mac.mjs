@@ -60,6 +60,9 @@ export function buildLayout({ version, prefix = '' }) {
     logDir: p('/var/log/suveren'),
     logFile: p('/var/log/suveren/gateway.log'),
     runDir: p('/var/run/suveren'),
+    agentPin: p('/usr/local/etc/suveren/agent-pin.json'),
+    agentSocket: p('/var/run/suveren/agent.sock'),
+    brokerBinary: `${codeRoot}/current/bin/suveren-broker`,
     daemonPlist: p(`/Library/LaunchDaemons/${DAEMON_LABEL}.plist`),
     agentPlist: p(`/Library/LaunchAgents/${AGENT_LABEL}.plist`),
   };
@@ -237,6 +240,23 @@ export function nodeLinkProblems(otoolOutput) {
   return out;
 }
 
+/**
+ * The broker and the pin. Both optional until the agent exists (increment 5/6):
+ * with neither given the plan is the one of increments 1 to 3.
+ */
+function agentChannelSteps(layout, { brokerBinary, agent }) {
+  const root = 'root:wheel';
+  const steps = [];
+  if (brokerBinary) {
+    steps.push({ kind: 'mkdir', path: `${layout.codeDir}/bin`, owner: root, mode: '0755' });
+    steps.push({ kind: 'copy', from: brokerBinary, to: `${layout.codeDir}/bin/suveren-broker`, owner: root, mode: '0755' });
+  }
+  if (agent) {
+    steps.push({ kind: 'write', path: layout.agentPin, content: buildPinJson(agent), owner: root, mode: '0644' });
+  }
+  return steps;
+}
+
 /** Steps that put the node binary, npm and the npm/npx links into the code folder. */
 function nodeSteps(layout, node) {
   const root = 'root:wheel';
@@ -250,6 +270,29 @@ function nodeSteps(layout, node) {
     { kind: 'symlink', path: `${dir}/bin/npm`, target: npmTarget('npm') },
     { kind: 'symlink', path: `${dir}/bin/npx`, target: npmTarget('npx') },
   ];
+}
+
+
+// ─── The pin: which agent build the broker accepts ──────────────────────
+// No Apple Developer ID yet (DEC-74): the installer reads the cdhash of the agent
+// it installs and writes it, with the identifier, into a root-owned file. The
+// broker accepts only a program with exactly that identifier and cdhash.
+
+export const AGENT_IDENTIFIER = 'ai.suveren.agent';
+const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/;
+const CDHASH_RE = /^[0-9a-f]{40}$/;
+
+/** The CDHash line of `codesign -dvvv <binary>` (it prints to stderr). */
+export function parseCdhash(codesignOutput) {
+  const m = /^CDHash=([0-9a-f]{40})\s*$/m.exec(String(codesignOutput));
+  if (!m) throw new Error('No CDHash in the codesign output (is the program signed?)');
+  return m[1];
+}
+
+export function buildPinJson({ identifier = AGENT_IDENTIFIER, cdhash }) {
+  if (!IDENTIFIER_RE.test(identifier)) throw new Error(`Not a usable identifier: "${identifier}"`);
+  if (!CDHASH_RE.test(String(cdhash))) throw new Error('The cdhash must be 40 lower-case hex digits');
+  return JSON.stringify({ identifier, cdhash }, null, 2) + '\n';
 }
 
 // ─── The plan ───────────────────────────────────────────────────────────
@@ -281,6 +324,8 @@ export function buildInstallPlan({
   version,
   packageDir,
   node,
+  brokerBinary,
+  agent,
   freeId,
   cpPort,
   mcpPort,
@@ -304,6 +349,7 @@ export function buildInstallPlan({
   // Code: the package and a Node of our own (the person's nvm or Homebrew Node is writable by them).
   steps.push({ kind: 'copy', from: packageDir, to: layout.codeDir, owner: root, mode: 'go-w' });
   steps.push(...nodeSteps(layout, node));
+  steps.push(...agentChannelSteps(layout, { brokerBinary, agent }));
   steps.push({ kind: 'write', path: layout.settingsFile, content: buildSettingsJson({ layout, cpPort, mcpPort }), owner: root, mode: '0644' });
   steps.push({ kind: 'symlink', path: layout.currentLink, target: version });
 
@@ -335,7 +381,7 @@ export function renderPlan(plan) {
  * A new version next to the old one: copy, verify, flip `current`, restart.
  * The daemon never updates its own code (design 2.5); an admin runs this.
  */
-export function buildUpdatePlan({ version, packageDir, node, prefix = '' }) {
+export function buildUpdatePlan({ version, packageDir, node, brokerBinary, agent, prefix = '' }) {
   const layout = buildLayout({ version, prefix });
   const root = 'root:wheel';
   return {
@@ -344,6 +390,7 @@ export function buildUpdatePlan({ version, packageDir, node, prefix = '' }) {
       { kind: 'mkdir', path: layout.codeDir, owner: root, mode: '0755' },
       { kind: 'copy', from: packageDir, to: layout.codeDir, owner: root, mode: 'go-w' },
       ...nodeSteps(layout, node),
+      ...agentChannelSteps(layout, { brokerBinary, agent }),
       { kind: 'symlink', path: layout.currentLink, target: version },
       { kind: 'run', argv: ['launchctl', 'kickstart', '-k', `system/${DAEMON_LABEL}`] },
     ],

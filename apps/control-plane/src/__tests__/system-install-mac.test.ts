@@ -15,6 +15,7 @@ import {
   buildLayout, parseDsclIds, pickFreeId, buildAccountSteps, buildDaemonPlist,
   buildSettingsJson, buildFileManifest, diffManifests, checkPreconditions,
   buildInstallPlan, renderPlan, resolveNodeDistribution, nodeLinkProblems,
+  parseCdhash, buildPinJson, buildUpdatePlan,
 } from '../../../../bundle/lib/system-install-mac.mjs';
 
 describe('buildLayout', () => {
@@ -203,5 +204,31 @@ describe('our own node with npm and npx', () => {
     const brew = '/x/node:\n\t/usr/lib/libz.1.dylib (c)\n\t/opt/homebrew/opt/libuv/lib/libuv.1.dylib (c)\n\t@rpath/libnode.dylib (c)\n';
     expect(nodeLinkProblems(brew)).toEqual(['/opt/homebrew/opt/libuv/lib/libuv.1.dylib', '@rpath/libnode.dylib']);
     expect(nodeLinkProblems('/x/node:\n\t/usr/lib/libSystem.B.dylib (c)\n\t/System/Library/Frameworks/CoreFoundation (c)\n')).toEqual([]);
+  });
+});
+
+describe('the agent pin', () => {
+  const hash = 'a'.repeat(40);
+  it('reads the cdhash from codesign output', () => {
+    expect(parseCdhash(`Identifier=ai.suveren.agent\nCDHash=${hash}\nSignature=adhoc\n`)).toBe(hash);
+    expect(() => parseCdhash('not signed')).toThrow(/CDHash/);
+  });
+  it('writes identifier and cdhash, and refuses anything that could alter the requirement', () => {
+    expect(JSON.parse(buildPinJson({ cdhash: hash }))).toEqual({ identifier: 'ai.suveren.agent', cdhash: hash });
+    expect(() => buildPinJson({ cdhash: 'xyz' })).toThrow();
+    expect(() => buildPinJson({ cdhash: hash.toUpperCase() })).toThrow();
+    expect(() => buildPinJson({ identifier: 'a" or anchor apple "', cdhash: hash })).toThrow();
+  });
+  const dist = { binary: '/n/bin/node', npmDir: '/n/lib/node_modules/npm' };
+  it('is part of the plan only when the broker and agent are given, owned by root', () => {
+    const none = buildInstallPlan({ version: '1.0.0', packageDir: '/pkg', node: dist, freeId: 260, cpPort: 3400, mcpPort: 3430 });
+    expect(JSON.stringify(none.steps)).not.toContain('agent-pin');
+    const full = buildInstallPlan({ version: '1.0.0', packageDir: '/pkg', node: dist, brokerBinary: '/b/broker', agent: { cdhash: hash }, freeId: 260, cpPort: 3400, mcpPort: 3430 });
+    const pin = full.steps.find((x: any) => x.path === full.layout.agentPin) as any;
+    expect(pin).toMatchObject({ kind: 'write', owner: 'root:wheel' });
+    expect(JSON.parse(pin.content).cdhash).toBe(hash);
+    expect(full.steps).toContainEqual({ kind: 'copy', from: '/b/broker', to: `${full.layout.codeDir}/bin/suveren-broker`, owner: 'root:wheel', mode: '0755' });
+    const up = buildUpdatePlan({ version: '1.1.0', packageDir: '/pkg', node: dist, brokerBinary: '/b/broker', agent: { cdhash: hash } });
+    expect(up.steps.some((x: any) => x.path === up.layout.agentPin)).toBe(true);
   });
 });
