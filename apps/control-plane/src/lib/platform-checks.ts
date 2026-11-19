@@ -122,8 +122,8 @@ export class PlatformChecks {
    */
   /**
    * `previous` is the signed bytes of the list before this one: for a member list that does not ADD someone (removal, replacement,
-   * re-sign, hand-over) the helper derives what the touch is for by comparing the two, so the person is told the truth. A helper that
-   * does not know `previous` refuses such a list (it needs a focus it is not given): fail closed.
+   * re-sign, hand-over) the helper checks sha256(previous) equals the list's `prev` and derives what the touch is for by comparing the two, so the person is
+   * told the truth. Mixed or unknown differences are refused by the helper.
    */
   async sign(key: StoredCheckKey, object: Uint8Array, focus?: string, previous?: Uint8Array): Promise<{ signature: string; reason: string }> {
     const digest = sha256Hash(object);

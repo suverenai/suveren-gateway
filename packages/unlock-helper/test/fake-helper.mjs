@@ -61,7 +61,7 @@ const GRANT_FIXED = ['typ', 'v', 'op', 'owner_did', 'key_id', 'chain_seq', 'chai
 const quoted = (x) => `"${x.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const ANCHOR_MEMBERS = ['typ', 'v', 'member_did', 'team_id', 'admin_did', 'version', 'prev', 'key_id', 'chain_seq', 'chain_head', 'created_at', 'nonce'].sort().join(',');
 const LIST_MEMBERS = ['typ', 'v', 'team_id', 'version', 'prev', 'admin_did', 'members', 'handover', 'key_id', 'chain_seq', 'chain_head', 'created_at', 'nonce'].sort().join(',');
-export function reasonFor(bytes, focus) {
+export function reasonFor(bytes, focus, previous) {
   let o;
   try { o = JSON.parse(bytes.toString('utf8')); } catch { throw err('bad_request', 'object is not a JSON object.'); }
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw err('bad_request', 'object is not a JSON object.');
@@ -86,15 +86,62 @@ export function reasonFor(bytes, focus) {
   } else if (o.typ === 'suveren-team-anchor' && Object.keys(o).sort().join(',') === ANCHOR_MEMBERS) {
     text = o.admin_did === null ? 'stop trusting the admin of a team' : 'trust the admin of the team you asked to join';
   } else if (o.typ === 'suveren-team-members' && Object.keys(o).sort().join(',') === LIST_MEMBERS) {
+    if (previous !== undefined) return finish(memberListChange(bytes, o, previous, focus));
     const m = typeof focus === 'string' && Array.isArray(o.members) ? o.members.find(x => x && x.did === focus) : undefined;
     if (!m || typeof m.name !== 'string' || !m.name || typeof m.code !== 'string' || !/^[0-9]{4}( [0-9]{4}){5}$/.test(m.code)) throw err('bad_request', 'a member list needs a focus that names one of its members.');
     text = `add ${quoted(m.name)} to the team, code ${m.code}`;
   } else if (o.typ === 'suveren-mandate-grant' && GRANT_FIXED.every(k => k in o) && typeof o.profile_id === 'string' && o.profile_id && (o.op === 'grant' || o.op === 'change')) {
     text = `${o.op === 'grant' ? 'grant' : 'change'} the mandate for ${quoted(o.profile_id)}`;
   } else throw err('bad_request', 'object is of a kind this helper has no prompt text for.');
+  return finish(text);
+}
+
+function finish(text) {
   const n = Array.from(text).length;
   if (n < 1 || n > 120 || text.normalize('NFC') !== text || /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(text)) throw err('bad_request', 'prompt text is not acceptable.');
   return text;
+}
+
+const CODE_RE = /^[0-9]{4}( [0-9]{4}){5}$/;
+function listMembers(o) {
+  if (!Array.isArray(o.members) || o.members.length === 0) throw err('bad_request', 'a member list has no members.');
+  const out = o.members.map(m => {
+    if (!m || typeof m.did !== 'string' || typeof m.name !== 'string' || !m.name || typeof m.code !== 'string' || !CODE_RE.test(m.code)) throw err('bad_request', 'a member of the list is malformed.');
+    return m;
+  });
+  if (new Set(out.map(m => m.did)).size !== out.length) throw err('bad_request', 'a member list names a member twice.');
+  return out;
+}
+/** Mirror of ReasonText.memberListChange (Reason.swift): the helper diffs the two lists itself. `previous` = signed bytes of the list before. */
+function memberListChange(bytes, o, previous, focus) {
+  let p;
+  try { p = JSON.parse(previous.toString('utf8')); } catch { throw err('bad_request', 'previous is not a member list.'); }
+  if (!p || p.typ !== 'suveren-team-members' || Object.keys(p).sort().join(',') !== LIST_MEMBERS) throw err('bad_request', 'previous is not a member list.');
+  if (o.prev !== 'sha256:' + crypto.createHash('sha256').update(previous).digest('hex')) throw err('bad_request', 'previous is not the list this one follows.');
+  if (o.team_id !== p.team_id || !Number.isInteger(o.version) || o.version !== p.version + 1) throw err('bad_request', 'previous is not the version before this list.');
+  const now = listMembers(o), before = listMembers(p);
+  const nowBy = new Map(now.map(m => [m.did, m])), beforeBy = new Map(before.map(m => [m.did, m]));
+  if (!nowBy.has(o.admin_did) || !beforeBy.has(p.admin_did)) throw err('bad_request', 'the admin is not a member.');
+  const added = now.filter(m => !beforeBy.has(m.did)), removed = before.filter(m => !nowBy.has(m.did));
+  for (const m of now) { const b = beforeBy.get(m.did); if (b && (b.name !== m.name || b.code !== m.code)) throw err('bad_request', "a member's entry changed."); }
+  const hasHandover = o.handover !== null && o.handover !== undefined;
+  if (o.admin_did !== p.admin_did) {
+    if (added.length || removed.length || !hasHandover || !o.handover || o.handover.admin_did !== p.admin_did) throw err('bad_request', 'this change of admin is not a plain hand-over.');
+    return `hand the team over to ${quoted(nowBy.get(o.admin_did).name)}`;
+  }
+  if (hasHandover) throw err('bad_request', 'a list with the same admin carries no hand-over.');
+  if (typeof focus === 'string' && added.length && !added.some(m => m.did === focus)) throw err('bad_request', 'focus is not the added member.');
+  if (added.length === 0 && removed.length === 0) return 'sign the team list again';
+  if (added.length === 1 && removed.length === 0) return `add ${quoted(added[0].name)} to the team, code ${added[0].code}`;
+  if (added.length === 0 && removed.length === 1) {
+    if (removed[0].did === p.admin_did) throw err('bad_request', 'the admin cannot be removed.');
+    return `remove ${quoted(removed[0].name)} from the team`;
+  }
+  if (added.length === 1 && removed.length === 1) {
+    if (removed[0].did === p.admin_did) throw err('bad_request', 'the admin cannot be replaced.');
+    return `replace ${quoted(removed[0].name)} with ${quoted(added[0].name)}, code ${added[0].code}`;
+  }
+  throw err('bad_request', 'this change of the list is not one this helper describes.');
 }
 
 function err(code, message) { return Object.assign(new Error(message), { code }); }
@@ -130,7 +177,9 @@ async function run(r) {
       const object = b(r, 'object');
       if (!crypto.createHash('sha256').update(object).digest().equals(digest)) throw err('digest_mismatch', 'digest is not the SHA-256 of object.');
       if (r.focus !== undefined && (typeof r.focus !== 'string' || r.focus.length > 200)) throw err('bad_request', 'focus must be a DID string.');
-      const reason = reasonFor(object, r.focus);
+      let previous;
+      if (r.previous !== undefined) { if (typeof r.previous !== 'string' || !/^[A-Za-z0-9_-]*$/.test(r.previous)) throw err('bad_request', 'previous must be base64url.'); previous = Buffer.from(r.previous, 'base64url'); }
+      const reason = reasonFor(object, r.focus, previous);
       process.stderr.write(`fake prompt: "${reason}"\n`);
       await touch();
       const s = signDigest(r.keyBlob, process.env.FAKE_WRONG_SIGNATURE === '1' ? crypto.createHash('sha256').update('other').digest() : digest);

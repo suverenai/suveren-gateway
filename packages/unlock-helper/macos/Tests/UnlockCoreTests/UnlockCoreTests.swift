@@ -289,3 +289,45 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         #expect(code(r) == "key_invalid")
     }
 }
+
+@Suite struct MemberListChanges {
+    // DEC-73 step 5: the helper diffs a member list against `previous` and builds the text itself.
+    func member(_ did: String, _ name: String, _ code: String) -> [String: Any] { ["did": did, "name": name, "code": code] }
+    func list(_ version: Int, _ prev: String, _ admin: String, _ members: [[String: Any]], handover: Any = NSNull()) -> Data {
+        let o: [String: Any] = ["typ": "suveren-team-members", "v": 1, "team_id": "t1", "version": version, "prev": prev, "admin_did": admin, "members": members,
+                                "handover": handover, "key_id": "k", "chain_seq": 0, "chain_head": "h", "created_at": 1, "nonce": "n"]
+        return try! JSONSerialization.data(withJSONObject: o, options: [.sortedKeys])
+    }
+    let a = "did:key:z6MkAdmin1111111111111111111111111111111111", m = "did:key:z6MkMember111111111111111111111111111111111", n = "did:key:z6MkNewone111111111111111111111111111111111"
+    var anna: [String: Any] { member(a, "Anna Muster", "7314 2208 5561 0942 3375 0001") }
+    var maria: [String: Any] { member(m, "Maria Huber", "4721 8830 1169 2284 0937 1250") }
+    var newo: [String: Any] { member(n, "Maria Huber", "1111 2222 3333 4444 5555 6666") }
+    var before: Data { list(2, "sha256:" + String(repeating: "0", count: 64), a, [anna, maria]) }
+    var hash: String { "sha256:" + sha256hex(before) }
+
+    @Test func sayswhatIsSigned() throws {
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna]), previous: before) == "remove \"Maria Huber\" from the team")
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna, newo]), previous: before) == "replace \"Maria Huber\" with \"Maria Huber\", code 1111 2222 3333 4444 5555 6666")
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna, maria]), previous: before) == "sign the team list again")
+        let h: [String: Any] = ["admin_did": a, "key_id": "ka", "chain_seq": 1, "chain_head": "x"]
+        #expect(try ReasonText.forObject(list(3, hash, m, [anna, maria], handover: h), previous: before) == "hand the team over to \"Maria Huber\"")
+        #expect(try ReasonText.forObject(list(3, hash, a, [anna, maria, newo]), previous: before) == "add \"Maria Huber\" to the team, code 1111 2222 3333 4444 5555 6666")
+    }
+
+    @Test func refusesWhatItCannotDescribe() {
+        func refused(_ o: Data, _ p: Data) -> Bool { (try? ReasonText.forObject(o, previous: p)) == nil }
+        #expect(refused(list(3, "sha256:" + String(repeating: "1", count: 64), a, [anna]), before))   // not the list it follows
+        #expect(refused(list(4, hash, a, [anna]), before))                                          // not the next version
+        #expect(refused(list(3, hash, a, [maria]), before))                                         // the admin removed
+        #expect(refused(list(3, hash, m, [anna, maria]), before))                                   // change of admin without a hand-over
+        #expect(refused(list(3, hash, a, [anna, member(m, "Mallory", "4721 8830 1169 2284 0937 1250")]), before))   // a changed entry
+        #expect(refused(list(3, hash, a, [anna]), Data("{}".utf8)))                                  // previous is not a list
+    }
+
+    @Test func handlerAcceptsPreviousOnlyAsBase64url() {
+        let obj = list(3, hash, a, [anna])
+        let k = call(software, ["op": "check.create", "policy": "user-presence"])
+        let r = call(software, ["op": "check.sign", "keyBlob": k["keyBlob"] as! String, "digest": "sha256:" + sha256hex(obj), "object": Base64URL.encode(obj), "previous": "***"])
+        #expect(code(r) == "bad_request")
+    }
+}
