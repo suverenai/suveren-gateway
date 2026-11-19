@@ -15,6 +15,7 @@ import { deviceRows, type DeviceRow } from './lib/chain-view';
 import { identityCodeOf } from './lib/identity-code';
 import { bindPhoneHost } from './lib/app-host';
 import { openContext, type ContentWire } from './lib/content';
+import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
 import { P, errorText } from './texts';
 import { NeedsScreen, WelcomeScreen } from './screens/Start';
@@ -41,7 +42,17 @@ type View =
   | { t: 'locked'; error: string | null; ended: boolean; canForget: boolean }
   | { t: 'home'; tab: 'requests' | 'devices' | 'admit' };
 
+/** The theme switch is the gateway's (shared `ThemeToggle`, `useTheme`: `data-theme` on <html>, system default, remembered in localStorage). */
 export default function App() {
+  return (
+    <>
+      <div className="ap-top"><ThemeToggle /></div>
+      <Screens />
+    </>
+  );
+}
+
+function Screens() {
   const rt = useMemo(() => createRuntime(), []);
   const [view, setView] = useState<View>({ t: 'boot' });
   const [persistent, setPersistent] = useState<boolean | null>(null);

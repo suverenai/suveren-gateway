@@ -1,6 +1,6 @@
 /**
  * Writes one static HTML page with every phone screen and its important states, side by side in 390 px frames, rendered from the
- * REAL components (renderToStaticMarkup, as screens.test.tsx does) with the real CSS inlined. No network, no fonts, light theme.
+ * REAL components (renderToStaticMarkup, as screens.test.tsx does) with the real CSS inlined. No network, no fonts. Every frame twice: day and dark.
  *
  *   vite-node.mjs (from node_modules/.pnpm/vite-node@3.2.4...) --config vite.config.ts scripts/mockup.tsx <output.html>
  *   (run in apps/approve; tsx cannot be used: the shared package's JSX needs the vite react plugin)
@@ -72,16 +72,18 @@ const groups: Array<[string, Array<[string, ReactElement]>]> = [
   ]],
 ];
 
-const frames = groups.map(([g, items]) => `<h2>${g}</h2><div class="row">${items.map(([cap, el]) => `<figure><figcaption><b>${g}</b><br>${cap}</figcaption><div class="phone">${renderToStaticMarkup(el)}</div></figure>`).join('')}</div>`).join('\n');
+const frames = groups.map(([g, items]) => `<h2>${g}</h2><div class="row">${items.map(([cap, el]) => { const m = renderToStaticMarkup(el); return `<figure><figcaption><b>${g}</b><br>${cap}</figcaption><div class="pair"><div class="phone" data-theme="light"><div class="tag">day</div>${m}</div><div class="phone" data-theme="dark"><div class="tag">dark</div>${m}</div></div></figure>`; }).join('')}</div>`).join('\n');
 
 writeFileSync(out, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Suveren - phone app D1 screens</title>
 <style>${css}
 body{padding:24px;background:#d8d8d8;font-family:var(--font-sans)}
 h1,h2{font-family:var(--font-sans);margin:24px 0 8px}
 .row{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
-figure{margin:0;width:390px}
+figure{margin:0}
+.pair{display:flex;gap:16px}
+.tag{font:11px var(--font-sans);color:var(--text-muted);padding:6px 12px 0}
 figcaption{font:13px/1.4 var(--font-sans);margin-bottom:6px;color:#333}
-.phone{width:390px;min-height:640px;overflow:hidden;background:var(--bg-main);border:1px solid #888;border-radius:24px}
+.phone{width:390px;min-height:640px;overflow:hidden;background:var(--bg-main);color:var(--text-primary);border:1px solid #888;border-radius:24px}
 .phone .device-screen{padding-top:2rem}
-</style></head><body><h1>Phone app, stage D1: every screen (real components, DRAFT texts, light theme, 390 px)</h1>${frames}</body></html>`);
+</style></head><body><h1>Phone app, stage D1: every screen (real components, DRAFT texts, day and dark, 390 px)</h1>${frames}</body></html>`);
 console.log(`wrote ${out}`);
