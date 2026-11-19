@@ -71,7 +71,10 @@ public final class Handler {
             if r["reason"] != nil { throw HelperError("bad_request", "reason is not accepted: the helper builds it from the object.") }
             guard let o = r["object"] as? String, let obj = Base64URL.decode(o) else { throw HelperError("bad_request", "object must be base64url.") }
             guard Data(SHA256.hash(data: obj)) == digest else { throw HelperError("digest_mismatch", "digest is not the SHA-256 of object.") }
-            let reason = try validReason(try ReasonText.forObject(obj))
+            // `focus` is a DID that picks one member of a member list; it is never shown by itself (the name and code come from the object).
+            var focus: String? = nil
+            if let f = r["focus"] { guard let fs = f as? String, fs.count <= 200 else { throw HelperError("bad_request", "focus must be a DID string.") }; focus = fs }
+            let reason = try validReason(try ReasonText.forObject(obj, focus: focus))
             let blob = try b64(r, "keyBlob")
             let key = try backend.openSigningKey(blob: blob, prompt: Prompt(reason: reason, interactionAllowed: interactionAllowed))
             let sig = try key.sign(digest)           // ECDSA over SHA-256(digest bytes); touch happens here

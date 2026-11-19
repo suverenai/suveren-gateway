@@ -10,6 +10,7 @@ import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
 import { T, textForCode, isDecisionCode } from './device-texts';
 import { queueDomains, mergeProposals } from './my-queue';
+import type { MemberJoinApi, AdminJoinApi, JoinResult } from '@suveren/approval-card/mandate-screens';
 import type { AttachmentPreviewResult } from '@suveren/approval-card/lib/attachment-sealed';
 import type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcome, ToolDisplayHints, CheckStatus, CheckResult, PreviewReadSection, PreviewResponse, OutcomeResponse, RequestChainItem, RequestResult, HistoryItem, ConnectorHistoryMatch, HistoryResult, RequestContextResponse, ShownSnapshotPayload, ShownHashEntry, ShownHashes, AuthTemplate, ModeOptionDecl, SignInGroup, IntegrationManifest, GateContentEntry, EnrichedAuthorizationEntry, ProposalOutcome, ProposalContentWire, NoteEncryptedWire, Proposal, CumulativeUsageEntry, ExecutionReceipt, ReceiptPage, CapKind, ProfileConfig } from '@suveren/approval-card/types';
 
@@ -1085,6 +1086,35 @@ class SPClient {
     if (code === 'as_unreachable' || res.status === 502 || res.status === 503) return { ok: false, code: 'offline' };
     return { ok: false, code: 'other' };
   }
+
+  /**
+   * The join screens' routes on this gateway's own control plane (DEC-73 step 4; a gateway with a device chain only).
+   * Never throws: a refusal, an unreachable gateway or an answer of another shape is `{ ok: false, code }`. Backend truth only:
+   * what the screen shows (the person's own code, the tries left, whether a code matched) is what the gateway answered.
+   */
+  private async joinCall<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<JoinResult<T>> {
+    let res: Response;
+    try {
+      res = await this.fetch(`/api/team-join${path}`, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    } catch { return { ok: false, code: 'as_unreachable' }; }
+    const data = await res.json().catch(() => null) as ({ ok?: boolean; code?: string; triesLeft?: number } & Record<string, unknown>) | null;
+    if (data && data.ok === true) return data as unknown as JoinResult<T>;
+    return { ok: false, code: typeof data?.code === 'string' ? data.code : 'other', ...(typeof data?.triesLeft === 'number' ? { triesLeft: data.triesLeft } : {}) };
+  }
+
+  /** The member's column of the join (the person who asked to join). */
+  readonly memberJoin: MemberJoinApi = {
+    view: (teamId) => this.joinCall('GET', `/member/${encodeURIComponent(teamId)}`),
+    check: (teamId, code) => this.joinCall('POST', `/member/${encodeURIComponent(teamId)}/check`, { code }),
+    anchor: (teamId) => this.joinCall('POST', `/member/${encodeURIComponent(teamId)}/anchor`, {}),
+  };
+
+  /** The admin's column of the join. */
+  readonly adminJoin: AdminJoinApi = {
+    view: (teamId) => this.joinCall('GET', `/admin/${encodeURIComponent(teamId)}`),
+    check: (teamId, userId, code) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/check`, { code }),
+    add: (teamId, userId) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/add`, {}),
+  };
 
   /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
   async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null }> | null> {

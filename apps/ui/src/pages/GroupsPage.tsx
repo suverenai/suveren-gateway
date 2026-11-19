@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
+import { JoinRequestsHost } from '../components/device/JoinHosts';
+import { useDeviceChain } from '../lib/use-device-chain';
 import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 
 interface GroupDetail {
@@ -28,6 +30,7 @@ export function GroupsPage() {
   const { activeTeam, activeMembership, refreshGroups, user } = useAuth();
   const navigate = useNavigate();
   const accordion = useFoldAccordion<HTMLElement>();
+  const deviceChain = useDeviceChain();
   const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -143,6 +146,11 @@ export function GroupsPage() {
                 </div>
               ))}
             </section>
+          )}
+
+          {/* DEC-73: the admin of a team with device keys compares identity codes with each person who asks to join, then adds them with Touch ID. */}
+          {deviceChain && activeTeam.isAdmin === true && (
+            <JoinRequestsHost teamId={activeTeam.id} teamName={activeTeam.name} onAdded={() => { void refreshGroups(); }} />
           )}
 
           <ObFold

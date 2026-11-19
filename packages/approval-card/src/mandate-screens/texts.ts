@@ -24,8 +24,8 @@ export const S13 = {
   giveApproverUnconfirmed: 'not confirmed by your admin yet', // 330
   giveYou: 'You', // 245
   giveYouNote: 'Someone else must approve your AI\'s actions above this limit.', // 245
-  giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. She cannot approve until ${admin} confirms her.`, // 214
-  giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm her.`, // 215
+  giveUnconfirmedReason: (name: string, admin: string): string => `${name} is not confirmed by your admin yet. They cannot approve until ${admin} confirms them.`, // 214
+  giveUnconfirmedStep: (admin: string): string => `Ask ${admin} to confirm them.`, // 215
   /** DRAFT: shown until the check can read confirmations before the touch (DEC-73 member list). */
   giveApproversChecked: 'Checking with the team settings…', // DRAFT: shown only until the gateway has answered
   giveDone: (area: string, end: string): string => `Done. The mandate for ${area} is active until ${end}.`, // 217
@@ -46,11 +46,11 @@ export const S13 = {
   heldNotReceived: 'This device has not received this mandate yet. Your AI cannot use it until it does.', // 252
   heldCheckAgain: 'Check again', // 253
   heldNoCheck: (owner: string): string => `${owner} did not confirm this mandate with Touch ID. Your AI cannot use it.`, // 254
-  heldNoCheckStep: 'Ask her to give it again on one of her devices.', // 255
-  heldNotOnList: (owner: string): string => `${owner} is not on the list your admin confirmed. Your AI cannot use her mandate.`, // 256
-  heldNotOnListStep: (admin: string): string => `Ask ${admin}, your admin, to confirm her.`, // 257
+  heldNoCheckStep: 'Ask them to give it again on one of their devices.', // 255
+  heldNotOnList: (owner: string): string => `${owner} is not on the list your admin confirmed. Your AI cannot use their mandate.`, // 256
+  heldNotOnListStep: (admin: string): string => `Ask ${admin}, your admin, to confirm them.`, // 257
   heldChanged: (owner: string): string => `This mandate does not match what ${owner} confirmed. It may have been changed since. Your AI cannot use it.`, // 258
-  heldChangedStep: 'Ask her to give it again.', // 259
+  heldChangedStep: 'Ask them to give it again.', // 259
   heldEnded: (owner: string): string => `${owner} ended this mandate. This is final.`, // 260
   heldEndedStep: 'If the work still needs it, ask for a new mandate.', // 261
   heldOwnNoCheck: 'Touch ID was not confirmed for this mandate. Your AI cannot use it.', // 262
@@ -110,33 +110,81 @@ export const S13 = {
   changeTeamLimit: (label: string): string => `Team limit: ${label}`,
   tagMore: 'More', tagLess: 'Less', tagChanged: 'Changed', tagNew: 'New', tagRemoved: 'Removed', // 293, 294
 
-  // Screen 2: identity codes at the join (option B; the AS and hap-core part is not built, see interface.ts)
+  // Screen 2: identity codes at the join (option B, DEC-73 design 20.21.5: each side shows its own code and TYPES the other's).
+  // Numbers are the mockup's (step13.html rev 2). Every code is named with its noun (terms.md row 32), so "Your code" became
+  // "Your identity code" (DRAFT noun). Where the typed variant needs a sentence the mockup has none for, the line says DRAFT.
   joinAdminTitle: (member: string, team: string): string => `Confirm ${member} to join ${team}`, // 310
-  joinAdminIntro: (member: string): string => `${member} asked to join your team. Compare codes with her first. You do this once.`, // 311
-  joinYourCode: 'Your code', // 312
-  joinTheirCode: (name: string): string => `${name}'s code`, // 313
-  joinCompareHint: 'Both codes are on both screens. Check that they are the same on both. Ask her in person, or by a way you trust.', // 314
-  joinMatch: (member: string): string => `The codes match. Confirm ${member}`, // 315
-  joinDiffer: 'The codes are different', // 316
-  joinAdminDone: (member: string): string => `${member} has joined. Your colleagues now trust her because you confirmed her.`, // 317
-  joinDifferResult: (member: string): string => `${member} is not added. Nothing changed. Do not go on until you know why the codes differ: suveren.ai may have shown one of you the wrong code.`, // 318
-  joinMemberTitle: (admin: string): string => `Compare codes with ${admin}`, // 320
-  joinMemberIntro: (team: string, admin: string): string => `You asked to join ${team}. ${admin} confirms it. Compare codes with her first. You do this once.`, // 321
-  joinMemberHint: 'Both codes are on both screens. Check that they are the same on both.', // 324
-  joinMemberMatch: 'The codes match', // 325
-  joinMemberDiffer: 'The codes are different', // 326
+  joinAdminIntro: (member: string): string => `${member} asked to join your team. Compare identity codes with them first. You do this once.`, // 311 (+ "identity")
+  /** DRAFT: the name from the sign-up is not checked by anyone (design 20.21.5 step 1). */
+  joinNameNotChecked: (member: string): string => `The name ${member} comes from the sign-up and is not checked.`,
+  joinYourCode: 'Your identity code', // 312 (+ noun)
+  joinTheirCode: (name: string): string => `${name}'s identity code`, // 313 (+ noun)
+  /** DRAFT: the typed variant of 314/234 (the mockup shows both codes; the design has each person type the other's). */
+  joinAdminRead: (member: string): string => `Read your identity code to ${member}. Ask them in person, or by a way you trust. Do not take it from your AI.`,
+  /** DRAFT: label of the field. */
+  joinAdminType: (member: string): string => `Type ${member}'s identity code`,
+  /** DRAFT: label of the check button (239 "Check the code", with the noun). */
+  joinCheck: 'Check the identity code',
+  joinChecking: 'Checking...', // DRAFT
+  /** DRAFT: the design's wrong-code text (20.21.5 step 2). */
+  joinWrongAdmin: (member: string): string => `This is not ${member}'s identity code. Do not continue.`,
+  joinWrongMember: "This is not the admin's identity code. Do not continue.",
+  /** DRAFT. */
+  joinTriesLeft: (n: number): string => `${n} ${n === 1 ? 'try' : 'tries'} left.`,
+  /** DRAFT: after three wrong codes, before 318 / 329. */
+  joinTriesUsed: 'Three identity codes did not match.',
+  /** DRAFT: after the right code, on the admin's side. */
+  joinAdminMatched: (member: string): string => `The identity code is ${member}'s.`,
+  /** DRAFT: design 20.21.5 step 4, the button is off. */
+  joinAnchorWaiting: (member: string): string => `${member} has not compared your identity code yet.`,
+  /** DRAFT: the member's anchor is there and verified. */
+  joinAnchorThere: (member: string): string => `${member} compared your identity code.`,
+  /** DRAFT: the member's anchor does not verify against their own device list. */
+  joinAnchorInvalid: (member: string): string => `What ${member} signed does not match their devices. Do not add them. Ask them to try again.`,
+  /** DRAFT: the admin's button (design: "Add Maria"); the touch follows. */
+  joinAddButton: (member: string): string => `Add ${member} with Touch ID`,
+  /** DRAFT: names what the system window will say, as step 13 screen 1 does (212). */
+  joinAdminTouchNote: (member: string): string => `Your device asks for your touch. It says you add ${member} and shows the code.`,
+  joinMemberTitle: (admin: string): string => `Compare identity codes with ${admin}`, // 320 (+ "identity")
+  joinMemberIntro: (team: string, admin: string): string => `You asked to join ${team}. ${admin} confirms it. Compare identity codes with them first. You do this once.`, // 321 (+ "identity")
+  /** DRAFT: design 20.21.5 step 1: "Read your code to <team> admin". */
+  joinMemberRead: (team: string, admin: string): string => `Read your identity code to ${admin}, the admin of ${team}. Do it in person or by phone, never by email.`,
+  /** DRAFT: label of the field. */
+  joinMemberType: (admin: string): string => `Type ${admin}'s identity code`,
+  /** DRAFT: the button after the right code; the touch follows. */
+  joinMemberTrust: (admin: string): string => `Trust ${admin} with Touch ID`,
+  /** DRAFT: names what the system window will say. */
+  joinMemberTouchNote: 'Your device asks for your touch. It says you trust the admin of the team you asked to join.',
+  joinMemberMatched: (admin: string): string => `The identity code is ${admin}'s.`, // DRAFT
   joinWaiting: (admin: string): string => `Waiting for ${admin} to confirm.`, // 327
-  joinMemberDone: (team: string, admin: string): string => `You have joined ${team}. You trust the colleagues ${admin} confirmed.`, // 328
+  joinAdminDone: (member: string): string => `${member} has joined. Your members now trust them because you confirmed them.`, // 317
+  joinDifferResult: (member: string): string => `${member} is not added. Nothing changed. Do not go on until you know why the codes differ: suveren.ai may have shown one of you the wrong code.`, // 318
+  joinMemberDone: (team: string, admin: string): string => `You have joined ${team}. You trust the members ${admin} confirmed.`, // 328
   joinMemberDifferResult: 'Nothing changed. Do not go on until you know why the codes differ. Tell whoever runs your team.', // 329
-  colleaguesTitle: 'Colleagues', // 331
+  joinErrTouch: 'Touch ID did not work this time. Nothing changed. Try again.', // 222
+  joinErrOffline: 'Cannot reach suveren.ai. Nothing changed. Check your internet connection and try again.', // 279
+  /** DRAFT: the list moved while the admin looked (409 LIST_HEAD_MOVED). */
+  joinErrMoved: "The team's list changed while you were adding. Nothing changed. Try again.",
+  /** DRAFT: the gateway could not check the team's list. */
+  joinErrTrust: "This gateway could not check the team's list. Nothing changed.",
+  /** DRAFT: the person asking has no device keys (the request carries no identity). */
+  joinErrNoChain: (member: string): string => `${member} has not finished setting up Suveren yet. Ask them to finish it.`,
+  /** DRAFT: the check key of this device is missing or not named by the device list. */
+  joinErrNoCheck: 'This device cannot ask for your touch. Nothing changed.',
+  joinErrLocked: 'The gateway is locked. Unlock it and try again.', // DRAFT
+  /** DRAFT: anything else. */
+  joinErrOther: 'This did not work. Nothing changed. Try again.',
+  /** DRAFT: the admin's list of requests on the Team page. */
+  joinRequestsTitle: 'Requests to join', // DRAFT
+  joinRequestsNone: 'No one is asking to join.', // DRAFT
+  joinOpen: 'Compare identity codes', // DRAFT: the button on a request
+  colleaguesTitle: 'Members', // 331
   confirmedBy: (name: string): string => `confirmed by ${name}`, // 330
   confirmedByYou: 'confirmed by you', // 333
   colleaguesWhy: (admin: string): string => `You trust them because ${admin}, your admin, compared codes with each of them. You do not compare codes yourself.`, // 332
-  /** DRAFT: the interface behind the join is not built, so the page says so instead of showing codes it does not have. */
-  joinUnavailable: 'Comparing codes is not available on this gateway yet.',
 } as const;
 
-/** Sentences that need "her"/"she" in the signed-off mockup keep it; the gateway knows no gender, so a later pass may reword them. */
+/** Never a gendered pronoun for a named person: "them", "their". */
 
 /** Group a code of digits in fours for the eye: "73142208556109423375" -> "7314 2208 5561 0942 3375". */
 export function groupCode(digits: string): string {

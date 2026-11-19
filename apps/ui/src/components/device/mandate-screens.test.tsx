@@ -2,8 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { MandateDiff } from '@hap/core/mandate-change';
 import {
-  S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, durationText, endDateText, giveErrorText, HeldBackList, EndMandate, ChangeMandate, JoinCompare, ColleagueList, teamDiff, heldReason, groupCode, isExtendOnly,
-  type HeldBackMandate, type TeamTerms,
+  S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, durationText, endDateText, giveErrorText, HeldBackList, EndMandate, ChangeMandate, JoinCompare, ColleagueList, joinErrorText, teamDiff, heldReason, groupCode, isExtendOnly,
+  type HeldBackMandate, type TeamTerms, type JoinState,
 } from '@suveren/approval-card/mandate-screens';
 import { endIsDeviceSigned } from '../../lib/end-mandate';
 import { spClient } from '../../lib/sp-client';
@@ -25,7 +25,7 @@ describe('screen 3: held back', () => {
     expect(text(<HeldBackList mandates={[held({ reason: 'check_required' })]} />)).toContain(S13.heldNoCheckStep);
     expect(html).not.toContain('<button');
   });
-  it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm her.'));
+  it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm them.'));
   it('changed and ended', () => {
     expect(t({ reason: 'changed' })).toContain(S13.heldChangedStep);
     const e = t({ reason: 'revoked' });
@@ -123,29 +123,106 @@ describe('screen 5: change a mandate', () => {
   });
 });
 
-describe('screen 2: codes at the join (interface only)', () => {
-  const facts = { memberName: 'Dana Berg', adminName: 'Anna Muster', teamName: 'Muster GmbH', yourCode: '73142208556109423375', theirCode: '48217035116922840937' };
+describe('screen 2: identity codes at the join (DEC-73, typed codes)', () => {
+  const facts = { memberName: 'Dana Berg', adminName: 'Anna Muster', teamName: 'Muster GmbH', yourCode: '731422085561094233750001' };
+  const view = (role: 'admin' | 'member', state: JoinState, over: Partial<typeof facts & { anchor: 'none' | 'ok' | 'invalid' }> = {}, typed = '') =>
+    <JoinCompare role={role} facts={{ ...facts, ...over }} state={state} typed={typed} onType={noop} onCheck={noop} onSign={noop} />;
   it('groups a code in fours', () => expect(groupCode('73142208556109423375')).toBe('7314 2208 5561 0942 3375'));
-  it('admin screen', () => {
-    const s = text(<JoinCompare role="admin" facts={facts} state={{ phase: 'compare' }} onMatch={noop} onDiffer={noop} />);
-    for (const x of [S13.joinAdminTitle('Dana Berg', 'Muster GmbH'), S13.joinAdminIntro('Dana Berg'), S13.joinYourCode, '7314 2208 5561 0942 3375', "Dana Berg's code", '4821 7035 1169 2284 0937', S13.joinCompareHint, S13.joinMatch('Dana Berg'), S13.joinDiffer]) expect(s).toContain(x);
+  it('admin screen: own code, a field for the member\'s code, nothing the gateway did not answer', () => {
+    const s = text(view('admin', { phase: 'compare' }));
+    for (const x of [S13.joinAdminTitle('Dana Berg', 'Muster GmbH'), S13.joinAdminIntro('Dana Berg'), S13.joinNameNotChecked('Dana Berg'), S13.joinYourCode, '7314 2208 5561 0942 3375 0001', S13.joinAdminRead('Dana Berg'), S13.joinAdminType('Dana Berg'), S13.joinCheck]) expect(s).toContain(x);
+    expect(s).not.toContain(S13.joinAddButton('Dana Berg'));
   });
-  it('member screen has the labels swapped', () => {
-    const html = renderToStaticMarkup(<JoinCompare role="member" facts={facts} state={{ phase: 'compare' }} onMatch={noop} onDiffer={noop} />);
-    expect(html.indexOf('join-code-other')).toBeLessThan(html.indexOf('join-code-own'));
-    expect(text(<JoinCompare role="member" facts={facts} state={{ phase: 'compare' }} onMatch={noop} onDiffer={noop} />)).toContain(S13.joinMemberIntro('Muster GmbH', 'Anna Muster'));
+  it('member screen: own code first, the admin\'s code is typed, the touch is not offered yet', () => {
+    const s = text(view('member', { phase: 'compare' }));
+    for (const x of [S13.joinMemberTitle('Anna Muster'), S13.joinMemberIntro('Muster GmbH', 'Anna Muster'), S13.joinMemberRead('Muster GmbH', 'Anna Muster'), S13.joinMemberType('Anna Muster'), S13.joinCheck]) expect(s).toContain(x);
+    expect(s).not.toContain(S13.joinMemberTrust('Anna Muster'));
+    expect(renderToStaticMarkup(view('member', { phase: 'compare' }))).toContain('inputMode="numeric"');
+  });
+  it('a wrong code shows the design text and the tries left, on each side', () => {
+    expect(text(view('member', { phase: 'wrong', triesLeft: 2 }))).toContain(`${S13.joinWrongMember} ${S13.joinTriesLeft(2)}`);
+    expect(text(view('admin', { phase: 'wrong', triesLeft: 1 }))).toContain(`${S13.joinWrongAdmin('Dana Berg')} 1 try left.`);
+  });
+  it('three wrong codes close the side with the signed-off texts and offer no field', () => {
+    const m = renderToStaticMarkup(view('member', { phase: 'locked' }));
+    expect(text(view('member', { phase: 'locked' }))).toBe(`${S13.joinTriesUsed} ${S13.joinMemberDifferResult}`);
+    expect(text(view('admin', { phase: 'locked' }))).toBe(`${S13.joinTriesUsed} ${S13.joinDifferResult('Dana Berg')}`);
+    expect(m).not.toContain('<input');
+  });
+  it('member: after the right code the touch button names the admin, and the touch is explained', () => {
+    const s = text(view('member', { phase: 'matched' }));
+    expect(s).toContain(S13.joinMemberTrust('Anna Muster')); expect(s).toContain(S13.joinMemberTouchNote);
+    expect(renderToStaticMarkup(view('member', { phase: 'matched' }))).not.toContain('<input');
+  });
+  it('admin: the Add button stays OFF until the member\'s anchor is there and verified', () => {
+    const off = renderToStaticMarkup(view('admin', { phase: 'matched' }, { anchor: 'none' }));
+    expect(off).toMatch(/data-testid="join-sign"[^>]*disabled/); expect(text(view('admin', { phase: 'matched' }, { anchor: 'none' }))).toContain(S13.joinAnchorWaiting('Dana Berg'));
+    const bad = renderToStaticMarkup(view('admin', { phase: 'matched' }, { anchor: 'invalid' }));
+    expect(bad).toMatch(/data-testid="join-sign"[^>]*disabled/); expect(text(view('admin', { phase: 'matched' }, { anchor: 'invalid' }))).toContain(S13.joinAnchorInvalid('Dana Berg'));
+    const on = renderToStaticMarkup(view('admin', { phase: 'matched' }, { anchor: 'ok' }));
+    expect(on).not.toMatch(/data-testid="join-sign"[^>]*disabled/); expect(text(view('admin', { phase: 'matched' }, { anchor: 'ok' }))).toContain(S13.joinAddButton('Dana Berg'));
+  });
+  it('while the touch is asked for, nothing can be pressed twice', () => {
+    expect(renderToStaticMarkup(view('admin', { phase: 'touch' }, { anchor: 'ok' }))).toMatch(/data-testid="join-sign"[^>]*disabled/);
+    expect(renderToStaticMarkup(view('member', { phase: 'checking' }, {}, '4721'))).toMatch(/data-testid="join-check"[^>]*disabled/);
+  });
+  it('a failed touch keeps the match and says so; a failed check says why', () => {
+    const s = text(view('member', { phase: 'error', text: S13.joinErrTouch, matched: true }));
+    expect(s).toContain(S13.joinErrTouch); expect(s).toContain(S13.joinMemberTrust('Anna Muster'));
+    const c = renderToStaticMarkup(view('member', { phase: 'error', text: S13.joinErrOffline }));
+    expect(c).toContain('<input'); expect(text(view('member', { phase: 'error', text: S13.joinErrOffline }))).toContain(S13.joinErrOffline);
   });
   it('results', () => {
-    const r = (role: 'admin' | 'member', phase: 'done' | 'differ' | 'waiting') => text(<JoinCompare role={role} facts={facts} state={{ phase }} onMatch={noop} onDiffer={noop} />);
-    expect(r('admin', 'done')).toBe(S13.joinAdminDone('Dana Berg'));
-    expect(r('admin', 'differ')).toBe(S13.joinDifferResult('Dana Berg'));
-    expect(r('member', 'waiting')).toBe(S13.joinWaiting('Anna Muster'));
-    expect(r('member', 'done')).toBe(S13.joinMemberDone('Muster GmbH', 'Anna Muster'));
-    expect(r('member', 'differ')).toBe(S13.joinMemberDifferResult);
+    expect(text(view('admin', { phase: 'done' }))).toBe(S13.joinAdminDone('Dana Berg'));
+    expect(text(view('member', { phase: 'waiting' }))).toBe(S13.joinWaiting('Anna Muster'));
+    expect(text(view('member', { phase: 'done' }))).toBe(S13.joinMemberDone('Muster GmbH', 'Anna Muster'));
+  });
+  it('gateway codes become sentences; an unknown code is the plain "did not work"', () => {
+    expect(joinErrorText('check_failed')).toBe(S13.joinErrTouch);
+    expect(joinErrorText('as_unreachable')).toBe(S13.joinErrOffline);
+    expect(joinErrorText('LIST_HEAD_MOVED')).toBe(S13.joinErrMoved);
+    expect(joinErrorText('no_member_list')).toBe(S13.joinErrTrust);
+    expect(joinErrorText('member_has_no_chain', 'Dana Berg')).toBe(S13.joinErrNoChain('Dana Berg'));
+    expect(joinErrorText('whatever')).toBe(S13.joinErrOther);
+  });
+  it('no word of the old terms in the join texts', () => {
+    const all = [S13.joinYourCode, S13.joinCheck, S13.joinWrongMember, S13.joinMemberTouchNote, S13.joinAddButton('A'), S13.joinMemberTrust('A'), S13.joinErrOther, S13.joinAdminRead('A')].join(' ');
+    for (const w of [/\bagent\b/i, /\bSP\b/, /Authority Server/, /fingerprint/i]) expect(all).not.toMatch(w);
   });
   it('colleagues list', () => {
     const s = text(<ColleagueList adminName="Anna Muster" colleagues={[{ name: 'Ben Huber', confirmedBy: 'Anna Muster' }, { name: 'Anna Muster', confirmedBy: 'you' }]} />);
     for (const x of [S13.colleaguesTitle, 'confirmed by Anna Muster', S13.confirmedByYou, S13.colleaguesWhy('Anna Muster')]) expect(s).toContain(x);
+  });
+});
+
+describe('the join routes (DEC-73 step 4 wiring)', () => {
+  const answer = (status: number, body: unknown) => vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
+  afterEach(() => { vi.restoreAllMocks(); });
+  it('member check: posts only the typed code to the gateway\'s own route, and passes the answer on', async () => {
+    const spy = answer(200, { ok: true, match: false, triesLeft: 2 });
+    const r = await spClient.memberJoin.check('t 1', '4721 8830');
+    expect(r).toMatchObject({ ok: true, match: false, triesLeft: 2 });
+    const [url, init] = spy.mock.calls[0];
+    expect(String(url)).toBe('/api/team-join/member/t%201/check');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ code: '4721 8830' });
+  });
+  it('a refusal is a code, not a throw; tries used keeps its code', async () => {
+    answer(423, { ok: false, code: 'tries_used', triesLeft: 0 });
+    expect(await spClient.adminJoin.check('t1', 'u1', '1')).toEqual({ ok: false, code: 'tries_used', triesLeft: 0 });
+  });
+  it('an unreachable gateway and an answer of another shape are codes too', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network'));
+    expect(await spClient.memberJoin.view('t1')).toEqual({ ok: false, code: 'as_unreachable' });
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html>', { status: 502 }));
+    expect(await spClient.memberJoin.anchor('t1')).toEqual({ ok: false, code: 'other' });
+  });
+  it('the touch routes carry no body of the page\'s own choosing', async () => {
+    const spy = answer(200, { ok: true, version: 3 });
+    await spClient.adminJoin.add('t1', 'u1');
+    const [url, init] = spy.mock.calls[0];
+    expect(String(url)).toBe('/api/team-join/admin/t1/u1/add');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({});
   });
 });
 
@@ -198,7 +275,7 @@ describe('screen 1: give a mandate (review step, chain accounts)', () => {
     expect(s).toContain(S13.giveYouNote);
   });
   it('an unconfirmed approver blocks with the reason and one next step', () => {
-    expect(view(['u2'])).toContain('Carla Weiss is not confirmed by your admin yet. She cannot approve until Anna Muster confirms her. Ask Anna Muster to confirm her.');
+    expect(view(['u2'])).toContain('Carla Weiss is not confirmed by your admin yet. They cannot approve until Anna Muster confirms them. Ask Anna Muster to confirm them.');
     expect(giveBlocked(list(['u2']), 'me')).toBe(true);
     expect(giveBlocked(list([]), 'me')).toBe(false);
     expect(giveBlocked(list(['me']), 'me')).toBe(false);

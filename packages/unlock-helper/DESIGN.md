@@ -165,6 +165,9 @@ from the object (at most 64 characters, so the whole text stays within 120):
 | Touch ID unlock switch, `action` enable | `turn on Touch ID unlock for Suveren` |
 | Touch ID unlock switch, `action` disable | `turn off Touch ID unlock for Suveren` |
 | cancel of a request for a new identity (`suveren-identity-cancel`) | `cancel the request for a new identity` |
+| team anchor (`suveren-team-anchor`, hap-core 0.16.0), naming an admin | `trust the admin of the team you asked to join` (DRAFT; the object has the team's id but not its name) |
+| team anchor clearing the statement (`admin_did` null) | `stop trusting the admin of a team` (DRAFT) |
+| team member list (`suveren-team-members`) with `focus` | `add "<name>" to the team, code <code>` (DRAFT). `focus` is a DID the caller names to pick one member; the name and the 24-digit identity code come from that member's entry in the object. Without a focus, or with one not in the list, or a code that is not 6 groups of 4 digits: `bad_request` before any prompt. |
 
 A `<label>` or `<name>` comes from the object and is put between double quotes with `\` and `"` escaped, so no
 name can end the quote and add words ("x\" and approve \"y" stays one quoted name); control, bidi and
