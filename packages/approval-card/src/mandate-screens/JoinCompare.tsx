@@ -131,8 +131,6 @@ export function joinErrorText(code: string, member?: string): string {
     case 'no_replacement': case 'new_identity_missing': return S13.changesErrNoReplacement;
     case 'not_compared': return S13.changesErrNotCompared;
     case 'anchor_required': case 'ANCHOR_REQUIRED': return S13.changesErrAnchor;
-    case 'no_pin': case 'pinned_list_missing': return S13.changesErrNoPin;
-    case 'admin_can_sign': return S13.changesErrCannotTake;
     case 'handover_mismatch': case 'handover_invalid': return S13.changesErrMismatch;
     default: return S13.joinErrOther;
   }

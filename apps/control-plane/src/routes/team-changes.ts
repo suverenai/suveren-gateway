@@ -12,7 +12,8 @@
  *   POST /:teamId/handover/build               the new admin builds and signs the list (touch)
  *   POST /:teamId/handover/sign                the old admin adds her signature (touch)
  *   DELETE /:teamId/handover                   withdraw
- *   POST /:teamId/take-over                    a member takes over, the admin took a new identity (touch)
+ *
+ * (The take-over of a team whose admin took a new identity is deferred, DEC-82: no route.)
  *
  * An answer is { ok: true, ... } or { ok: false, code } with a neutral code the page maps to its words. Nothing is logged but codes.
  */
@@ -46,6 +47,5 @@ export function createTeamChangesRouter(c: TeamListChanges): Router {
   router.post('/:teamId/handover/build', run(req => c.handoverBuild(req.params.teamId)));
   router.post('/:teamId/handover/sign', run(req => c.handoverSign(req.params.teamId)));
   router.delete('/:teamId/handover', run(req => c.handoverWithdraw(req.params.teamId)));
-  router.post('/:teamId/take-over', run(req => c.takeOver(req.params.teamId)));
   return router;
 }

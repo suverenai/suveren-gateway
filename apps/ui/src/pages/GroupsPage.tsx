@@ -154,7 +154,7 @@ export function GroupsPage() {
             <JoinRequestsHost teamId={activeTeam.id} teamName={activeTeam.name} onAdded={() => { void refreshGroups(); }} />
           )}
 
-          {/* DEC-73 step 5: someone left, a new identity, a signer device gone, a hand-over, a take-over. Every touch builds on the list this gateway verified. */}
+          {/* DEC-73 step 5: someone left, a new identity, a signer device gone, a hand-over. Every touch builds on the list this gateway verified. */}
           {deviceChain && (
             <TeamChangesHost teamId={activeTeam.id} teamName={activeTeam.name} onChanged={() => { void refreshGroups(); }} />
           )}

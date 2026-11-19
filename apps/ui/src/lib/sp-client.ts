@@ -1126,7 +1126,7 @@ class SPClient {
     return { ok: false, code: typeof data?.code === 'string' ? data.code : 'other', ...(typeof data?.triesLeft === 'number' ? { triesLeft: data.triesLeft } : {}) };
   }
 
-  /** Changes of the team's member list after the join (DEC-73 step 5): remove, new identity, re-sign, hand-over, take-over. */
+  /** Changes of the team's member list after the join (DEC-73 step 5): remove, new identity, re-sign, hand-over. */
   readonly teamChanges: TeamChangesApi = {
     view: async (teamId) => {
       const r = await this.changesCall<Record<string, unknown>>('GET', `/${encodeURIComponent(teamId)}`);
@@ -1142,7 +1142,6 @@ class SPClient {
     handoverBuild: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/build`, {}),
     handoverSign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/sign`, {}),
     handoverWithdraw: (teamId) => this.changesCall('DELETE', `/${encodeURIComponent(teamId)}/handover`),
-    takeOver: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/take-over`, {}),
   };
 
   /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */

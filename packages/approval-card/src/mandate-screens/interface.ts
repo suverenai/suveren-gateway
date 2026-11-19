@@ -114,6 +114,4 @@ export interface TeamChangesApi {
   /** The old admin adds her signature (touch). */
   handoverSign(teamId: string): Promise<JoinResult<{ version: number }>>;
   handoverWithdraw(teamId: string): Promise<JoinResult>;
-  /** The touch: a member takes over because the admin took a new identity. */
-  takeOver(teamId: string): Promise<JoinResult<{ version: number }>>;
 }

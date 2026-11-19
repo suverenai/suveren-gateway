@@ -5,9 +5,8 @@
  *
  *   admin:   remove someone (they left, were removed) · replace someone who took a new identity (a new join: codes compared again, a new
  *            anchor) · sign the same members again when the device that signed the list is gone (re-sign) · hand over (3 steps).
- *   member:  see that the admin changed (compare the new admin's code and anchor again: step 4's member screen does it) · take over when
- *            the admin took a new identity and cannot sign (the list is signed by this person alone; members trust it only after they
- *            re-anchored).
+ *   member:  see that the admin changed (compare the new admin's code and anchor again: step 4's member screen does it). A take-over
+ *            when the admin took a new identity is deferred (DEC-82).
  *
  * The Authority Server only POINTS (`GET /api/teams/:id/offers`). Everything that is signed is built from the list THIS gateway verified
  * (or, for a take-over after the admin's chain is gone, from the list this gateway's own pin names, by hash) and from the person's own
@@ -62,7 +61,7 @@ export interface MemberChanges {
   role: 'member';
   /** The Authority Server names another admin than the one this person's anchor names: compare codes and anchor again. */
   adminChanged: boolean;
-  /** The admin took a new identity: any member may take over (the list is signed by that member alone). */
+  /** The admin took a new identity and cannot sign: the admin must set up the team again (a take-over is deferred, DEC-82). */
   adminGone: boolean;
   /** This person is the proposed new admin of a hand-over. */
   handover: HandoverView | null;
@@ -335,6 +334,8 @@ export class TeamListChanges {
   }
 
   // ─── the admin took a new identity ───────────────────────────────────────
+  // deferred (DEC-82): NOT reachable. No route calls `takeOver`; the AS has no take-over route either (it needs the two-person support
+  // confirmation first). Kept, unmounted, so the logic is not lost.
 
   /**
    * A member takes over: the next list is signed by this person alone and drops the old admin's DID. Built on the list THIS gateway's

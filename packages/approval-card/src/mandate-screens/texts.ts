@@ -222,16 +222,13 @@ export const S13 = {
   // the admin changed (member): compare again
   changesAdminChanged: 'Your team has a new admin. Compare identity codes with them so you trust them.',
   // the admin took a new identity (member)
-  changesAdminGone: 'Your admin took a new identity and cannot sign for the team any more. You can take over as admin. Your members trust you only after each of them compared identity codes with you.',
-  changesTakeOverButton: 'Take over as admin with Touch ID',
-  changesTakeOverDone: 'You are the admin now. Ask each member to compare identity codes with you.',
+  /** DRAFT: the admin took a new identity; a take-over is deferred (DEC-82), so the member is only told what must happen. */
+  changesAdminGone: 'Your admin took a new identity and cannot sign for the team any more. The admin must set up the team again. Until then your team list does not change.',
   // refusals
   changesErrTrust: "This gateway could not check the team's list. Nothing changed.",
   changesErrNoReplacement: 'There is nothing to confirm for this person any more. Nothing changed.',
   changesErrNotCompared: 'Compare identity codes first. Nothing changed.',
   changesErrAnchor: 'This person has not compared your identity code yet. Nothing changed.',
-  changesErrNoPin: 'This gateway has never seen the team list, so it cannot take over. Nothing changed.',
-  changesErrCannotTake: 'The admin can still sign. Nothing changed.',
   changesErrMismatch: 'What the new admin signed is not what you expected. Nothing was signed.',
 } as const;
 

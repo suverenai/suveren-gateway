@@ -79,7 +79,6 @@ export function TeamChangesHost({ teamId, teamName, api = spClient.teamChanges, 
         handoverBuild: () => { void run(() => api.handoverBuild(teamId), S13.changesHandoverWaitingOld); },
         handoverSign: () => { void run(() => api.handoverSign(teamId), S13.changesHandoverDone); },
         handoverWithdraw: () => { void run(() => api.handoverWithdraw(teamId), S13.changesNone); },
-        takeOver: () => { void run(() => api.takeOver(teamId), S13.changesTakeOverDone); },
       }}
     />
   );

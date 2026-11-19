@@ -207,29 +207,3 @@ describe('hand-over: the old admin signs last, and only what she expected', () =
     expect(r.touches).toBe(0);
   });
 });
-
-describe('take-over when the admin took a new identity', () => {
-  it('refused while the admin can still sign, and without a pin; no touch is spent', async () => {
-    const r = await rig({ admin: false, offers: () => ({ admin_gone: false }) });
-    await expect(r.c.takeOver(TEAM)).rejects.toMatchObject({ code: 'admin_can_sign' });
-    const r2 = await rig({ admin: false, offers: () => ({ admin_gone: true }) });
-    await expect(r2.c.takeOver(TEAM)).rejects.toMatchObject({ code: 'no_pin' });
-    expect(r.touches + r2.touches).toBe(0);
-  });
-  it('builds on the list the own pin names (found by hash), drops the old admin, signs alone', async () => {
-    const r = await rig({ admin: false, offers: () => ({ admin_gone: true }), pin: h => ({ version: h.list.version, hash: h.hash }), asLists: h => [h.list] });
-    expect(await r.c.takeOver(TEAM)).toEqual({ version: 4 });
-    const post = r.posts.filter(p => p.method === 'POST').pop()!;
-    expect(post.path).toBe(`/api/teams/${TEAM}/admin-takeover`);
-    expect(post.body.list).toMatchObject({ admin_did: r.people.own, version: 4, prev: r.head.hash, handover: null });
-    expect(post.body.list.members.map((m: { did: string }) => m.did)).not.toContain(r.people.other); // the old admin
-    expect(post.body.sigs).toHaveLength(1);
-  });
-  it('a list the Authority Server serves that does not match the pinned hash is not used', async () => {
-    const dk = await deviceKeys();
-    const r = await rig({ admin: false, offers: () => ({ admin_gone: true }), pin: h => ({ version: h.list.version, hash: h.hash }),
-      asLists: h => [dk.buildMemberList({ ...h.list, nonce: 'swapped' } as never)] });
-    await expect(r.c.takeOver(TEAM)).rejects.toMatchObject({ code: 'pinned_list_missing' });
-    expect(r.touches).toBe(0);
-  });
-});

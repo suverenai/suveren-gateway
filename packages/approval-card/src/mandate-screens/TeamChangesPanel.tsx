@@ -5,7 +5,7 @@
  *   admin:  someone left / was removed -> [Remove X with Touch ID]; someone took a new identity -> type the new code, [Confirm ... with Touch ID]
  *           (button off until the person's new anchor verified); the signer device is gone -> [Sign the list again with Touch ID];
  *           hand over (choose, then both confirm)
- *   member: the admin changed -> compare again (the host shows the join screen); the admin took a new identity -> [Take over]; a hand-over to this person -> [Take over]
+ *   member: the admin changed -> compare again (the host shows the join screen); the admin took a new identity -> a note only (take-over deferred, DEC-82); a hand-over to this person -> [Take over]
  */
 import { S13 } from './texts';
 import type { AdminChangesView, MemberChangesView, ReplaceOfferView, RemoveOfferView } from './interface';
@@ -21,7 +21,6 @@ export interface TeamChangesActions {
   handoverBuild(): void;
   handoverSign(): void;
   handoverWithdraw(): void;
-  takeOver(): void;
 }
 
 export interface TeamChangesPanelProps {
@@ -91,12 +90,7 @@ export function TeamChangesPanel(p: TeamChangesPanelProps) {
               : <p role="status">{S13.changesHandoverWaitingOld}</p>}
           </div>
         )}
-        {c.adminGone && (
-          <div className="card" data-testid="changes-takeover">
-            <p>{S13.changesAdminGone}</p>
-            <button type="button" data-testid="changes-takeover-button" className="btn btn-primary btn-full" disabled={p.busy} onClick={a.takeOver}>{p.busy ? S13.giveBusy : S13.changesTakeOverButton}</button>
-          </div>
-        )}
+        {c.adminGone && <p role="status" data-testid="changes-admin-gone">{S13.changesAdminGone}</p>}
         {result}
       </section>
     );
