@@ -36,6 +36,7 @@ import { createInternalDeviceRouter } from './internal-device';
 import { MandateGrantStore } from '../lib/mandate-grant-store';
 import { MandateGrants } from '../lib/mandate-grants';
 import { DeviceApprovals } from '../lib/device-approvals';
+import { TeamJoin, type TeamTrustPort } from '../lib/team-join';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -92,6 +93,8 @@ export interface DeviceKeyMountOptions {
    * The native helper (step 5a): unlock by Touch ID and this computer's check key. Without it nothing of
    * step 5a exists (no route, no provider) and every path is the one of step 5/6.
    */
+  /** The verified head list of a team (step 3). Unset: the join reads and verifies the head itself (lib/team-join.ts). */
+  teamTrust?: TeamTrustPort;
   platform?: { host: PlatformHelper; checkStore: CheckKeyStore; /** Tests only: the other branch of PLATFORM_UNLOCK_OPENS_PAGE_SESSION. */ opensPageSession?: boolean };
 }
 
@@ -110,10 +113,12 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   grants?: MandateGrants;
   /** Checks what the person approved on ANY of their own devices, for the Setup tools; `/internal/mandate` runs only for these (plan 20.21.6). */
   approvals?: DeviceApprovals;
+  /** The join screens' logic (DEC-73 step 4): only with device set-up. */
+  teamJoin?: TeamJoin;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -152,7 +157,11 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now,
     });
     const approvals = new DeviceApprovals({ vault: o.vault, client, grants, pins, now: o.device.now });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals };
+    const teamJoin = new TeamJoin({
+      vault: o.vault, store, grants, trust: o.teamTrust, now: o.device.now,
+      ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
+    });
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -211,6 +220,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamJoin: device.teamJoin } : {}),
   };
 }

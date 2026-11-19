@@ -7,7 +7,7 @@
  * anything OnboardingPage decided on its own.
  */
 
-export type OnboardingScreen = 'choose' | 'join-preview' | 'join-waiting' | 'join-declined' | 'create';
+export type OnboardingScreen = 'choose' | 'join-preview' | 'join-waiting' | 'join-locked' | 'join-declined' | 'create';
 
 /** Reloading the page restores the waiting state from backend truth, once —
  *  never re-triggers after the person has moved past it locally (e.g. by

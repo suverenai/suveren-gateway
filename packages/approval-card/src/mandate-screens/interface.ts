@@ -48,15 +48,35 @@ export interface TeamTerms {
 }
 
 /**
- * Identity codes at the join (DEC-73, option B). NOT BUILT: needs the Authority Server and hap-core part of DEC-73
- * (the admin's signed list, the join request carrying both sides' codes). Nothing implements this yet; the screens are
- * built against it and the gateway page passes `null` until it exists.
+ * Identity codes at the join (DEC-73, design 20.21.5). The gateway computes and compares; the screens only show the
+ * person's OWN code and send the code they typed. The control plane (apps/control-plane/src/lib/team-join.ts) implements this
+ * for the gateway page; the phone app uses the same shapes. A refusal is a neutral `code` the host maps with {@link joinErrorText}.
  */
-export interface JoinCompareApi {
-  /** Both codes (digits only) for one pending join, computed by this gateway from the two DIDs. */
-  load(joinId: string): Promise<{ memberName: string; adminName: string; teamName: string; yourCode: string; theirCode: string }>;
-  /** Admin: the codes match; signs the admin's list entry with a device. */
-  confirm(joinId: string): Promise<{ ok: true } | { ok: false; code: string }>;
-  /** Either side: the codes differ. Nothing is signed or remembered. */
-  differ(joinId: string): Promise<void>;
+export type JoinCheck = { match: true } | { match: false; triesLeft: number };
+export type JoinResult<T = object> = ({ ok: true } & T) | { ok: false; code: string; triesLeft?: number };
+
+export interface MemberJoinApi {
+  /** The member's own code and where this side stands (survives a reload: the gateway remembers). */
+  view(teamId: string): Promise<JoinResult<{ yourCode: string; triesLeft: number; compared: boolean; anchored: boolean }>>;
+  /** The admin's code as typed; compared by the gateway with the one it computes from the admin's DID. */
+  check(teamId: string, code: string): Promise<JoinResult<JoinCheck>>;
+  /** The touch: signs the anchor. Only after a match. */
+  anchor(teamId: string): Promise<JoinResult>;
+}
+
+export interface JoinRequestView {
+  userId: string;
+  /** From the sign-up; not checked. */
+  memberName: string;
+  hasDid: boolean;
+  triesLeft: number;
+  compared: boolean;
+  anchor: 'none' | 'ok' | 'invalid';
+}
+
+export interface AdminJoinApi {
+  view(teamId: string): Promise<JoinResult<{ yourCode: string; requests: JoinRequestView[] }>>;
+  check(teamId: string, userId: string, code: string): Promise<JoinResult<JoinCheck>>;
+  /** The touch: signs member list version n+1. Only after a match and with the member's anchor verified. */
+  add(teamId: string, userId: string): Promise<JoinResult<{ version: number }>>;
 }

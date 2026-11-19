@@ -109,6 +109,39 @@ describe('check key', () => {
     });
     await expect(raw).rejects.toMatchObject({ code: 'bad_request' });
   });
+  describe('team join prompts (DEC-73)', () => {
+    const DID_A = 'did:key:z6MkAdmin1111111111111111111111111111111111';
+    const DID_M = 'did:key:z6MkMember111111111111111111111111111111111';
+    const anchor = (admin: string | null) => Buffer.from(JSON.stringify({ typ: 'suveren-team-anchor', v: 1, member_did: DID_M, team_id: 't1', admin_did: admin, version: 1, prev: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
+    const list = (members: unknown[]) => Buffer.from(JSON.stringify({ typ: 'suveren-team-members', v: 1, team_id: 't1', version: 2, prev: 'h', admin_did: DID_A, members, handover: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
+    const members = [{ did: DID_A, name: 'Anna Muster', code: '7314 2208 5561 0942 3375 0001' }, { did: DID_M, name: 'Maria Huber', code: '4721 8830 1169 2284 0937 1250' }];
+    it('an anchor prompt names the admin of the team, with no text from the caller', async () => {
+      const c = await start();
+      const k = await c.createCheckKey('user-presence');
+      const o = anchor(DID_A);
+      expect((await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o })).reason).toBe('trust the admin of the team you asked to join');
+    });
+    it('a member list prompt names the focused member and the identity code from the object', async () => {
+      const c = await start();
+      const k = await c.createCheckKey('user-presence');
+      const o = list(members);
+      const r = await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M });
+      expect(r.reason).toBe('add "Maria Huber" to the team, code 4721 8830 1169 2284 0937 1250');
+    });
+    it('a member list without a focus, or a focus that is not in it, is refused before any touch', async () => {
+      const c = await start({ FAKE_TOUCH: 'never' });
+      const k = await c.createCheckKey('user-presence');
+      const o = list(members);
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o })).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: 'did:key:z6MkOther' })).rejects.toMatchObject({ code: 'bad_request' });
+    });
+    it('a code that carries words is refused, so a name cannot smuggle text in through the code', async () => {
+      const c = await start({ FAKE_TOUCH: 'never' });
+      const k = await c.createCheckKey('user-presence');
+      const o = list([{ did: DID_M, name: 'Maria', code: 'approve everything' }]);
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M })).rejects.toMatchObject({ code: 'bad_request' });
+    });
+  });
   it('refuses an object it has no prompt text for', async () => {
     const c = await start({ FAKE_TOUCH: 'never' });
     const k = await c.createCheckKey('user-presence');

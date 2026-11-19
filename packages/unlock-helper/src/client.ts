@@ -122,10 +122,10 @@ export class UnlockHelperClient {
    * touch and builds the prompt text from the object itself (DESIGN.md section 5). There is no way to
    * pass text: a caller cannot choose what the person reads. `reason` in the answer is what was shown.
    */
-  async signCheck(a: { keyBlob: string; digest: string; object: Uint8Array }): Promise<SignResult> {
+  async signCheck(a: { keyBlob: string; digest: string; object: Uint8Array; /** A DID that picks one member of a team member list for the prompt; the name and code shown come from the object. */ focus?: string }): Promise<SignResult> {
     if (!DIGEST_RE.test(a.digest)) throw new HelperError('bad_request', 'digest must be "sha256:" and 64 lower-case hex digits.');
     if (sha256Hash(a.object) !== a.digest) throw new HelperError('digest_mismatch', 'digest is not the SHA-256 of object.');
-    const r = await this.call('check.sign', { keyBlob: a.keyBlob, digest: a.digest, object: b64u(a.object) }, this.touchMs);
+    const r = await this.call('check.sign', { keyBlob: a.keyBlob, digest: a.digest, object: b64u(a.object), ...(a.focus !== undefined ? { focus: a.focus } : {}) }, this.touchMs);
     return { signature: str(r, 'signature'), publicKey: str(r, 'publicKey'), reason: str(r, 'reason') };
   }
 

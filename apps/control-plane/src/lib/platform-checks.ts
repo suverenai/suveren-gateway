@@ -120,11 +120,11 @@ export class PlatformChecks {
    * half and the hash of the object, before it is used: a helper that answers with anything else (a
    * wrong key, a signature over other bytes) is a refusal, not a check.
    */
-  async sign(key: StoredCheckKey, object: Uint8Array): Promise<{ signature: string; reason: string }> {
+  async sign(key: StoredCheckKey, object: Uint8Array, focus?: string): Promise<{ signature: string; reason: string }> {
     const digest = sha256Hash(object);
     let signed;
     try {
-      signed = await this.host.use((c: UnlockHelperClient) => c.signCheck({ keyBlob: key.keyBlob, digest, object }));
+      signed = await this.host.use((c: UnlockHelperClient) => c.signCheck({ keyBlob: key.keyBlob, digest, object, ...(focus !== undefined ? { focus } : {}) }));
     } catch (err) {
       const f = failure(err);
       if (f.helperCode === 'key_invalid') this.invalidSeen = true;

@@ -5,6 +5,6 @@ export { teamDiff, tagWord, type TeamRow, type TeamTag } from './team-diff';
 export { HeldBackCard, HeldBackList, heldCardText } from './HeldBackCard';
 export { EndMandate, endErrorText, type EndState, type EndFacts } from './EndMandate';
 export { ChangeMandate, isExtendOnly, changeErrorText, type ChangeMandateProps, type ChangeState, type ChangeError } from './ChangeMandate';
-export { JoinCompare, ColleagueList, type JoinState, type JoinFacts } from './JoinCompare';
+export { JoinCompare, ColleagueList, joinErrorText, type JoinState, type JoinFacts, type JoinCompareProps } from './JoinCompare';
 export * from './give-view';
 export { GiveApprovers, giveBlocked } from './GiveApprovers';

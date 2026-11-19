@@ -59,7 +59,9 @@ const SWITCH_MEMBERS = ['typ', 'v', 'action', 'nonce', 'issued_at'].sort().join(
 const CANCEL_MEMBERS = ['typ', 'v', 'aud', 'root_did', 'key_id', 'request_id', 'chain_seq', 'chain_head', 'issued_at'].sort().join(',');
 const GRANT_FIXED = ['typ', 'v', 'op', 'owner_did', 'key_id', 'chain_seq', 'chain_head', 'mandate_id', 'mandate_version', 'granted_at', 'nonce'];
 const quoted = (x) => `"${x.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
-export function reasonFor(bytes) {
+const ANCHOR_MEMBERS = ['typ', 'v', 'member_did', 'team_id', 'admin_did', 'version', 'prev', 'key_id', 'chain_seq', 'chain_head', 'created_at', 'nonce'].sort().join(',');
+const LIST_MEMBERS = ['typ', 'v', 'team_id', 'version', 'prev', 'admin_did', 'members', 'handover', 'key_id', 'chain_seq', 'chain_head', 'created_at', 'nonce'].sort().join(',');
+export function reasonFor(bytes, focus) {
   let o;
   try { o = JSON.parse(bytes.toString('utf8')); } catch { throw err('bad_request', 'object is not a JSON object.'); }
   if (!o || typeof o !== 'object' || Array.isArray(o)) throw err('bad_request', 'object is not a JSON object.');
@@ -81,6 +83,12 @@ export function reasonFor(bytes) {
     text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
   } else if (o.typ === 'suveren-identity-cancel' && Object.keys(o).sort().join(',') === CANCEL_MEMBERS) {
     text = 'cancel the request for a new identity';
+  } else if (o.typ === 'suveren-team-anchor' && Object.keys(o).sort().join(',') === ANCHOR_MEMBERS) {
+    text = o.admin_did === null ? 'stop trusting the admin of a team' : 'trust the admin of the team you asked to join';
+  } else if (o.typ === 'suveren-team-members' && Object.keys(o).sort().join(',') === LIST_MEMBERS) {
+    const m = typeof focus === 'string' && Array.isArray(o.members) ? o.members.find(x => x && x.did === focus) : undefined;
+    if (!m || typeof m.name !== 'string' || !m.name || typeof m.code !== 'string' || !/^[0-9]{4}( [0-9]{4}){5}$/.test(m.code)) throw err('bad_request', 'a member list needs a focus that names one of its members.');
+    text = `add ${quoted(m.name)} to the team, code ${m.code}`;
   } else if (o.typ === 'suveren-mandate-grant' && GRANT_FIXED.every(k => k in o) && typeof o.profile_id === 'string' && o.profile_id && (o.op === 'grant' || o.op === 'change')) {
     text = `${o.op === 'grant' ? 'grant' : 'change'} the mandate for ${quoted(o.profile_id)}`;
   } else throw err('bad_request', 'object is of a kind this helper has no prompt text for.');
@@ -121,7 +129,8 @@ async function run(r) {
       if (typeof r.object !== 'string') throw err('bad_request', 'object must be base64url.');
       const object = b(r, 'object');
       if (!crypto.createHash('sha256').update(object).digest().equals(digest)) throw err('digest_mismatch', 'digest is not the SHA-256 of object.');
-      const reason = reasonFor(object);
+      if (r.focus !== undefined && (typeof r.focus !== 'string' || r.focus.length > 200)) throw err('bad_request', 'focus must be a DID string.');
+      const reason = reasonFor(object, r.focus);
       process.stderr.write(`fake prompt: "${reason}"\n`);
       await touch();
       const s = signDigest(r.keyBlob, process.env.FAKE_WRONG_SIGNATURE === '1' ? crypto.createHash('sha256').update('other').digest() : digest);

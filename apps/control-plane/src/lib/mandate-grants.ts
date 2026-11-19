@@ -193,6 +193,31 @@ export class MandateGrants {
     return (await this.held(authorizationId, s)).mandateId;
   }
 
+  /**
+   * For lib/team-join.ts (DEC-73): a call to the Authority Server with this person's session, answered as the neutral refusals
+   * of this class (unreachable, TLS pin), never a thrown network error.
+   */
+  asCall(s: Session, method: string, path: string, body?: unknown) {
+    return this.call(method, path, s.credential, body);
+  }
+
+  /**
+   * For lib/team-join.ts: another person's chain verified from the genesis on against the head pinned before, and the pin moved
+   * forward (a rollback or a fork is a refusal, as for an approver's chain in `teamFields`).
+   */
+  async verifiedChainOf(did: string, s: Session): Promise<ChainState> {
+    if (typeof did !== 'string' || !DID.test(did)) return refuse('bad_request', 'Bad request.');
+    if (did === s.stored.rootDid) return s.own;
+    const state = await this.chainOf(did, s.credential, this.d.pins.get(did));
+    try { this.d.pins.advance(did, state.head, this.protectedDids()); } catch (e) {
+      const reason = (e as { reason?: string })?.reason;
+      if (reason === 'rollback') return refuse('chain_rollback', 'A device chain is shorter than the one verified before.');
+      if (reason === 'fork') return refuse('chain_fork', 'A device chain differs from the one verified before.');
+      throw e;
+    }
+    return state;
+  }
+
   /** This person's own chain, verified from the genesis on, and this computer's session: what an approval is checked against (lib/device-approvals.ts). */
   approvalSession(): Promise<Session> {
     return this.session();
