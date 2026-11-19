@@ -80,7 +80,7 @@ export interface IssueInput {
   /** Whether the Authority Server will put the owner's verified name on the mandate (it stamps `subjects`). */
   subjectsDisclosed: boolean;
   /** The team's settings for this profile, as the ceremony read them; null in the personal workspace. */
-  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown> } | null;
+  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown>; eligible?: Array<{ user_id: string; did: string | null }> } | null;
   /** Approver DIDs the person compared (identity code) in this request. */
   confirmedApproverDids?: readonly string[];
   /** Reads of the Authority Server through the person's session (the ceremony's own `as`). */
@@ -201,16 +201,16 @@ export class MandateGrants {
       if (kind === 'approval' && typeof cfg.value === 'number') approval[field] = cfg.value;
       else hard[field] = cfg.value as number | string;
     }
-    // The approvers: those the Authority Server lets through (DEC-35) with their DID, each with a device chain.
+    // The approvers: the list the Authority Server gives with the team's settings (`eligible_approvers`, DEC-35 already applied, in
+    // ascending DID order), each with a device chain. Its answer is checked below: every DID's chain is verified here and its
+    // identity code is shown before a person first accepts it. Without the list the grant is not made.
     const identities: Issued['approvers'] = [];
-    const ids = [...new Set(team.approvers)];
-    for (const userId of ids) {
-      const r = await this.call('GET', `/api/users/${encodeURIComponent(userId)}/pubkey`, s.credential);
-      if (r.status === 409 && asErrorCode(r.body) === 'APPROVER_RECONFIRMATION_REQUIRED') continue;
-      if (r.status === 409 && isObj(r.body) && r.body.code === 'APPROVER_RECONFIRMATION_REQUIRED') continue;
-      const did = isObj(r.body) && typeof r.body.did === 'string' ? r.body.did : '';
-      if (r.status !== 200 || !DID.test(did)) return refuse('approver_unresolved', 'An approver of this team could not be identified.');
-      identities.push({ userId, did, identityCode: await dk.identityCode(did) });
+    if (team.approvers.length > 0 && !Array.isArray(team.eligible)) return refuse('approvers_unavailable', 'The Authority Server did not say who may approve for this team.');
+    for (const e of team.eligible ?? []) {
+      if (!team.approvers.includes(e.user_id)) return refuse('approver_unresolved', 'The Authority Server named an approver this team does not have.');
+      if (e.did === null) return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.');
+      if (typeof e.did !== 'string' || !DID.test(e.did)) return refuse('approver_unresolved', 'An approver of this team could not be identified.');
+      identities.push({ userId: e.user_id, did: e.did, identityCode: await dk.identityCode(e.did) });
     }
     for (const a of identities) {
       if (a.did === s.stored.rootDid) continue;
@@ -227,8 +227,7 @@ export class MandateGrants {
         throw e;
       }
     }
-    // Sorted: the grant names them in one canonical order. (The Authority Server signs them in the order its own table gives: see the report.)
-    const approverDids = identities.map(a => a.did).sort();
+    const approverDids = identities.map(a => a.did).sort();   // ascending, as the Authority Server signs them
     const approvalsNeeded = team.approvals ?? 1;
     const reachable = approverDids.filter(x => x !== i.ownDid).length >= approvalsNeeded;
     const approvalFields = Object.keys(approval);
@@ -431,6 +430,66 @@ export class MandateGrants {
     return { mandateId, version };
   }
 
+  // ─── what the MCP server asks to have remembered: only what this control plane verified itself ───
+
+  /** Is this DID this person's own, or one whose identity code they compared and accepted? */
+  ownerKnown(did: string): boolean {
+    if (typeof did !== 'string' || !DID.test(did)) return false;
+    try { if (this.d.store.read()?.rootDid === did) return true; } catch { return false; }
+    return this.d.grants.approverConfirmed(did);
+  }
+
+  /** The person compared the identity code of `did` with the one on the other person's own screen. */
+  async confirmIdentity(did: unknown, code: unknown): Promise<void> {
+    const dk = await deviceKeys();
+    if (typeof did !== 'string' || !DID.test(did) || typeof code !== 'string') return refuse('bad_request', 'Bad request.');
+    if ((await dk.identityCode(did)).replace(/\D/g, '') !== code.replace(/\D/g, '')) return refuse('identity_code_mismatch', 'The identity code does not match this person.');
+    this.d.grants.confirmApprovers([did]);
+  }
+
+  /**
+   * The grant of (mandate, version) as the Authority Server carries it, verified HERE against the owner's chain (the owner is this
+   * person, or someone they confirmed): its device signature, its check, the named head, the hash the caller names. The MCP server
+   * checks the same against the signed mandate; this is what keeps a caller from making this control plane remember, or answer
+   * with a receipt, something it did not see verify.
+   */
+  async verifyHeld(i: { mandateId: string; version: number; grantHash: string; op?: 'grant' | 'change' | 'revoke' }): Promise<{ ownerDid: string; op: 'grant' | 'change' | 'revoke' }> {
+    const dk = await deviceKeys();
+    if (!MANDATE_ID.test(i.mandateId) || !Number.isSafeInteger(i.version) || i.version < 1 || !/^sha256:[0-9a-f]{64}$/.test(i.grantHash)) return refuse('bad_request', 'Bad request.');
+    const s = await this.session();
+    const g = await this.call('GET', `/api/mandates/${encodeURIComponent(i.mandateId)}/grants`, s.credential);
+    if (g.status !== 200 || !isObj(g.body) || !Array.isArray(g.body.grants)) return refuse('as_answer_invalid', 'The Authority Server answered with something unexpected.');
+    let row: Record<string, unknown> | undefined;
+    for (const e of g.body.grants) {
+      if (!isObj(e) || !isObj(e.grant) || e.mandate_version !== i.version || (i.op ? e.op !== i.op : e.op === 'revoke')) continue;
+      if (await dk.grantHash(e.grant as MandateGrant) === i.grantHash) { row = e; break; }
+    }
+    if (!row) return refuse('grant_not_held', 'The Authority Server does not hold this grant.');
+    const grant = row.grant as MandateGrant;
+    const ownerDid = String(grant.owner_did);
+    if (!this.ownerKnown(ownerDid)) return refuse('owner_unknown', 'The owner of this mandate is not this person and has not been confirmed.');
+    let chain = s.own;
+    if (ownerDid !== s.stored.rootDid) {
+      chain = await this.chainOf(ownerDid, s.credential, this.d.pins.get(ownerDid));
+      try { this.d.pins.advance(ownerDid, chain.head); } catch (e) {
+        const reason = (e as { reason?: string })?.reason;
+        if (reason === 'rollback') return refuse('chain_rollback', 'A device chain is shorter than the one verified before.');
+        if (reason === 'fork') return refuse('chain_fork', 'A device chain differs from the one verified before.');
+        throw e;
+      }
+    }
+    const fixed = new Set(GRANT_FIXED_MEMBERS);
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(grant)) if (!fixed.has(k)) fields[k] = v;
+    try {
+      await dk.verifyGrant({ grant, sig: row.sig, check: row.check ?? undefined }, { chain, mandateFields: fields, expect: { ops: [grant.op], mandate_id: i.mandateId, mandate_version: i.version } });
+    } catch (e) {
+      if (isDeviceKeysError(e)) return refuse('grant_invalid', `The grant does not verify (${e.code}).`);
+      throw e;
+    }
+    return { ownerDid, op: grant.op };
+  }
+
   // ─── receipt (DEC-23) ────────────────────────────────────────────────────
 
   /**
@@ -443,6 +502,9 @@ export class MandateGrants {
     if (!MANDATE_ID.test(input.mandateId) || !Number.isSafeInteger(input.version) || input.version < 1 || !/^sha256:[0-9a-f]{64}$/.test(input.grantHash)) return refuse('bad_request', 'Bad request.');
     if (d.grants.isReceipted(input.mandateId, input.version)) return { sent: false };
     const s = await this.session();
+    // Only a grant this control plane verified itself, and only the owner's OWN gateway answers one.
+    const held = await this.verifyHeld(input);
+    if (held.ownerDid !== s.stored.rootDid || held.op === 'revoke') return refuse('not_own_mandate', 'Only the owner\'s own computer answers a grant with a receipt.');
     const signing = loadDeviceSigningKey(d.vault);
     if (!signing || (await dk.keyIdOf(signing.publicKey)) !== s.stored.keyId) return refuse('key_mismatch', 'This computer\'s key does not match the stored chain.');
     const receipt = dk.buildReceipt({

@@ -285,6 +285,7 @@ export async function executeCommitted(
     grantGate: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(state.cache) }),
     // (`?.` only for SharedState test doubles that predate the gate)
     whyMissing: () => state.cache.withheldReason?.(proposal.authorizationId),
+    mandateId: submitted.mandateId,
     executionContext: proposal.executionContext,
     profile: getProfile(proposal.profileId),
     protectedDids: signedDidsOfCache(state.cache),

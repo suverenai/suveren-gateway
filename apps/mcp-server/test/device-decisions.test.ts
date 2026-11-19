@@ -200,6 +200,7 @@ class FakeAs {
       const { deviceDecisions, ...rest } = p;
       return json(200, { proposal: this.failDecisionsRead ? rest : p, ...(deviceDecisions === undefined ? {} : {}) });
     }
+    if (req.method === 'GET' && (m = /^\/api\/authorizations\/([^/]+)$/.exec(url.pathname))) return json(200, { authorization_id: decodeURIComponent(m[1]), profile_id: 'test-pay@1', group_id: 'g1' });
     if (req.method === 'GET' && url.pathname === '/api/devices/chain') {
       const did = url.searchParams.get('did') ?? '';
       const c = this.chains.get(did);
@@ -266,7 +267,7 @@ async function world(o: {
   const receipts: Array<{ mandateId: string; version: number }> = [];
   const grantStore = new MandateGrantStore(vault as never);
   app.use('/internal', createInternalDeviceRouter(() => 'sekret', store, new DevicePinStore(vault as never, store), {
-    store: grantStore, grants: { receipt: async (r: { mandateId: string; version: number }) => { receipts.push(r); return { sent: true }; } } as never,
+    store: grantStore, grants: { receipt: async (r: { mandateId: string; version: number }) => { receipts.push(r); return { sent: true }; }, ownerKnown: (d: string) => d === owner.did, verifyHeld: async () => ({}) } as never,
   }));
   const cp: Server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   toClose.push(() => new Promise<void>(r => cp.close(() => r())));

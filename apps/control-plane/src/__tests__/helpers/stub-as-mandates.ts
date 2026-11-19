@@ -69,7 +69,11 @@ export class StubMandates {
   /** What the Authority Server would sign for the team (the gateway must have asked for exactly this). */
   expectation: TeamExpectation | null = null;
   /** Account id to DID, and who awaits a team admin's re-confirmation (DEC-35). */
-  readonly users = new Map<string, { did: string; reconfirm?: boolean }>();
+  readonly users = new Map<string, { did: string; reconfirm?: boolean; chain?: boolean }>();
+  /** Test only: answer `eligible_approvers` with exactly this (a lying Authority Server). */
+  eligibleOverride: unknown = undefined;
+  /** Accounts (besides the owner) that may read the owner's grants: team members and approvers (`grantsVisibleTo`). */
+  readonly viewers = new Set<string>();
   identity = { verified: false, always: false };
   /** The newest version of an issued mandate wins; the clock the body window and `granted_at` read. */
   now: () => number;
@@ -98,7 +102,11 @@ export class StubMandates {
     if (method === 'GET' && path === '/api/profiles') return ok(200, { profiles: [{ id: this.profile.id }] });
     if (method === 'GET' && path.startsWith('/api/profiles/')) return decodeURIComponent(path.slice(14)) === this.profile.id ? ok(200, this.profile) : refuse(404, 'NOT_FOUND');
     if (method === 'GET' && /^\/api\/groups\/[^/]+\/profile-config\/[^/]+$/.test(path)) {
-      return this.team ? ok(200, { config: { approvers: this.team.approvers, grantors: [...this.team.approvers, 'u1'], approvals: this.team.approvals, caps: this.team.caps } }) : refuse(404, 'NOT_FOUND');
+      if (!this.team) return refuse(404, 'NOT_FOUND');
+      // device keys on: who may approve, with the DID (null without a chain), ascending DID order (null last) — PR #141's `eligible_approvers`
+      const eligible = this.team.approvers.filter(u => !this.users.get(u)?.reconfirm).map(u => ({ user_id: u, did: this.users.get(u)?.chain === false ? null : (this.users.get(u)?.did ?? null) }))
+        .sort((a, b) => (a.did === null || b.did === null) ? (a.did === null ? 1 : 0) - (b.did === null ? 1 : 0) : a.did < b.did ? -1 : a.did > b.did ? 1 : 0);
+      return ok(200, { config: { approvers: this.team.approvers, grantors: [...this.team.approvers, 'u1'], approvals: this.team.approvals, caps: this.team.caps }, eligible_approvers: this.eligibleOverride !== undefined ? this.eligibleOverride : eligible });
     }
     if (method === 'GET' && /\/approvers\/pubkeys$/.test(path)) {
       const eligible = (this.team?.approvers ?? []).filter(u => !this.users.get(u)?.reconfirm);
@@ -134,7 +142,8 @@ export class StubMandates {
       if (!MANDATE_ID.test(id)) return refuse(400, 'MALFORMED', 'not a mandate id');
       if (method === 'GET') {
         const list = this.grantsOf(id);
-        if (list.length > 0 && list[0].userId !== session.userId) return ok(200, { grants: [] });
+        // like `grantsVisibleTo`: the owner, or someone who may see the mandate's authorization (a team member, an approver)
+        if (list.length > 0 && list[0].userId !== session.userId && !this.viewers.has(session.userId)) return ok(200, { grants: [] });
         return ok(200, { grants: list.map(g => ({ mandate_id: g.mandateId, mandate_version: g.version, op: g.op, grant: g.grant, sig: g.sig, check: g.check, grant_hash: g.grantHash, as_chain_seq: g.asChainSeq, stored_at: g.storedAt })) });
       }
       return this.storeGrant(c, id, ok, refuse);

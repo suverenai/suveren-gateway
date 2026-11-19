@@ -292,13 +292,17 @@ describe('teams: approvers, caps and the count go into the mandate before the ow
   it('an approver without a device chain is refused before the touch (no mixing)', async () => {
     const w = await world();
     const t = await team(w);
-    w.as.otherChains.delete(t.ap2.did);
+    w.mandates.users.get('u_ap2')!.chain = false;   // the Authority Server lists them with did: null
     const r = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
     expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_has_no_chain' });
+    // and an approver whose DID it names but whose chain it does not serve
+    w.mandates.users.get('u_ap2')!.chain = true;
+    w.as.otherChains.delete(t.ap2.did);
+    expect((await w.sign({ team: 'g_team', confirmedApproverDids: t.dids })).body.grantCode).toBe('approver_has_no_chain');
     expect(w.touches).not.toHaveBeenCalled();
   });
 
-  it('an approver the Authority Server holds back (DEC-35) is not named; one it cannot identify refuses the grant', async () => {
+  it('an approver the Authority Server holds back (DEC-35) is not named; a list it does not give, or names wrongly, refuses the grant', async () => {
     const w = await world();
     const t = await team(w);
     w.mandates.users.get('u_ap2')!.reconfirm = true;
@@ -307,9 +311,11 @@ describe('teams: approvers, caps and the count go into the mandate before the ow
     const r = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
     expect(r.status, r.text).toBe(200);
     expect((w.mandates.rows[0].grant as Record<string, unknown>).above_cap_approvers).toEqual([t.dids[0]]);
-    w.mandates.users.delete('u_ap');
-    const r2 = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
-    expect(r2.body.grantCode).toBe('approver_unresolved');
+    // an Authority Server that gives no list, or an approver the team does not have
+    w.mandates.eligibleOverride = null;
+    expect((await w.sign({ team: 'g_team', confirmedApproverDids: t.dids })).body.grantCode).toBe('approvers_unavailable');
+    w.mandates.eligibleOverride = [{ user_id: 'u_stranger', did: t.dids[0] }];
+    expect((await w.sign({ team: 'g_team', confirmedApproverDids: t.dids })).body.grantCode).toBe('approver_unresolved');
   });
 
   it('an approver chain that is shorter than the one pinned before is a rollback and refuses the grant', async () => {
@@ -416,23 +422,61 @@ describe('change, renewal and revoke', () => {
 describe('what the MCP server asks of the control plane: the highest version, a revocation, the receipt', () => {
   const H = (c: string) => `sha256:${c.repeat(64)}`;
 
-  it('remembers the highest verified version and refuses a lower one; a revoke is final', async () => {
+  it('remembers only a grant THIS control plane verified itself, and a lower version is refused', async () => {
     const w = await world();
-    const obs = (version: number, hash: string, op = 'grant') => w.internal('/internal/mandate-grant/observe', { mandateId: 'm-aaaaaaaa', version, grantHash: H(hash), op });
-    expect((await obs(1, 'a')).body).toMatchObject({ ok: true, receiptNeeded: true });
-    expect((await obs(2, 'b', 'change')).status).toBe(200);
-    expect((await obs(1, 'a')).body).toMatchObject({ code: 'lower_version' });
-    expect((await obs(2, 'c', 'change')).body).toMatchObject({ code: 'same_version_other_grant' });
-    expect((await obs(2, 'b', 'change')).status).toBe(200);
-    expect((await obs(2, 'b', 'revoke')).status).toBe(200);
-    expect((await obs(3, 'd', 'change')).body).toMatchObject({ code: 'revoked' });
+    const first = await w.sign();
+    await w.sign({ replaces: authzOf(first) });
+    const [g1, g2] = w.mandates.rows;
+    const obs = (version: number, hash: string, op = 'grant', mandateId = g1.mandateId) => w.internal('/internal/mandate-grant/observe', { mandateId, version, grantHash: hash, op });
+    expect((await obs(2, g2.grantHash, 'change')).body).toMatchObject({ ok: true });
+    expect((await obs(1, g1.grantHash)).body).toMatchObject({ code: 'lower_version' });
+    // what it did not see verify is not remembered: another hash, a version no row has, an op the row does not have, another mandate
+    expect((await obs(3, H('c'), 'change')).body).toMatchObject({ code: 'grant_not_held' });
+    expect((await obs(2, H('d'), 'change')).body).toMatchObject({ code: 'grant_not_held' });
+    expect((await obs(2, g2.grantHash, 'grant')).body).toMatchObject({ code: 'grant_not_held' });
+    expect((await obs(2, g2.grantHash, 'change', 'm-unknown1')).body).toMatchObject({ code: 'grant_not_held' });
     expect((await w.internal('/internal/mandate-grant/observe', { mandateId: 'x', version: 1, grantHash: 'no', op: 'grant' })).status).toBe(400);
+    expect(new MandateGrantStore(w.gw.vault).get(g1.mandateId)).toMatchObject({ version: 2, revoked: false });
+    // a revoke is recorded only when it is a verified revoke row
+    await w.post('/api/mandate/revoke', { authorizationId: authzOf(first) === g2.authorizationId ? authzOf(first) : g2.authorizationId });
+    const rev = w.mandates.rows.at(-1)!;
+    expect((await obs(rev.version, rev.grantHash, 'revoke')).body).toMatchObject({ ok: true });
+    expect(new MandateGrantStore(w.gw.vault).get(g1.mandateId)).toMatchObject({ revoked: true });
   });
 
-  it('the memory is sealed in the vault, so it survives a restart of the process', async () => {
+  it('the store itself: a lower version, another grant of the same version and a revoked mandate are refused', async () => {
     const w = await world();
-    await w.internal('/internal/mandate-grant/observe', { mandateId: 'm-bbbbbbbb', version: 3, grantHash: H('e'), op: 'grant' });
-    expect(new MandateGrantStore(w.gw.vault).get('m-bbbbbbbb')).toMatchObject({ version: 3, revoked: false });
+    const st = new MandateGrantStore(w.gw.vault);
+    expect(st.observe('m-aaaaaaaa', 2, H('a'), 'change')).toEqual({ receiptNeeded: true });
+    expect(() => st.observe('m-aaaaaaaa', 1, H('b'), 'grant')).toThrow(/lower_version/);
+    expect(() => st.observe('m-aaaaaaaa', 2, H('c'), 'change')).toThrow(/same_version_other_grant/);
+    st.observe('m-aaaaaaaa', 2, H('a'), 'revoke');
+    expect(() => st.observe('m-aaaaaaaa', 3, H('d'), 'change')).toThrow(/revoked/);
+  });
+
+  it('only this person, or someone whose identity code they compared, is an owner: the page confirms by code, the AI path cannot', async () => {
+    const w = await world();
+    const other = await person();
+    const known = (did: string) => w.internal('/internal/mandate-grant/owner-known', { did }).then(r => r.body.known);
+    expect(await known(w.rootDid)).toBe(true);
+    expect(await known(other.did)).toBe(false);
+    const wrong = await w.post('/api/mandate/confirm-identity', { did: other.did, code: '000000000000000000000000' });
+    expect(wrong.body).toMatchObject({ grantCode: 'identity_code_mismatch' });
+    expect(await known(other.did)).toBe(false);
+    const code = await dk.identityCode(other.did);
+    expect((await w.post('/api/mandate/confirm-identity', { did: other.did, code })).status).toBe(200);
+    expect(await known(other.did)).toBe(true);
+  });
+
+  it('the AI path cannot confirm anyone: confirmedApproverDids is dropped from /internal/mandate', async () => {
+    const w = await world();
+    const t = await (async () => { const ap = await person(); w.as.otherChains.set(ap.did, ap.entries); w.mandates.users.set('u_ap', { did: ap.did }); w.mandates.team = { approvers: ['u_ap'], approvals: 1, caps: { value_max: { value: 500, kind: 'approval' } } }; w.mandates.expectation = { mode: 'review', caps: { value_max: 500 }, approvers: [ap.did], approvals: 1 }; return ap; })();
+    // the page-guarded route takes the confirmation; the internal route (secret, AI path) must not
+    const r = await w.internal('/internal/mandate', { request: { ...REQ, team: 'g_team', confirmedApproverDids: [t.did] } });
+    // refused for want of a comparison the AI path cannot make: nothing signed, nobody remembered
+    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_identity_unconfirmed' });
+    expect(w.touches).not.toHaveBeenCalled();
+    expect(new MandateGrantStore(w.gw.vault).approverConfirmed(t.did)).toBe(false);
   });
 
   it('answers a grant with this computer\'s signed receipt, once; the Authority Server verifies it', async () => {

@@ -98,6 +98,7 @@ export class SharedState {
     // switch off sets nothing, and the cache is the one of every earlier release.
     if (deviceKeysEnabled()) {
       this.cache.setGrantGate(makeGrantGate({ sp: this.spClient, cp: controlPlaneDevice, protectedDids: () => signedDidsOfCache(this.cache) }));
+      this.cache.startGrantRecheck();
     }
     this.gateStore = new GateStore(gateStorePath);
     this.executionLog = new ExecutionLog(gateStorePath);

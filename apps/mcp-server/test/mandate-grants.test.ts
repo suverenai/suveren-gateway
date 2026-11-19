@@ -18,7 +18,8 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import * as dk from '@hap/core/device-keys';
 import { AttestationCache } from '../src/lib/attestation-cache';
 import { SPClient, type SPProposal } from '../src/lib/sp-client';
-import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
+import { makeGrantGate, resyncVerdict, checkMandateGrant } from '../src/lib/mandate-grants';
+import { signedMandateFacts } from '../src/lib/device-decisions';
 import { checkDeviceDecisions, controlPlaneDevice, resolveProposalFacts } from '../src/lib/device-decisions';
 import { createInternalDeviceRouter } from '../../control-plane/src/routes/internal-device';
 import { DeviceChainStore } from '../../control-plane/src/lib/device-chain-store';
@@ -37,6 +38,12 @@ class FakeAs {
   receipts: Array<{ mandateId: string; receipt: dk.MandateReceipt; sig: string }> = [];
   /** A grant listing that fails (the Authority Server is down for it). */
   failGrants = false;
+  /** `GET /api/authorizations/:id` answers 404 (the group is not known) */
+  noSummary = false;
+  /** The DID `GET /api/auth/session` names (the account), or null (the route answers 401). */
+  sessionDid: string | null = null;
+  /** What `GET /api/mandates?authorization_id=` answers as `authorization_id` (a mix-up) */
+  answerAuthz: string | null = null;
   private server!: Server;
   url = '';
 
@@ -59,6 +66,8 @@ class FakeAs {
     const json = (status: number, body: unknown): void => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (!/^Bearer [A-Za-z0-9-]+$/.test(String(req.headers.authorization ?? ''))) return json(401, { approved: false, errors: [{ code: 'UNAUTHENTICATED', message: 'Authentication required' }] });
     let m: RegExpExecArray | null;
+    if (req.method === 'GET' && url.pathname === '/api/auth/session') return this.sessionDid ? json(200, { user: { id: 'u1', did: this.sessionDid } }) : json(401, { error: 'no' });
+    if (req.method === 'GET' && (m = /^\/api\/authorizations\/([^/]+)$/.exec(url.pathname))) return this.noSummary ? json(404, { error: 'no' }) : json(200, { authorization_id: decodeURIComponent(m[1]), profile_id: 'test-pay@1', group_id: 'g1' });
     if (req.method === 'GET' && url.pathname === '/api/devices/chain') {
       const did = url.searchParams.get('did') ?? '';
       const c = this.chains.get(did);
@@ -87,7 +96,7 @@ class FakeAs {
       const list = this.blobs.get(id);
       if (!list) return json(200, { authorization_id: id, mandates: [], complete: false });
       return json(200, {
-        authorization_id: id, profile_id: 'test-pay@1', bounds: { profile: 'test-pay@1' }, scope_hash: 'sha256:s', complete: true, revoked: false,
+        authorization_id: this.answerAuthz ?? id, profile_id: 'test-pay@1', bounds: { profile: 'test-pay@1' }, scope_hash: 'sha256:s', complete: true, revoked: false,
         required_domains: ['owner'], attested_domains: ['owner'], deferred_commitment_domains: ['owner'],
         mandates: list.map(b => ({ domain: 'owner', blob: b, expires_at: now() + 3600 })),
       });
@@ -110,6 +119,8 @@ interface World {
   grantStore: MandateGrantStore;
   cpHits: string[];
   ownState: { state: 'none' | 'present' | 'unreadable' };
+  /** DIDs the person confirmed by identity code (besides their own). */
+  confirmed: Set<string>;
   gate: ReturnType<typeof makeGrantGate>;
   /** Serve the mandate and its grant(s) like the Authority Server does. */
   serve: (grants?: GrantRow[], blobs?: string[]) => Promise<void>;
@@ -143,7 +154,12 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
   app.use(express.json());
   app.use((req, _res, next) => { cpHits.push(`${req.method} ${req.path}`); next(); });
   // The control plane's receipt: built and signed from ITS OWN record (key, chain position), sent to the Authority Server.
+  const confirmed = new Set<string>();
   const receiptSigner = {
+    // the control plane's own check of a grant (tested in its suite); a recorder here
+    verifyHeld: async () => ({}),
+    // this person's own DID, or one they compared by identity code
+    ownerKnown: (did: string) => did === own.did || confirmed.has(did),
     receipt: async (r: { mandateId: string; version: number; grantHash: string }) => {
       if (grantStore.isReceipted(r.mandateId, r.version)) return { sent: false };
       const h = await headOf(own);
@@ -164,6 +180,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
 
   const sp = new SPClient(as.url, { maxAttempts: 1, delaysMs: [0] });
   sp.setSessionCookie(`Bearer ${randomUUID()}`);
+  if (approver) confirmed.add(owner.did);   // an approver's gateway honours the colleague it confirmed
   const gate = makeGrantGate({ sp, cp: controlPlaneDevice, protectedDids: () => [] });
   const cache = new AttestationCache(sp);
   cache.setGrantGate(gate);
@@ -176,7 +193,7 @@ async function world(o: { as?: 'owner' | 'approver'; approvers?: Person[]; extra
     if (grants) as.grants.set(MANDATE_ID, grants);
     else if (!o.noGrant) as.grants.set(MANDATE_ID, [await grantFor(owner, payload)]);
   };
-  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, gate, serve };
+  const w: World = { as, owner, own, sp, cache, payload, grantStore, cpHits, ownState, confirmed, gate, serve };
   await serve();
   return w;
 }
@@ -384,6 +401,142 @@ describe('the resync of stored gates (bin/http.ts)', () => {
     // an authorization the Authority Server no longer serves is an orphan (the existing rule)
     const none = await w.cache.syncAuthorization('authz_33333333-3333-3333-3333-333333333333');
     expect(resyncVerdict(w.cache, 'authz_33333333-3333-3333-3333-333333333333', !!none)).toBe('orphan');
+  });
+});
+
+describe('the owner is not the Authority Server\'s to name (a rogue server\'s own root, chain and check key)', () => {
+  it('a fabricated, self-consistent owner (their own chain, check key and grant) is refused on the owner\'s gateway and on an approver\'s unless confirmed', async () => {
+    for (const as of ['owner', 'approver'] as const) {
+      const w = await world({ as });
+      w.confirmed.delete(w.owner.did);
+      const rogue = await person('Rogue', { check: true });
+      const payload = mandatePayload(rogue);
+      await w.as.setChain(rogue);
+      w.as.blobs.set(AUTHZ, [blob(payload)]);
+      w.as.grants.set(MANDATE_ID, [await grantFor(rogue, payload)]);
+      const r = await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] });
+      expect(r, as).toMatchObject({ ok: false, code: 'owner_unknown' });
+      expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+      expect(w.cache.getAllAuthorizations()).toEqual([]);
+      // nothing about the rogue was pinned or remembered
+      expect(w.cpHits).not.toContain('POST /internal/device-pin/advance');
+      expect(w.grantStore.get(MANDATE_ID)).toBeNull();
+      // once the person compared the identity code and accepted that DID, it IS an owner (and only then)
+      w.confirmed.add(rogue.did);
+      expect((await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(payload) }] })).ok).toBe(true);
+    }
+  });
+
+  it('the control plane silent about who is confirmed: refused, never assumed', async () => {
+    const w = await world({ as: 'approver' });
+    process.env.SUVEREN_INTERNAL_SECRET = 'wrong';
+    const r = await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(w.payload) }] });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('revoke rows, versions per mandate, the answer asked for, the group, the profile', () => {
+  it('a revoke row that does not verify is ignored (neither refuses nor is honoured); a verified one is recorded and final', async () => {
+    const w = await world();
+    const v1 = w.as.grants.get(MANDATE_ID)![0];
+    const forged = await grantFor(w.owner, w.payload, { op: 'revoke', version: 1 });
+    forged.sig = dk.b64uEncode(randomBytes(64));
+    w.as.grants.set(MANDATE_ID, [v1, forged]);
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    expect(w.grantStore.get(MANDATE_ID)).toMatchObject({ revoked: false });
+    const real = await grantFor(w.owner, w.payload, { op: 'revoke', version: 1 });
+    w.as.grants.set(MANDATE_ID, [v1, real]);
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.cache.withheldReason(AUTHZ)?.code).toBe('mandate_revoked');
+    expect(w.grantStore.get(MANDATE_ID)).toMatchObject({ revoked: true });
+  });
+
+  it('the newest version is per MANDATE: a second mandate of the authorization at version 1 is not hidden by the first at version 2', async () => {
+    const w = await world();
+    const pA = mandatePayload(w.owner, { expires_at: (w.payload.expires_at as number) + 600 });
+    const pB = mandatePayload(w.owner, { mandate_id: 'mandate-grant-2', expires_at: (w.payload.expires_at as number) + 900 });
+    w.as.grants.set(MANDATE_ID, [w.as.grants.get(MANDATE_ID)![0], await grantFor(w.owner, pA, { op: 'change', version: 2 })]);
+    w.as.grants.set('mandate-grant-2', [await grantFor(w.owner, pB, { mandateId: 'mandate-grant-2' })]);
+    const r = await w.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(pA) }, { blob: blob(pB) }] });
+    expect(r.ok && !r.skipped && r.granted.map(g => `${g.mandateId}:${g.version}`).sort()).toEqual([`${MANDATE_ID}:2`, 'mandate-grant-2:1']);
+  });
+
+  it('an answer for another authorization than the one asked for is no answer', async () => {
+    const w = await world();
+    w.as.answerAuthz = 'authz_99999999-9999-9999-9999-999999999999';
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.cache.getAllAuthorizations()).toEqual([]);
+  });
+
+  it('a team grant whose group is not known is refused; a personal one does not need it', async () => {
+    const a = await person('A');
+    const w = await world({ approvers: [a] });
+    w.as.noSummary = true;
+    await refusedWith(w, 'group_unknown');
+    const solo = await world();
+    solo.as.noSummary = true;
+    expect((await solo.gate({ authorizationId: AUTHZ, attestations: [{ blob: blob(solo.payload) }] })).ok).toBe(true);
+  });
+
+  it('the profile in the mandate is the one this gateway holds, when it holds one', async () => {
+    const w = await world();
+    const r = await checkMandateGrant({ sp: w.sp, cp: controlPlaneDevice, localProfileHash: () => `sha256:${'f'.repeat(64)}` }, { authorizationId: AUTHZ, attestations: [{ blob: blob(w.payload) }] });
+    expect(r).toMatchObject({ ok: false, code: 'profile_hash_mismatch' });
+    const same = await checkMandateGrant({ sp: w.sp, cp: controlPlaneDevice, localProfileHash: () => w.payload.profile_hash as string }, { authorizationId: AUTHZ, attestations: [{ blob: blob(w.payload) }] });
+    expect(same.ok).toBe(true);
+  });
+});
+
+describe('a gateway without a chain on an account that has one', () => {
+  it('switch on, no chain here, the Authority Server knows a chain for the account: refused; unknown or an error: works as before', async () => {
+    const w = await world({ noGrant: true });
+    w.ownState.state = 'none';
+    w.as.sessionDid = w.owner.did;
+    await refusedWith(w, 'device_not_set_up_here');
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    const w2 = await world({ noGrant: true });
+    w2.ownState.state = 'none';
+    w2.as.sessionDid = null; // 401: the Authority Server's word can only ADD a refusal
+    expect((await w2.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+  });
+});
+
+describe('a granted mandate is only as fresh as its last check', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('rechecked on a timer; dropped from every read when a check has not succeeded for fifteen minutes; a revoke reaches it by the recheck', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const w = await world();
+    expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
+    vi.setSystemTime(Date.now() + 6 * 60_000);
+    expect(w.cache.getAllAuthorizations()).toHaveLength(1);
+    await w.cache.recheckAll();                       // refreshed
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    expect(w.cache.getAllAuthorizations()).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 6 * 60_000);        // 16 minutes since the last check
+    expect(w.cache.getAllAuthorizations()).toEqual([]);
+    expect(w.cache.getAuthorization(AUTHZ)).toBeNull();
+    // a check that cannot be made (the grants are not served) leaves a fresh entry in place, and a revoke removes it at the recheck
+    const w2 = await world();
+    await w2.cache.syncAuthorization(AUTHZ);
+    w2.as.failGrants = true;
+    await w2.cache.recheckAll();
+    expect(w2.cache.getAllAuthorizations()).toHaveLength(1);
+    w2.as.failGrants = false;
+    w2.as.grants.set(MANDATE_ID, [...w2.as.grants.get(MANDATE_ID)!, await grantFor(w2.owner, w2.payload, { op: 'revoke', version: 1 })]);
+    await w2.cache.recheckAll();
+    expect(w2.cache.getAllAuthorizations()).toEqual([]);
+  });
+});
+
+describe('the mandate a decision names is the one the proposal was submitted under', () => {
+  it('signedMandateFacts picks by mandate id, never by the newest issued_at', () => {
+    const o = 'did:key:z6MkOwnerOwnerOwnerOwnerOwnerOwnerOwner1';
+    const a = { blob: blob({ version: '0.8', mandate_id: 'm-aaaaaaaa', commitment_mode: 'review', issued_at: 5, mandate_owners: [{ did: o }] }) };
+    const b = { blob: blob({ version: '0.8', mandate_id: 'm-bbbbbbbb', commitment_mode: 'review', issued_at: 9, mandate_owners: [{ did: o }] }) };
+    expect(signedMandateFacts([a, b])?.mandateId).toBe('m-bbbbbbbb');
+    expect(signedMandateFacts([a, b], 'm-aaaaaaaa')?.mandateId).toBe('m-aaaaaaaa');
+    expect(signedMandateFacts([a, b], 'm-cccccccc')).toBeUndefined();
   });
 });
 

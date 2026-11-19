@@ -151,8 +151,44 @@ export class AttestationCache {
   /** Authorizations the gate refused, with the reason: shown to the person, never honoured. In memory, like the cache. */
   private withheld = new Map<string, { code: string; text: string }>();
 
+  /**
+   * With a gate set, an entry is only as old as its last successful check. Rechecked every GRANT_RECHECK_MS (the owner's revoke,
+   * a newer version, a rolled back chain reach this gateway within about that time) and dropped from every read once GRANT_MAX_AGE_MS
+   * passed without one (the Authority Server unreachable: nothing could be ticketed then anyway). Five minutes: a revocation is not
+   * faster than a person's next request, and the check costs two calls per mandate; fifteen: three missed rechecks.
+   */
+  static readonly GRANT_RECHECK_MS = 5 * 60_000;
+  static readonly GRANT_MAX_AGE_MS = 15 * 60_000;
+  private verifiedAt = new Map<string, number>();
+  private recheckTimer: ReturnType<typeof setInterval> | null = null;
+
   setGrantGate(gate: GrantGate | null): void {
     this.grantGate = gate;
+  }
+
+  private stale(id: string): boolean {
+    if (!this.grantGate) return false;
+    const at = this.verifiedAt.get(id);
+    return at === undefined || Date.now() - at > AttestationCache.GRANT_MAX_AGE_MS;
+  }
+
+  /** Re-run the gate over every cached authorization (what the timer does). A refusal drops the entry; an error leaves it until it is stale. */
+  async recheckAll(): Promise<void> {
+    if (!this.grantGate) return;
+    for (const id of [...this.authorizations.keys()]) {
+      try { await this.syncAuthorization(id); } catch { /* kept until stale */ }
+    }
+  }
+
+  startGrantRecheck(): void {
+    if (this.recheckTimer || !this.grantGate) return;
+    this.recheckTimer = setInterval(() => { void this.recheckAll(); }, AttestationCache.GRANT_RECHECK_MS);
+    this.recheckTimer.unref?.();
+  }
+
+  stopGrantRecheck(): void {
+    if (this.recheckTimer) clearInterval(this.recheckTimer);
+    this.recheckTimer = null;
   }
 
   /** Why an authorization is not honoured on this gateway (the last check refused it), or undefined. */
@@ -317,6 +353,11 @@ export class AttestationCache {
       return null;
     }
 
+    if (this.stale(path)) {
+      this.authorizations.delete(path);
+      return null;
+    }
+
     // Check if all attestations have expired
     const now = Math.floor(Date.now() / 1000);
     const hasValid = auth.attestations.some(a => a.expiresAt > now);
@@ -334,6 +375,8 @@ export class AttestationCache {
   async syncAuthorization(authorizationId: string): Promise<CachedAuthorization | null> {
     const result = await this.spClient.getAttestations(authorizationId);
     if (!result.profile_id) return null;
+    // An answer for another authorization than the one asked for is no answer (a mix-up here would honour the wrong grant).
+    if (result.authorization_id !== undefined && result.authorization_id !== authorizationId) return null;
 
     // v0.6 — drop a REVOKED authorization so it is never listed or matched. A
     // revoked-but-unexpired attestation can't issue a receipt, so matching it for
@@ -377,7 +420,10 @@ export class AttestationCache {
     if (this.grantGate) {
       const g = await this.grantGate({ authorizationId: result.authorization_id, attestations, groupId });
       if (!g.ok) {
-        this.authorizations.delete(result.authorization_id);
+        // A check that could not be MADE (the Authority Server or the control plane unreachable) does not end what was verified a
+        // moment ago: the entry stays until it is stale (GRANT_MAX_AGE_MS). Every other refusal drops it at once.
+        const transient = ['grants_unavailable', 'chain_unavailable', 'device_state_unavailable'].includes(g.code);
+        if (!transient) this.authorizations.delete(result.authorization_id);
         this.withheld.set(result.authorization_id, { code: g.code, text: g.text });
         return null;
       }
@@ -473,6 +519,7 @@ export class AttestationCache {
 
     // Key by the per-ceremony id — grants can never merge or overwrite.
     this.authorizations.set(auth.authorizationId, auth);
+    this.verifiedAt.set(auth.authorizationId, Date.now());
     return auth;
   }
 
@@ -486,6 +533,10 @@ export class AttestationCache {
     for (const [path, auth] of this.authorizations) {
       // WS3 defence-in-depth — see isForeignWorkspace's doc comment.
       if (this.isForeignWorkspace(auth.groupId)) {
+        this.authorizations.delete(path);
+        continue;
+      }
+      if (this.stale(path)) {
         this.authorizations.delete(path);
         continue;
       }
@@ -513,6 +564,7 @@ export class AttestationCache {
   cacheAuthorization(auth: CachedAuthorization): void {
     // Key by the per-ceremony id — grants can never merge or overwrite.
     this.authorizations.set(auth.authorizationId, auth);
+    this.verifiedAt.set(auth.authorizationId, Date.now());
   }
 
   /**

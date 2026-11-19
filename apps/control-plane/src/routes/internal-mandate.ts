@@ -43,6 +43,9 @@ export function createInternalMandateRouter(
       res.status(400).json({ error: 'missing request' });
       return;
     }
+    // Whether a person compared an approver's identity code is for the page to say, never for the AI path (nor for a proposal's sealed copy).
+    delete (request as { confirmedApproverDids?: unknown }).confirmedApproverDids;
+    if ((request as { change?: { confirmedApproverDids?: unknown } }).change) delete (request as { change?: { confirmedApproverDids?: unknown } }).change!.confirmedApproverDids;
     const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
     try {
       const change = (request as { change?: MandateChangeRequest }).change;

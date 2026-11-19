@@ -82,16 +82,28 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
   // asks here to REMEMBER it (the highest version per mandate, a revocation) and to answer it with this computer's receipt.
   // This router decides nothing about the grant: it refuses a lower version and holds the signing key.
   if (mandates) {
-    router.post('/mandate-grant/observe', guarded((req, res) => {
+    router.post('/mandate-grant/owner-known', guarded((req, res) => {
+      const { did } = (req.body ?? {}) as { did?: unknown };
+      res.json({ known: mandates.grants.ownerKnown(did as string) });
+    }));
+
+    // Remembered only after THIS control plane verified the grant itself (hap-core, the owner's chain): the MCP server cannot make it
+    // record a version, a hash or a revocation it did not see verify.
+    router.post('/mandate-grant/observe', async (req: Request, res: Response) => {
+      if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+      res.setHeader('Cache-Control', 'no-store');
       const { mandateId, version, grantHash, op } = (req.body ?? {}) as { mandateId?: unknown; version?: unknown; grantHash?: unknown; op?: unknown };
       try {
-        const out = mandates.store.observe(mandateId as string, version as number, grantHash as string, op as 'grant');
+        if (op !== 'grant' && op !== 'change' && op !== 'revoke') { res.status(400).json({ error: 'grant_refused', code: 'bad_request' }); return; }
+        await mandates.grants.verifyHeld({ mandateId: mandateId as string, version: version as number, grantHash: grantHash as string, op });
+        const out = mandates.store.observe(mandateId as string, version as number, grantHash as string, op);
         res.json({ ok: true, receiptNeeded: out.receiptNeeded });
       } catch (err) {
         if (err instanceof GrantStoreRefused) { res.status(err.reason === 'bad_request' ? 400 : 409).json({ error: 'grant_refused', code: err.reason }); return; }
-        throw err;
+        if ((err as { name?: string })?.name === 'GrantRefusal') { const code = (err as { code: string }).code; res.status(code === 'bad_request' ? 400 : 403).json({ error: 'grant_refused', code }); return; }
+        res.status(423).json({ error: 'unavailable', code: 'unavailable' });
       }
-    }));
+    });
 
     router.post('/mandate-grant/receipt', async (req: Request, res: Response) => {
       if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }

@@ -27,6 +27,7 @@ import { DeviceChainStore } from '../../lib/device-chain-store';
 import type { PlatformHelper } from '../../lib/platform-helper';
 import type { StubAs } from './stub-as';
 import { createMandateRouter } from '../../routes/mandate';
+import { createInternalMandateRouter } from '../../routes/internal-mandate';
 import { asAuthHeaders } from '../../lib/as-credential';
 import { computeIntentDisclosureHash } from '@hap/core';
 import type { CeremonyDeps } from '../../lib/mandate-ceremony';
@@ -215,7 +216,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       });
       return { status: r.status, body: await r.json().catch(() => ({})) };
     };
-    app.use('/api/mandate', json, guard, createMandateRouter(() => ({
+    const ceremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
       user: vault.getSessionUser(), as,
       encrypt: async (_intent, recipients) => ({
         intentCiphertext: 'Y2lwaGVy', encryptedKeys: Object.fromEntries(recipients.map(r => [r.userId, { ct: 'a', enc: 'b' }])),
@@ -224,7 +225,9 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       deliverGateContent: async a => { delivered.push({ authorizationId: a.authorizationId }); await o.mandate!.deliver?.(a); },
       resyncGates: async () => { resynced.count++; },
       ...(grants ? { grants } : {}),
-    })));
+    });
+    app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps));
+    app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps));
   }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
   const port = (server.address() as { port: number }).port;

@@ -71,7 +71,7 @@ export interface SignedMandateFacts {
  * Authority Server checks a proposal against (`latestMandatePayloadFor`). Only the
  * SIGNED payload is read.
  */
-export function signedMandateFacts(attestations: ReadonlyArray<{ blob: string }> | undefined): SignedMandateFacts | undefined {
+export function signedMandateFacts(attestations: ReadonlyArray<{ blob: string }> | undefined, mandateId?: string): SignedMandateFacts | undefined {
   let best: SignedMandateFacts | undefined;
   let bestAt = -Infinity;
   for (const a of attestations ?? []) {
@@ -80,6 +80,8 @@ export function signedMandateFacts(attestations: ReadonlyArray<{ blob: string }>
       const p = decodeMandateBlob(a.blob).payload;
       const ownerDid = p.mandate_owners?.[0]?.did;
       if (typeof p.mandate_id !== 'string' || !p.mandate_id || typeof p.version !== 'string' || typeof ownerDid !== 'string') continue;
+      // the mandate the proposal was submitted under, when this gateway knows it: never "the newest issued"
+      if (mandateId !== undefined && p.mandate_id !== mandateId) continue;
       const at = typeof p.issued_at === 'number' ? p.issued_at : 0;
       if (at < bestAt) continue;
       bestAt = at;
@@ -122,6 +124,8 @@ export interface DeviceCpClient {
   observeGrant(mandateId: string, version: number, grantHash: string, op: 'grant' | 'change' | 'revoke'): Promise<{ receiptNeeded: boolean }>;
   /** Answer a verified grant with this computer's signed receipt (once). */
   sendReceipt(mandateId: string, version: number, grantHash: string): Promise<void>;
+  /** Is this DID a person this gateway's owner compared by identity code and accepted (or is it their own)? */
+  ownerConfirmed(did: string): Promise<boolean>;
 }
 
 /** The control plane refused to remember a grant: a lower version than one seen, another grant of the same version, or a revoked mandate. */
@@ -161,6 +165,10 @@ export const controlPlaneDevice: DeviceCpClient = {
   async observeGrant(mandateId, version, grantHash, op) {
     const body = await cpCall('POST', '/internal/mandate-grant/observe', { mandateId, version, grantHash, op });
     return { receiptNeeded: (body as { receiptNeeded?: unknown }).receiptNeeded === true };
+  },
+  async ownerConfirmed(did) {
+    const body = await cpCall('POST', '/internal/mandate-grant/owner-known', { did });
+    return (body as { known?: unknown }).known === true;
   },
   async sendReceipt(mandateId, version, grantHash) {
     await cpCall('POST', '/internal/mandate-grant/receipt', { mandateId, version, grantHash });
@@ -214,6 +222,8 @@ export interface DeviceCheckInput {
    * is then read from the GRANTED mandate only. Required: a caller without a gate does not compile.
    */
   grantGate: GrantGate;
+  /** The signed `mandate_id` this gateway recorded when it submitted the proposal (its own submission record). */
+  mandateId?: string;
   /** Why the authorization is not in the cache, when a check refused it (so the refusal names the reason, not "unavailable"). */
   whyMissing?: () => { code: string; text: string } | undefined;
   /**
@@ -258,7 +268,10 @@ export async function checkDeviceDecisions(i: DeviceCheckInput): Promise<DeviceC
     const why = i.whyMissing?.();
     if (why) return refuse(why.code, why.text);
   }
-  const facts = signedMandateFacts(attestations);
+  if (granted && i.mandateId === undefined && new Set((attestations ?? []).map(a => { try { return decodeMandateBlob(a.blob).payload.mandate_id; } catch { return undefined; } })).size > 1) {
+    return refuse('mandate_ambiguous', 'more than one granted mandate stands under this authorization and the proposal does not say which.');
+  }
+  const facts = signedMandateFacts(attestations, i.mandateId);
   if (!facts) return refuse('mandate_unavailable', 'the signed mandate this proposal runs under is not available, so who may decide it is not known.');
   if (!i.actionType) return refuse('action_type_unknown', 'this gateway has no action type for the proposal, so a decision on it cannot be checked.');
 
@@ -428,7 +441,7 @@ export interface ProposalFactsDeps {
   /** The grant as this gateway's attestation cache holds it, fetched again when it does not. */
   auth: (authorizationId: string) => Promise<Pick<CachedAuthorization, 'attestations'> | null | undefined>;
   /** This gateway's own record of a proposal it submitted. */
-  submission: (proposalId: string) => { actionType?: string; tool?: string; authorizationId?: string } | undefined;
+  submission: (proposalId: string) => { actionType?: string; tool?: string; authorizationId?: string; mandateId?: string } | undefined;
   /**
    * Read-only fetch of a grant's signed mandates from the Authority Server, for ONE proposal this gateway
    * does not hold the grant for (an approver's gateway never holds the owner's mandate). Never stored in the
@@ -471,7 +484,7 @@ export async function resolveProposalFacts(
     if (!g.skipped) attestations = auth.attestations.filter(a => g.granted.some(x => x.blob === a.blob));
   }
   // Read from the signed payload only, exactly as the executor reads it.
-  const facts = signedMandateFacts(attestations);
+  const facts = signedMandateFacts(attestations, sub?.mandateId);
   if (!facts) return { ok: false, code: 'mandate_unavailable' };
   if (q.approverDid !== undefined && q.approverDid !== facts.ownerDid && !facts.deciders.includes(q.approverDid)) {
     return { ok: false, code: 'not_a_signed_decider' };

@@ -45,6 +45,17 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       res.json({ ok: true, mandateId: r.mandateId, version: r.version });
     } catch (err) { answerRefusal(res, err); }
   });
+  // The person compared another person's identity code (their own screen against this one): that DID is then one this gateway
+  // honours mandates of, and names as an approver. Page session only (this router sits behind it); never the AI path.
+  router.post('/confirm-identity', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active()) { res.status(409).json({ error: 'not_set_up', message: 'Device keys are not set up.', code: 'not_set_up' }); return; }
+      const b = (req.body ?? {}) as { did?: unknown; code?: unknown };
+      await d.grants.confirmIdentity(b.did, b.code);
+      res.json({ ok: true });
+    } catch (err) { answerRefusal(res, err); }
+  });
   router.post('/renew', async (req, res) => {
     const request = (req.body ?? {}) as RenewRequest;
     try {

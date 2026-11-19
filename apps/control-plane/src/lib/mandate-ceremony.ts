@@ -133,7 +133,7 @@ export interface MandatePlan {
   /** Approvers whose public keys the intent is encrypted for (team only). */
   approvers: string[];
   /** The team's settings for this profile as read here (team only); a device-chain gateway puts them into the grant. */
-  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown> } | null;
+  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown>; eligible?: Array<{ user_id: string; did: string | null }> } | null;
 }
 
 export class MandateRefused extends Error {
@@ -239,11 +239,13 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
   let approvers: string[] = [];
   let teamCaps: Record<string, unknown> = {};
   let teamApprovals: number | undefined;
+  let teamEligible: Array<{ user_id: string; did: string | null }> | undefined;
   if (!isPersonal) {
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
     teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
     teamApprovals = typeof cfg.body?.config?.approvals === 'number' ? cfg.body.config.approvals : undefined;
+    teamEligible = Array.isArray(cfg.body?.eligible_approvers) ? cfg.body.eligible_approvers : undefined;
     // Who may give this mandate is `grantors`; `approvers` only decide above-cap actions, and a team may have none.
     const grantors: string[] | 'all' = (cfg.status === 200 ? cfg.body?.config?.grantors : undefined) ?? approvers;
     // The AS carries a team's settings over from an older version of the same
@@ -252,7 +254,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
     if (grantors !== 'all' && grantors.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`, 'profile_not_enabled');
     if (grantors !== 'all' && !grantors.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`, 'not_a_grantor');
   }
-  return { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals };
+  return { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals, teamEligible };
 }
 
 /**
@@ -270,7 +272,7 @@ export async function checkMandateRight(
 
 /** Validate the request and resolve everything needed — creates nothing. */
 export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
-  const { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals } = await resolveWorkspaceAndRight(req, deps);
+  const { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals, teamEligible } = await resolveWorkspaceAndRight(req, deps);
 
   // Limits and scope against the profile.
   const bounds = { ...scalarRecord('limits', req.limits), profile: profile.id };
@@ -331,7 +333,7 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     ttlSeconds,
     title: (req.title ?? '').trim() || `${name} (proposed by AI)`,
     approvers,
-    team: isPersonal ? null : { approvers, ...(teamApprovals !== undefined ? { approvals: teamApprovals } : {}), caps: teamCaps },
+    team: isPersonal ? null : { approvers, ...(teamApprovals !== undefined ? { approvals: teamApprovals } : {}), caps: teamCaps, ...(teamEligible ? { eligible: teamEligible } : {}) },
   };
 }
 
@@ -596,6 +598,7 @@ async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash
       approvers: cfg.body?.config?.approvers ?? [],
       ...(typeof cfg.body?.config?.approvals === 'number' ? { approvals: cfg.body.config.approvals } : {}),
       caps: cfg.body?.config?.caps ?? {},
+      ...(Array.isArray(cfg.body?.eligible_approvers) ? { eligible: cfg.body.eligible_approvers } : {}),
     };
   }
   const intentHash = computeIntentHash(req.intent);
