@@ -772,14 +772,6 @@ export class SPClient {
     };
   }
 
-  /** The DID of the signed-in account as the Authority Server holds it, or null. Only ever used to ADD a refusal (lib/mandate-grants.ts). */
-  async getSessionDid(): Promise<string | null> {
-    const res = await this.fetch('/api/auth/session');
-    if (!res.ok) return null;
-    const d = await res.json().catch(() => null) as { user?: { did?: unknown } } | null;
-    return typeof d?.user?.did === 'string' ? d.user.did : null;
-  }
-
   /**
    * The grants stored for a mandate (device-keys plan 4.4, step 13): `{ grant, sig, check }` as the owner's device signed
    * them, with the version and op. Everything is carried by the Authority Server and verified by the caller with hap-core;
