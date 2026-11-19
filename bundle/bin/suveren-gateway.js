@@ -20,6 +20,9 @@ import { buildLaunchAgentPlist, buildMacLauncher, buildSystemdUnit, buildWindows
 import { DEFAULT_AS_URL, readConfig, writeConfig, validateAsUrl, validateCaFile, validateProxyUrl, validatePinTls, resolveAsUrl, resolvePinTls, resolvePinTlsExpectedFingerprint, resolveSimulation } from '../lib/config.mjs';
 import { createInterface } from 'node:readline/promises';
 import { readPairing as readAsPairing, recordTlsPin, formatFingerprint, normalizeFingerprint } from '../lib/as-pairing.mjs';
+import { buildInstallPlan, buildUpdatePlan, buildUninstallPlan, renderPlan, resolveNodeDistribution, nodeLinkProblems, parseDsclIds, pickFreeId, checkPreconditions } from '../lib/system-install-mac.mjs';
+import { detectSystemInstall, systemMarkers, thinCliRefusal } from '../lib/system-mode.mjs';
+import { executePlan } from '../lib/system-install-exec.mjs';
 import { unsupportedNodeReason } from '../lib/node-version.mjs';
 import { readPolicy, isPolicyLocked } from '../lib/policy.mjs';
 import { resolveInstallSettings, describeSource, installSettingsLocation, validatePort, validateDataDir, writeInstallSettings } from '../lib/install-settings.mjs';
@@ -43,6 +46,17 @@ const SERVER_ENTRY = join(PKG_ROOT, 'server.js');
 // see and fix it.
 const COMMAND = process.argv[2] ?? 'help';
 const TOLERANT = ['config', 'help', '--help', '-h'].includes(COMMAND);
+// S1: when the gateway runs under its own account, this CLI is a thin client.
+// Ports and data folder then come from the root-owned settings file, never from
+// this person's environment. SUVEREN_SYSTEM_PREFIX is for tests only.
+const SYSTEM_PREFIX = process.env.SUVEREN_SYSTEM_PREFIX ?? '';
+const SYSTEM_MODE = platform() === 'darwin' && detectSystemInstall({ prefix: SYSTEM_PREFIX });
+if (SYSTEM_MODE) {
+  process.env.SUVEREN_INSTALL_SETTINGS_FILE = systemMarkers(SYSTEM_PREFIX).settings;
+  delete process.env.SUVEREN_CP_PORT;
+  delete process.env.SUVEREN_MCP_PORT;
+  delete process.env.SUVEREN_DATA_DIR;
+}
 let INSTALL;
 try {
   INSTALL = resolveInstallSettings({ tolerant: TOLERANT });
@@ -473,7 +487,7 @@ async function stop() {
 }
 
 async function status() {
-  const pid = readPid();
+  const pid = SYSTEM_MODE ? null : readPid();
   if (!pid) {
     // No PID file does NOT mean not running: when the login service owns the
     // gateway, launchd/systemd/Task Scheduler spawn server.js directly and
@@ -485,7 +499,9 @@ async function status() {
       });
       if (res.ok) {
         const body = await res.json();
-        console.log('suveren-gateway: running (managed by the login service)');
+        console.log(SYSTEM_MODE
+          ? 'suveren-gateway: running (under its own account)'
+          : 'suveren-gateway: running (managed by the login service)');
         console.log(`  UI:           http://localhost:${SUVEREN_PORT}`);
         console.log(`  Vault:        ${body.vaultUnlocked ? 'unlocked' : 'locked'}`);
         console.log(`  Simulation:   ${body.simulation ? 'on — real systems are blocked' : 'off'}`);
@@ -496,7 +512,9 @@ async function status() {
     } catch {
       /* nothing listening — genuinely not running */
     }
-    console.log('suveren-gateway: not running (no PID file).');
+    console.log(SYSTEM_MODE
+      ? `suveren-gateway: not answering on port ${SUVEREN_PORT} (it runs under its own account; an administrator can check: sudo launchctl print system/ai.suveren.gateway).`
+      : 'suveren-gateway: not running (no PID file).');
     process.exit(3);
   }
   if (!isPidAlive(pid)) {
@@ -572,6 +590,10 @@ function printConfigHelp() {
   console.log(`suveren-gateway config — read or save gateway settings
 
 Usage:
+  suveren-gateway install|update|uninstall --system [--dry-run | --prefix <dir>]
+                                              Run the gateway under its own macOS account (needs
+                                              root); --dry-run prints the plan, --prefix tries it
+                                              in a scratch folder
   suveren-gateway config get [as-url|ca-file|pin-tls|proxy|port|mcp-port|data-dir|team]
                                                         Print the resolved value(s)
   suveren-gateway config set as-url <url>              Save the Authority Server URL
@@ -1491,6 +1513,88 @@ function runQuiet(bin, args) {
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
+/**
+ * `install|update|uninstall --system` (S1, docs/own-os-user.md).
+ *
+ *   --dry-run        print the plan, change nothing (reads account ids only)
+ *   --prefix <dir>   lay the file tree out inside <dir> as a normal user; account
+ *                    and launchd steps are recorded, not run (scratch mode)
+ *   neither          run for real: needs root and an administrator
+ *   uninstall: --remove-data also removes the vault folder and the account
+ */
+async function systemInstall(sub, args) {
+  if (!args.includes('--system')) {
+    console.error(`Usage: suveren-gateway ${sub} --system [--dry-run | --prefix <dir>]`);
+    process.exit(2);
+  }
+  if (platform() !== 'darwin') {
+    console.error('The protected install is built for macOS first. Linux and Windows follow.');
+    process.exit(2);
+  }
+  const dryRun = args.includes('--dry-run');
+  const prefix = flagValue(args, '--prefix') ?? '';
+  if (prefix && !prefix.startsWith('/')) {
+    console.error('--prefix must be an absolute path.');
+    process.exit(2);
+  }
+  if (!dryRun && !prefix) {
+    const admin = spawnSync('id', ['-Gn'], { encoding: 'utf8' }).stdout?.split(/\s+/).includes('admin') ?? false;
+    const problems = checkPreconditions({ platform: platform(), uid: process.getuid(), isAdmin: admin || process.getuid() === 0 });
+    if (problems.length) {
+      for (const p of problems) console.error(p);
+      process.exit(2);
+    }
+  }
+  const listIds = (kind, field) => {
+    const r = spawnSync('dscl', ['.', '-list', kind, field], { encoding: 'utf8' });
+    return r.status === 0 ? parseDsclIds(r.stdout) : [];
+  };
+  let plan;
+  let common;
+  if (sub !== 'uninstall') {
+    let node;
+    try {
+      node = resolveNodeDistribution(process.execPath);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+    // A Node that loads libraries from a folder the person can write defeats the
+    // root-owned code folder. Refuse for real; warn when only looking.
+    const otool = spawnSync('otool', ['-L', node.binary], { encoding: 'utf8' });
+    const outside = otool.status === 0 ? nodeLinkProblems(otool.stdout) : [];
+    if (outside.length) {
+      const msg = `This Node loads libraries from outside macOS (${outside.slice(0, 2).join(', ')}${outside.length > 2 ? ', ...' : ''}).\nInstall the official Node from nodejs.org (it needs none) and run this again with it.`;
+      if (!dryRun && !prefix) { console.error(msg); process.exit(2); }
+      console.error(`Warning: ${msg}\n`);
+    }
+    common = { version: CLI_VERSION || '0.0.0', packageDir: PKG_ROOT, node, prefix };
+  }
+  if (sub === 'install') {
+    const freeId = pickFreeId([...listIds('/Users', 'UniqueID'), ...listIds('/Groups', 'PrimaryGroupID')]);
+    plan = buildInstallPlan({ ...common, freeId, cpPort: Number(SUVEREN_PORT), mcpPort: Number(MCP_PORT) });
+  } else if (sub === 'update') {
+    plan = buildUpdatePlan(common);
+  } else {
+    plan = buildUninstallPlan({ prefix, removeData: args.includes('--remove-data') });
+  }
+  console.log(`${dryRun ? 'Plan' : 'Running'} (${sub}${prefix ? `, scratch folder ${prefix}` : ''}):\n`);
+  console.log(renderPlan(plan));
+  if (dryRun) return;
+  try {
+    const log = executePlan(plan, { prefix });
+    const recorded = log.filter((l) => l.recorded);
+    if (recorded.length) {
+      console.log(`Recorded, not run (scratch folder):`);
+      for (const r of recorded) console.log(`  ${r.recorded}`);
+    }
+    console.log(`Done.`);
+  } catch (err) {
+    console.error(`Stopped: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 function printServiceHelp() {
   console.log(`suveren-gateway service — run the gateway as a login service (survives reboot)
 
@@ -1675,6 +1779,14 @@ async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] ?? 'help';
 
+  if (SYSTEM_MODE) {
+    const refusal = thinCliRefusal(argv, { prefix: SYSTEM_PREFIX });
+    if (refusal) {
+      for (const line of refusal.lines) console.error(line);
+      process.exit(refusal.code);
+    }
+  }
+
   switch (cmd) {
     case 'start':   await start(argv.slice(1)); break;
     case 'stop':    await stop(); break;
@@ -1683,6 +1795,9 @@ async function main() {
     case 'open':    openUi(); break;
     case 'logs':    await logs(argv.slice(1)); break;
     case 'service': await service(argv.slice(1)); break;
+    case 'install':
+    case 'update':
+    case 'uninstall': await systemInstall(cmd, argv.slice(1)); break;
     case 'config':  await config(argv.slice(1)); break;
     case 'simulation': await simulation(argv.slice(1)); break;
     case 'verify-report': await verifyReport(argv.slice(1)); break;
