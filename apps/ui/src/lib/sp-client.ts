@@ -1052,6 +1052,24 @@ class SPClient {
     }
   }
 
+  /**
+   * End a mandate on a gateway with a device chain (step 13, screen 4): signed by an active device key, final, no Touch ID.
+   * Answers a code the page maps to its text; never throws for a refusal. A gateway without a chain answers 409 not_set_up.
+   */
+  async endMandate(authorizationId: string): Promise<{ ok: true } | { ok: false; code: 'already_ended' | 'unknown' | 'offline' | 'other' }> {
+    let res: Response;
+    try {
+      res = await this.fetch('/api/mandate/revoke', { method: 'POST', body: JSON.stringify({ authorizationId }) });
+    } catch { return { ok: false, code: 'offline' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    const code = body.grantCode ?? body.code;
+    if (code === 'mandate_revoked') return { ok: false, code: 'already_ended' };
+    if (code === 'mandate_unknown') return { ok: false, code: 'unknown' };
+    if (code === 'as_unreachable' || res.status === 502 || res.status === 503) return { ok: false, code: 'offline' };
+    return { ok: false, code: 'other' };
+  }
+
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
     const res = await this.fetch(`/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`);
     if (!res.ok) throw new Error(`Failed to fetch attestations: ${res.status}`);
