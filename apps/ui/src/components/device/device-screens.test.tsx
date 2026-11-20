@@ -7,6 +7,7 @@ import { T, DRAFT } from '../../lib/device-texts';
 import { PasswordScreen } from './PasswordScreen';
 import { UnlockScreen } from './UnlockScreen';
 import { SetupScreen, type SetupScreenProps } from './SetupScreens';
+import { ConnectWaiting, CONNECT_STUCK_MS } from './ConnectWaiting';
 import { ConfirmChange } from './ConfirmChange';
 import { RecoverScreen } from './RecoverScreens';
 import { IdentityResetNotice } from './IdentityResetBanner';
@@ -121,6 +122,17 @@ describe('screens 2 and 3: set up this computer', () => {
   it('2c waiting (DEC-68: the name is asked on suveren.ai; here only the waiting state)', () => {
     const t = text(render({ step: 'waiting', setupId: 's' }));
     expect(t).toContain(T.connectWaiting); expect(t).toContain(T.connectCancel);
+    // It says what is still missing; no "Start again" before the wait has run long.
+    expect(t).toContain(DRAFT.connectWaitingWhat);
+    expect(t).not.toContain(DRAFT.connectStuck);
+    expect(t).not.toContain(DRAFT.connectStartAgain);
+  });
+  it('Connect waiting that ran long: says nothing arrived yet and offers Start again (never waits for good)', () => {
+    const t = text(html(<ConnectWaiting onStartAgain={noop} initiallyStuck />));
+    expect(t).toContain(DRAFT.connectWaitingWhat);
+    expect(t).toContain(DRAFT.connectStuck);
+    expect(t).toContain(DRAFT.connectStartAgain);
+    expect(CONNECT_STUCK_MS).toBeGreaterThan(10_000);
   });
   it('3 DEC-91: the code, the tick and the one condition on one screen; Continue stays off until ticked, the code stays', () => {
     const off = render({ step: 'code', setupId: 's', checked: false, busy: false }, { code: 'SV1-7QK2-M9XD' });

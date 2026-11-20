@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice } from './DeviceScreen';
 import { PasswordScreen } from './PasswordScreen';
 import { BrandMark } from '../BrandMark';
+import { ConnectWaiting } from './ConnectWaiting';
 
 type Step =
   | { step: 'connect'; busy: boolean; error?: string }
@@ -86,11 +87,8 @@ export function StartPage() {
     );
   }
   if (st.step === 'waiting') {
-    return (
-      <DeviceScreen title={T.connectTitle}>
-        <Notice kind="info">{T.connectWaiting}</Notice>
-      </DeviceScreen>
-    );
+    // Start again: a new Connect request (new state and challenge) in a new tab; the old one is simply not answered.
+    return <ConnectWaiting onStartAgain={() => { setSt({ step: 'connect', busy: false }); }} />;
   }
   return (
     <DeviceScreen title={DRAFT.startTitle}>

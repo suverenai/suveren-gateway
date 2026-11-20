@@ -157,6 +157,9 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  */
 export const DRAFT = {
   loading: 'Loading…', // DRAFT
+  connectWaitingWhat: 'Still missing: press Connect on the suveren.ai page in that tab.', // DRAFT
+  connectStuck: 'Nothing has arrived yet. If you closed that tab, or it says Done without a Connect button, start again.', // DRAFT
+  connectStartAgain: 'Start again', // DRAFT
   // DEC-92: Touch ID opens the gateway page; turned on at set-up where this computer has Touch ID, or later in Settings.
   touchSetupWaiting: 'Touch the sensor when your Mac asks. This touch lets you open the gateway with Touch ID.', // DRAFT (touch 1 of 2 at set-up)
   touchCheckKeyWaiting: 'Touch the sensor once more when your Mac asks. This touch makes this computer\'s key for giving mandates and approving changes.', // DRAFT (touch 2 of 2 at set-up)

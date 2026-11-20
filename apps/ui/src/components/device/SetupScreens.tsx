@@ -7,6 +7,7 @@ import { spClient } from '../../lib/sp-client';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginPage } from '../../pages/LoginPage';
 import { RecoveryCodeBox } from '@suveren/approval-card/components/DeviceFrame';
+import { ConnectWaiting } from './ConnectWaiting';
 import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
 import { AddThisComputer } from './PairingPages';
@@ -62,12 +63,11 @@ export function SetupScreen(p: SetupScreenProps) {
         </DeviceScreen>
       );
     case 'waiting':
+      // Start again = cancel this set-up (its code is dropped) and begin anew from the start button.
       return (
-        <DeviceScreen title={T.connectTitle}>
-          <Notice kind="info">{T.connectWaiting}</Notice>
-          {st.error && <Notice kind="error">{st.error}</Notice>}
+        <ConnectWaiting error={st.error} onStartAgain={p.onCancel}>
           <button className="btn btn-ghost btn-full" onClick={p.onCancel}>{T.connectCancel}</button>
-        </DeviceScreen>
+        </ConnectWaiting>
       );
     case 'code':
       return (
