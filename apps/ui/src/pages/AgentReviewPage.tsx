@@ -432,8 +432,6 @@ export function AgentReviewPage() {
     if (!driver.givenId || !authData) return;
     for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent']) sessionStorage.removeItem(k);
     if (driver.error) { setError(driver.error); return; }
-    // Given on the phone: the phone footer shows its own result (as before); the Touch ID result screen is for a give here.
-    if (driver.phoneGive.s === 'given') return;
     setGiven({ authorizationId: driver.givenId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver.givenId]);
