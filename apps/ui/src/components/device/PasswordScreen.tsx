@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { T, textForCode } from '../../lib/device-texts';
+import { T, DRAFT, textForCode } from '../../lib/device-texts';
+import { turnOnTouchUnlock } from '../../lib/touch-unlock';
 import { MIN_PASSWORD_LENGTH, checkNewPassword } from '../../lib/password-form';
 import { deviceClient } from '../../lib/device-client';
 import { spClient } from '../../lib/sp-client';
@@ -65,6 +66,14 @@ export function SetPasswordPage() {
     setSuccess(r.status === 202 || r.data.rekeyPending ? T.passwordSetPending : T.passwordSet);
     openPageSession(r.data.sessionToken);
     await refreshAccess();
+    // DEC-92: where this computer has Touch ID, turn unlock by Touch ID on now, with the password just set. Never
+    // blocks: a cancelled touch leaves the password as the way in (Settings offers Touch ID later).
+    if (!(r.status === 202 || r.data.rekeyPending)) {
+      setSuccess(DRAFT.touchSetupWaiting);
+      setBusy(true);
+      await turnOnTouchUnlock(deviceClient, password);
+      setBusy(false);
+    }
     navigate('/device-setup', { replace: true });
   };
 
