@@ -319,6 +319,7 @@ const ERRORS: Record<string, string> = {
   no_chain: 'suveren.ai did not accept the old code. Nothing changed. Check the code and try again.', // DRAFT new (NO_CHAIN: the same answer for every failure before the root signature)
   bad_op: 'suveren.ai did not accept this change. Nothing changed. Try again; if it repeats, tell support.', // DRAFT new
   rotate_chain_moved: 'Your list of devices changed meanwhile. Nothing changed. Start again.', // DRAFT new
+  list_not_refreshed: 'The list could not be refreshed. Look at it again in a moment.', // DRAFT new
   remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
 };
 

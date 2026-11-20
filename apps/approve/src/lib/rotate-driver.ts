@@ -10,7 +10,8 @@
  *
  *   old       the old code, typed or scanned from the recovery paper; it must derive the root key IN FORCE at the head
  *   new       the new code, shown ONCE ("Write it on paper", DEC-85) and typed again
- *   checking  the phone's touch over the entry; the whole chain verified locally with it; the hand-off staged
+ *   checking  the phone's touch over the entry (Cancel possible: nothing has left the phone)
+ *   sending   the touch was given: the whole chain verified locally with the entry, the hand-off staged. No Cancel any more
  *   waiting   "open the link in the email on this phone", the 6-digit code the link page must show; the chain is read again
  *             until the entry is in it (or the hand-off ran out)
  *   done
@@ -23,7 +24,7 @@
 import {
   b64uEncode, buildEntry, deriveRootKey, entryHash, entrySignedBytes, generateRecoveryCode, parseRecoveryCode,
   rootKeyFromRecoveryCode, signEntry, verifyChain, utf8, sha256,
-  type ChainEntry, type ChainState,
+  type ChainEntry, type ChainState, type RootKey,
 } from '@hap/core/device-keys';
 import { Driver } from './driver';
 import type { DeviceKeyStore } from './key-store';
@@ -39,6 +40,7 @@ export type RotateState =
   | { step: 'old'; busy: boolean; error?: string }
   | { step: 'new'; code: string; error?: string }
   | { step: 'checking'; error?: string }
+  | { step: 'sending' }
   | { step: 'waiting'; confirmCode: string; email: string | null; expiresAt: number }
   | { step: 'done' }
   | { step: 'failed'; error: string };
@@ -133,7 +135,7 @@ export class RotateDriver extends Driver<RotateState> {
     if (this.state.step !== 'old') return;
     this.set({ step: 'old', busy: true });
     const s = this.d.session.current();
-    if (!s) { this.set({ step: 'failed', error: errorText('session_ended') }); return; }
+    if (!s) { this.fail(errorText('session_ended')); return; }
     let root;
     try {
       root = await rootKeyFromRecoveryCode(text);
@@ -171,18 +173,23 @@ export class RotateDriver extends Driver<RotateState> {
     const gen = ++this.gen;
     this.set({ step: 'checking' });
     const d = this.d;
-    const s = d.session.current();
-    const account = await d.accounts.read();
-    if (!s || !account) { this.set({ step: 'failed', error: errorText('session_ended') }); return; }
-    const oldRoot = await rootKeyFromRecoveryCode(this.oldCode);
-    const newRoot = await deriveRootKey(await parseRecoveryCode(this.newCode));
+    let oldRoot: RootKey | null = null;
+    let newRoot: RootKey | null = null;
     try {
+      const s = d.session.current();
+      const account = await d.accounts.read();
+      if (!s || !account) { this.fail(errorText('session_ended')); return; }
+      oldRoot = await rootKeyFromRecoveryCode(this.oldCode);
+      newRoot = await deriveRootKey(await parseRecoveryCode(this.newCode));
       const entry = buildEntry({
         root_did: account.root_did, seq: s.chain.head.seq + 1, prev: s.chain.head.hash, op: 'rotate-root',
         created_at: d.now(), signer: 'root', new_root: b64uEncode(newRoot.publicKey),
       });
       const hash = await entryHash(entry);
       const proof = await d.check.prove(account.check.cred_id, hash);
+      // Cancelled while the touch was asked: nothing is staged, no email goes out, and the screen the person went back to stays.
+      if (gen !== this.gen) return;
+      this.set({ step: 'sending' });
       const final: ChainEntry = {
         ...entry,
         sigs: [await signEntry(entry, 'root', oldRoot.privateSeed), { by: account.key_id, sig: b64uEncode(await d.keys.sign(entrySignedBytes(entry))) }],
@@ -190,12 +197,10 @@ export class RotateDriver extends Driver<RotateState> {
       };
       // The same check the server and every device make (3.3): a defect found here is found before anything is sent.
       await verifyChain({ expectedRootDid: account.root_did, entries: [...s.entries, final] });
-      // Cancelled while the touch was asked: nothing is staged, no email goes out.
-      if (gen !== this.gen) return;
       const res = await d.api.stageRecovery(final);
       d.session.noteUse();
       if (!res.ok) {
-        this.set({ step: 'failed', error: errorText(res.code === 'CHAIN_HEAD_MOVED' ? 'rotate_chain_moved' : res.status === 0 ? 'as_unreachable' : res.code) });
+        this.fail(errorText(res.code === 'CHAIN_HEAD_MOVED' ? 'rotate_chain_moved' : res.status === 0 ? 'as_unreachable' : res.code));
         return;
       }
       const expiresAt = typeof res.data.expires_at === 'number' ? res.data.expires_at : d.now() + 600;
@@ -206,11 +211,19 @@ export class RotateDriver extends Driver<RotateState> {
       if (gen !== this.gen) return;
       // A touch that failed or was cancelled in the system window: said in the same place, with Try again and Cancel.
       if (e instanceof CheckError) { this.set({ step: 'checking', error: errorText(e.code === 'failed' ? 'check_failed' : e.code) }); return; }
-      this.set({ step: 'failed', error: errorText('generic') });
+      this.fail(errorText('generic'));
     } finally {
-      oldRoot.privateSeed.fill(0);
-      newRoot.privateSeed.fill(0);
+      oldRoot?.privateSeed.fill(0);
+      newRoot?.privateSeed.fill(0);
     }
+  }
+
+  /** A failure that ends the flow: both codes are forgotten. */
+  private fail(error: string): void {
+    this.oldCode = null;
+    this.newCode = null;
+    this.staged = null;
+    this.set({ step: 'failed', error });
   }
 
   /** While waiting: read the chain again; done when the staged entry is in it, failed when the hand-off ran out. */
@@ -227,11 +240,8 @@ export class RotateDriver extends Driver<RotateState> {
         return;
       }
       // Something else took the place: the hand-off can never append any more.
-      if (e) { this.staged = null; this.set({ step: 'failed', error: errorText('rotate_chain_moved') }); return; }
+      if (e) { this.fail(errorText('rotate_chain_moved')); return; }
     }
-    if (this.d.now() >= st.expiresAt) {
-      this.staged = null;
-      this.set({ step: 'failed', error: errorText('handoff_expired') });
-    }
+    if (this.d.now() >= st.expiresAt) this.fail(errorText('handoff_expired'));
   }
 }

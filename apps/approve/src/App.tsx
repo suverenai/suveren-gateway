@@ -397,7 +397,8 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
     return () => window.clearInterval(t);
   }, [rotator, rotating.step]);
   // Signing (the touch is out, nothing sent yet): the tabs are locked until it is done, failed or cancelled.
-  const signing = (removing.step === 'checking' && !removing.error) || (rotating.step === 'checking' && !rotating.error);
+  const signing = (removing.step === 'checking' && !removing.error) || removing.step === 'sending'
+    || (rotating.step === 'checking' && !rotating.error) || rotating.step === 'sending';
   useEffect(() => { onLockChange(signing); }, [signing, onLockChange]);
   useEffect(() => () => onLockChange(false), [onLockChange]);
   // Started from the join's done screen ("Make a new code", mockup D1).

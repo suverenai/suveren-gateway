@@ -97,7 +97,8 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onCan
     case 'idle':
       return null;
     case 'confirm':
-    case 'checking': {
+    case 'checking':
+    case 'sending': {
       const t = st.target;
       return (
         <Screen title={st.self ? P.removeSelfTitle : P.removeTitle(t.label)}>
@@ -118,6 +119,8 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onCan
           {st.step === 'checking' && (
             <TouchWait text={P.touchWait} error={st.error} onRetry={onConfirm} onCancel={onCancelTouch} retryLabel={P.tryAgain} cancelLabel={P.cancel} />
           )}
+          {/* The touch was given: the request may be on its way. No Cancel. */}
+          {st.step === 'sending' && <TouchWait text={P.doSend} />}
         </Screen>
       );
     }
@@ -133,6 +136,7 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onCan
       return (
         <Screen title={P.devicesTitle}>
           <Notice kind="success">{P.removeDone(st.label)}</Notice>
+          {st.listError && <div data-testid="list-not-refreshed"><Notice kind="info">{st.listError}</Notice></div>}
           <p>{P.removeListNow}</p>
           <DeviceList rows={st.rows} nowSeconds={nowSeconds} />
           <button type="button" className="btn btn-primary btn-full" onClick={onDone}>{P.continue}</button>

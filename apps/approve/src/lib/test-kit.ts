@@ -124,10 +124,21 @@ export class FakeAs implements Transport {
   }
 
   /** Like the network: what goes in and what comes out is JSON text, so no object is shared between the two sides. */
+  /** While set, a chain append waits for it (the request is on its way). */
+  appendGate: Promise<void> | null = null;
+  /** The next chain append is stored, but its answer is lost (the phone sees no answer). */
+  loseNextAppendAnswer = false;
+  /** The next N chain reads fail with 503. */
+  failChainReads = 0;
+
   async call(method: Method, path: string, opts: { body?: unknown; bearer?: string } = {}): Promise<Reply> {
     if (this.down) throw new UnreachableError();
     const wire = opts.body === undefined ? undefined : JSON.parse(JSON.stringify(opts.body));
+    const isAppend = method === 'POST' && path === '/api/devices/chain' && (wire as { entry?: { op?: string } } | undefined)?.entry?.op !== 'genesis';
+    if (isAppend && this.appendGate) await this.appendGate;
+    if (method === 'GET' && path.startsWith('/api/devices/chain') && this.failChainReads > 0) { this.failChainReads--; return refusal(503, 'UNAVAILABLE'); }
     const r = await this.route(method, path, { body: wire, bearer: opts.bearer });
+    if (isAppend && this.loseNextAppendAnswer) { this.loseNextAppendAnswer = false; throw new UnreachableError(); }
     return JSON.parse(JSON.stringify(r)) as Reply;
   }
 

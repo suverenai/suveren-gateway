@@ -77,6 +77,13 @@ function Step({ state: st, onOld, onNew, onCancel, onCancelTouch, onRetryTouch, 
           <TouchWait text={P.touchWait} error={st.error} onRetry={onRetryTouch} onCancel={onCancelTouch} retryLabel={P.tryAgain} cancelLabel={P.cancel} />
         </Screen>
       );
+    case 'sending':
+      // The touch was given: the request may be on its way. No Cancel.
+      return (
+        <Screen title={P.rotateNewTitle}>
+          <TouchWait text={P.doSend} />
+        </Screen>
+      );
     case 'waiting':
       return (
         <Screen title={P.rotateTitle}>

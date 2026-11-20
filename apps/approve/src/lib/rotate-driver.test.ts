@@ -152,6 +152,37 @@ describe('replace the recovery code on the phone (DEC-85, mockup D1–D5)', () =
     expect(as.staged).toHaveLength(0);
   });
 
+  it('once the touch is given: a "sending" step without Cancel (M3)', async () => {
+    const { rt, recoveryCode } = await joined();
+    const d = driverOf(rt);
+    d.start();
+    await d.submitOld(recoveryCode);
+    const st = d.get();
+    if (st.step !== 'new') throw new Error(st.step);
+    const pending = d.confirmNew(st.code);
+    const seen: string[] = [];
+    const off = d.subscribe(() => { seen.push(d.get().step); if (d.get().step === 'sending') d.cancelTouch(); });
+    await pending;
+    off();
+    expect(seen).toContain('sending');
+    expect(d.get().step).toBe('waiting');
+  });
+
+  it('a failure forgets both codes; the session ending before the keys are derived still ends the flow (L6, L7)', async () => {
+    const { as, rt, recoveryCode } = await joined();
+    as.refuseStage = { status: 409, code: 'ROOT_KEY_TAKEN' };
+    const d = driverOf(rt);
+    d.start();
+    await d.submitOld(recoveryCode);
+    const st = d.get();
+    if (st.step !== 'new') throw new Error(st.step);
+    await d.confirmNew(st.code);
+    expect(d.get()).toEqual({ step: 'failed', error: errorText('root_key_taken') });
+    const priv = d as unknown as { oldCode: string | null; newCode: string | null };
+    expect(priv.oldCode).toBeNull();
+    expect(priv.newCode).toBeNull();
+  });
+
   it('the hand-off runs out without the email: said, nothing changed', async () => {
     const { as, rt, recoveryCode } = await joined();
     const d = driverOf(rt);

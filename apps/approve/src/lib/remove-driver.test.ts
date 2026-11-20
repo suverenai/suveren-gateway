@@ -118,6 +118,53 @@ describe('this phone removes a device (stage D3, mockup C1–C5)', () => {
     expect(as.entries).toHaveLength(3);
   });
 
+  it('once the touch is given the request is on its way: a "sending" step without Cancel (M3)', async () => {
+    const { as, rt, home } = await world();
+    const d = driverOf(rt);
+    await d.start(home.keyId);
+    let open!: () => void;
+    as.appendGate = new Promise((r) => { open = r; });
+    const pending = d.confirm();
+    while (d.get().step !== 'sending') await new Promise((r) => setTimeout(r, 1));
+    d.cancelTouch();
+    expect(d.get().step).toBe('sending');
+    open();
+    await pending;
+    expect(d.get()).toMatchObject({ step: 'done', label: 'Home Mac' });
+    expect(as.entries).toHaveLength(4);
+  });
+
+  it('the answer was lost but the removal went through: the chain says so, and the phone reports done, not a failure (M3)', async () => {
+    const { as, rt, home } = await world();
+    as.loseNextAppendAnswer = true;
+    const d = driverOf(rt);
+    await d.start(home.keyId);
+    await d.confirm();
+    expect(as.entries).toHaveLength(4);
+    expect(d.get()).toMatchObject({ step: 'done', label: 'Home Mac', self: false });
+  });
+
+  it('removed, but the new list could not be read: done, with the list as computed and a line that says so (L4)', async () => {
+    const { as, rt, home } = await world();
+    const d = driverOf(rt);
+    await d.start(home.keyId);
+    as.failChainReads = 5;
+    await d.confirm();
+    const st = d.get();
+    expect(st).toMatchObject({ step: 'done', label: 'Home Mac', listError: errorText('list_not_refreshed') });
+    if (st.step === 'done') expect(st.rows.map((r) => r.label)).toEqual(['My iPhone', 'Office Mac']);
+  });
+
+  it('removing itself wipes the keys at done, before the person presses on (L5)', async () => {
+    const { rt, me } = await world();
+    const d = driverOf(rt);
+    await d.start(me);
+    await d.confirm();
+    expect(d.get()).toMatchObject({ step: 'done', self: true });
+    expect(await rt.accounts.read()).toBeNull();
+    expect(await rt.keys.publicKeys()).toBeNull();
+  });
+
   it('the list moved meanwhile: the server refuses, and the phone says the list changed, not "nothing was added"', async () => {
     const { as, rt, home, office, root } = await world();
     const d = driverOf(rt);
