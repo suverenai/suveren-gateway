@@ -134,6 +134,15 @@ export interface Issued {
   approvers: Array<{ userId: string; did: string; identityCode: string }>;
 }
 
+/** The version a change continues, as this computer holds it (plaintext); the phone checks it against that version's grant. */
+export interface PhonePrevious {
+  profile: AgentProfile;
+  bounds: Record<string, string | number>;
+  scope: Record<string, string | number>;
+  intent: string;
+  expires_at: number;
+}
+
 /** A give prepared for the person's phone (`sendToPhone`): what the grant must cover, and what the ceremony then requests. */
 export interface PhoneGive {
   mandateId: string;
@@ -587,17 +596,23 @@ export class MandateGrants {
    *
    * The sealed request (`v: 2`) is a superset of a body (`v: 1`: scope and intent), so the row stays the mandate's body after the grant.
    */
-  async sendToPhone(i: IssueInput, shown: { title: string }): Promise<PhoneGive> {
+  /**
+   * `previous`: for a change, the version it continues, in plaintext (limits, scope, intent, end, profile). The phone shows the crossed-out
+   * diff from it and checks it first against the previous grant's hashes, so a wrong value here only gets the give refused there.
+   */
+  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious }): Promise<PhoneGive> {
     const dk = await deviceKeys();
     const s = await this.session();
     const plan = await this.planGrant(i, s, dk, false);
     // Some OTHER active device of this chain must be able to grant (its check key named in the chain): otherwise nobody can.
     const granters = dk.activeDevices(s.own).filter(x => x.key_id !== s.stored.keyId && !!x.check);
     if (granters.length === 0) return refuse('no_granting_phone', 'None of your other devices can give a mandate.');
+    if (plan.op === 'change' && !i.renewal && !shown.previous) return refuse('previous_unknown', 'The mandate this change continues could not be read on this computer.');
     const place = { authorization_id: plan.authorizationId, group_id: i.groupId, replaces: plan.replaces, chain_dids: [...plan.team.chainDids] };
     const give = {
       op: plan.op, profile: i.profile, bounds: i.bounds, payload: plan.payload, place, title: shown.title.slice(0, 200),
       prepared_at: plan.now, ...(i.renewal ? { renewal: true } : {}),
+      ...(plan.op === 'change' && shown.previous ? { previous: { ...shown.previous, mandate_version: plan.version - 1 } } : {}),
     };
     const readers = dk.activeDevices(s.own).map(x => ({ did: x.key_id, publicKey: dk.b64uDecode(x.read_pub) }));
     const sealed = await encryptProposalContent({ v: 2, mandate_id: plan.mandateId, mandate_version: plan.version, scope: i.scope, intent: i.intent, give }, readers);

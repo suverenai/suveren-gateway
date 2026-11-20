@@ -57,8 +57,11 @@ async function world() {
   open.push(as);
   const mandates = new StubMandates(as, SALES);
   const delivered: unknown[] = [];
+  /** This computer's copy of a held mandate (the MCP server's, in production): what a change shows as the previous version. */
+  const held = new Map<string, Record<string, unknown>>();
+  const reads = { heldBack: async () => [] as never, signedMandate: async (id: string) => (held.has(id) ? { old: held.get(id), team: { approverDids: [], approvals: null, caps: {} } } : { refusal: 'none', code: 'MANDATE_NOT_ACTIVE' }) as never };
   // No native helper: this computer has no check key, so it cannot give a mandate itself.
-  const gw: GatewayRig = await bootGateway({ as, mandate: { deliver: async a => { delivered.push(a); }, reads: { heldBack: async () => [] as never, signedMandate: async () => ({ refusal: 'none', code: 'MANDATE_NOT_ACTIVE' }) as never } } });
+  const gw: GatewayRig = await bootGateway({ as, mandate: { deliver: async a => { delivered.push(a); }, reads } });
   open.push(gw);
   const h = sessionHeaders(await gw.unlock());
   const post = (path: string, body: unknown = {}) => call(gw.port, 'POST', path, { headers: h, body });
@@ -100,7 +103,7 @@ async function world() {
     };
   };
   const del = (path: string) => call(gw.port, 'DELETE', path, { headers: h });
-  return { as, mandates, gw, post, get, del, rootDid, addPhone, asPost, delivered, restart };
+  return { as, mandates, gw, post, get, del, rootDid, addPhone, asPost, delivered, restart, held };
 }
 type W = Awaited<ReturnType<typeof world>>;
 
@@ -251,5 +254,55 @@ describe('give on the phone', () => {
     const row = w.mandates.rows.at(-1)!;
     const body = await w.gw.grants!.openBody({ mandateId: String(sent.body.mandateId), version: 1, grantHash: row.grantHash });
     expect(body).toEqual({ scope: REQ.scope, intent: REQ.intent });
+  });
+
+  it('a change sent to the phone carries the version it continues (plaintext from this computer), which the phone checks against that grant', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    // version 1, given on the phone
+    const { sent } = await prepareAndSend(w);
+    const first = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, first.c)).status).toBe(201);
+    const done = await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`);
+    expect(done.body).toMatchObject({ state: 'done' });
+    const authz1 = String(done.body.authorizationId);
+    const v1 = w.mandates.rows.at(-1)!;
+    const v1Grant = (v1 as unknown as { grant: Record<string, unknown> }).grant;
+    w.held.set(authz1, { authorizationId: authz1, profileId: SALES.id, groupId: 'personal', ownerDid: w.rootDid, bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', expiresAt: v1Grant.expires_at });
+
+    // version 2: a higher limit, sent to the phone
+    const CHANGE = { ...REQ, limits: { ...LIMITS, value_max: 3000 }, replaces: authz1 };
+    const p = await w.post('/api/mandate/prepare', CHANGE);
+    expect(p.status, p.text).toBe(200);
+    const r = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...CHANGE });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ mandateVersion: 2 });
+    const { c } = await phoneOpens(w, phone);
+    expect(c.give.op).toBe('change');
+    expect(c.give.previous).toMatchObject({ mandate_version: 1, intent: REQ.intent, scope: REQ.scope, expires_at: v1Grant.expires_at });
+    expect(c.give.previous.bounds.value_max).toBe(1000);
+    // what the phone recomputes from those values is what version 1's grant carries
+    expect(computeBoundsHash(c.give.previous.bounds, c.give.previous.profile)).toBe(v1Grant.bounds_hash);
+    expect(computeScopeHash(c.give.previous.scope, c.give.previous.profile)).toBe(v1Grant.scope_hash);
+    expect(computeIntentHash(c.give.previous.intent)).toBe((v1Grant.gate_content_hashes as Record<string, string>).intent);
+  });
+
+  it('a change whose previous version this computer cannot read is not sent to the phone', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const first = await phoneOpens(w, phone);
+    await phoneSigns(w, phone, first.c);
+    const done = await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`);
+    const authz1 = String(done.body.authorizationId);
+    const before = w.mandates.bodies.length;
+    const CHANGE = { ...REQ, limits: { ...LIMITS, value_max: 3000 }, replaces: authz1 };
+    const p = await w.post('/api/mandate/prepare', CHANGE);
+    const r = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...CHANGE });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'previous_unknown' });
+    expect(w.mandates.bodies).toHaveLength(before);
   });
 });

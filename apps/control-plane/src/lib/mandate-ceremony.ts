@@ -33,7 +33,7 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
-import type { MandateGrants, Issued, PreparedGrant, PhoneGive } from './mandate-grants';
+import type { MandateGrants, Issued, PreparedGrant, PhoneGive, PhonePrevious } from './mandate-grants';
 import { createHash } from 'node:crypto';
 import { canonicalize } from '@hap/core';
 import { GrantRefusal } from './mandate-grants';
@@ -121,6 +121,8 @@ export interface CeremonyDeps {
   onIssued?: (info: { mandateId: string }) => void;
   /** The mandate id a NEW mandate must get (chosen when the approval was claimed); undefined: the grant picks one. */
   newMandateId?: () => string | undefined;
+  /** This computer's copy of a mandate it holds (limits, scope, intent, end): what a change on the phone shows as the previous version. */
+  signedMandate?: (authorizationId: string) => Promise<SignedMandate | null>;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -534,11 +536,20 @@ export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Prom
   const ctx = await grantedContext(req, plan, deps);
   let give: PhoneGive;
   try {
-    give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title });
+    give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title, ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}) });
   } catch (err) { return grantRefused(err); }
   const { issueInput: _fn, ...stored } = ctx;
   deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown> });
   return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
+}
+
+/** The version a change continues, from this computer's own copy; undefined when it cannot be read (the grants refuse then). */
+async function previousOf(authorizationId: string, deps: CeremonyDeps): Promise<PhonePrevious | undefined> {
+  const old = await deps.signedMandate?.(authorizationId).catch(() => null);
+  if (!old) return undefined;
+  const profile = await resolveProfile(deps.as, old.profileId).catch(() => null);
+  if (!profile) return undefined;
+  return { profile, bounds: old.bounds, scope: old.context, intent: old.intent, expires_at: old.expiresAt };
 }
 
 /**

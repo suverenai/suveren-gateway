@@ -36,10 +36,13 @@ export interface OwnMandate {
   givenAt: number | null;
 }
 
+/** A mandate of this person that another device of the chain ended (the notice "ended on …", mockup F2): the revoke verified here. */
+export interface EndedElsewhere { title: string; by: string; at: number }
+
 export interface EndDeps { keys: DeviceKeyStore; api: AsApi; accounts: AccountStore; session: DeviceSession; now: () => number }
 
 /** This person's mandates the phone can end: each one checked (the file header). */
-export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: OwnMandate[] } | { ok: false; code: string }> {
+export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: OwnMandate[]; ended: EndedElsewhere[] } | { ok: false; code: string }> {
   const s = d.session.current();
   const bearer = d.session.bearer();
   const account = await d.accounts.read();
@@ -47,8 +50,16 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
   const mine = await d.api.mine(bearer);
   if (!mine.ok) return { ok: false, code: mine.status === 401 ? 'session_ended' : mine.code };
   const items: OwnMandate[] = [];
+  const ended: EndedElsewhere[] = [];
+  const titleOf = (row: Record<string, unknown>) => typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? row.profileId.replace(/@.*$/, '').split('/').pop() ?? row.profileId : 'a mandate');
   for (const row of Array.isArray(mine.data.mandates) ? mine.data.mandates : []) {
-    if (!isObj(row) || typeof row.authorization_id !== 'string' || row.status === 'revoked' || row.status === 'expired') continue;
+    if (!isObj(row) || typeof row.authorization_id !== 'string') continue;
+    if (row.status === 'revoked') {
+      const e = await endedElsewhere(d, row, titleOf(row), { chain: s.chain, ownKeyId: account.key_id, rootDid: account.root_did, bearer, asKey: account.as_key });
+      if (e) ended.push(e);
+      continue;
+    }
+    if (row.status === 'expired') continue;
     const authorizationId = row.authorization_id;
     const m = await d.api.mandates(authorizationId, bearer);
     if (!m.ok || m.data.revoked) continue;
@@ -68,7 +79,7 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
     if (!granted) continue;
     const fields: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(granted.grant as Record<string, unknown>)) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
-    const title = typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? row.profileId.replace(/@.*$/, '').split('/').pop() ?? row.profileId : 'a mandate');
+    const title = titleOf(row);
     const g0 = granted.grant as Record<string, unknown>;
     const by = typeof g0.key_id === 'string' && g0.key_id !== account.key_id ? s.chain.devices[g0.key_id] ?? null : null;
     items.push({
@@ -77,7 +88,44 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
     });
   }
   items.sort((a, b) => a.expiresAt - b.expiresAt);
-  return { ok: true, items };
+  return { ok: true, items, ended };
+}
+
+/**
+ * "Ended on <device>": only for a revoke that verifies against THIS phone's chain, signed by another active device of it, for this
+ * person's own mandate (the signed mandate under the pinned Authority Server key). A revoke row that does not verify says nothing.
+ */
+async function endedElsewhere(
+  d: EndDeps, row: Record<string, unknown>, title: string,
+  ctx: { chain: import('@hap/core/device-keys').ChainState; ownKeyId: string; rootDid: string; bearer: string; asKey: Parameters<typeof verifyMandateBlob>[1] },
+): Promise<EndedElsewhere | null> {
+  const m = await d.api.mandates(row.authorization_id as string, ctx.bearer);
+  if (!m.ok) return null;
+  let mandateId: string | null = null;
+  for (const e of Array.isArray(m.data.mandates) ? m.data.mandates : []) {
+    if (!isObj(e) || typeof e.blob !== 'string') continue;
+    // an ended mandate may be past its end: read who owns it and its id, the signature still checked
+    const v = await verifyMandateBlob(e.blob, ctx.asKey, 0);
+    if (v.ok && v.full.mandate_owners?.[0]?.did === ctx.rootDid) { mandateId = v.full.mandate_id; break; }
+  }
+  if (!mandateId) return null;
+  const g = await d.api.grants(mandateId, ctx.bearer);
+  const rows = g.ok ? grantRowsOf(g.data) : null;
+  if (!rows) return null;
+  for (const r of rows) {
+    if (r.op !== 'revoke' || !isObj(r.grant) || typeof r.mandate_version !== 'number') continue;
+    const rg = r.grant as Record<string, unknown>;
+    if (rg.key_id === ctx.ownKeyId) continue;
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rg)) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
+    try {
+      await verifyGrant({ grant: rg, sig: r.sig, check: r.check ?? undefined }, { chain: ctx.chain, mandateFields: fields, expect: { ops: ['revoke'], mandate_id: mandateId, mandate_version: r.mandate_version } });
+    } catch { continue; }
+    const by = typeof rg.key_id === 'string' ? ctx.chain.devices[rg.key_id] : undefined;
+    if (!by) continue;
+    return { title, by: by.label, at: typeof rg.granted_at === 'number' ? rg.granted_at : 0 };
+  }
+  return null;
 }
 
 export type EndState =

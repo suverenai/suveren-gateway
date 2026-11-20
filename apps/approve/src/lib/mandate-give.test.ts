@@ -51,7 +51,7 @@ async function world() {
     };
     edit(content);
     const sealed = await encryptProposalContent(content, [{ did: keys.keyId, publicKey: keys.readPub }]);
-    as.prepared = [{ mandate_id: MID, mandate_version: 1, submitted_by_key_id: from, ciphertext: sealed.content.ciphertext, device_key: sealed.content.encrypted_keys[keys.keyId], stored_at: as.now(), expires_at: as.now() + 7 * 86400 }];
+    as.prepared = [{ mandate_id: MID, mandate_version: content.mandate_version, submitted_by_key_id: from, ciphertext: sealed.content.ciphertext, device_key: sealed.content.encrypted_keys[keys.keyId], stored_at: as.now(), expires_at: as.now() + 7 * 86400 }];
     return { content, payload };
   };
 
@@ -140,10 +140,10 @@ describe('reading a give on the phone', () => {
     expect(await refusedCode(w)).toBe('give_version_invalid');
   });
 
-  it('does not offer a change yet (it needs the previous version to show what changes)', async () => {
+  it('a change without the version it continues is not shown', async () => {
     const w = await world();
     await w.prepare((c) => { c.give.op = 'change'; });
-    expect(await refusedCode(w)).toBe('give_change_unsupported');
+    expect(await refusedCode(w)).toBe('give_previous_mismatch');
   });
 
   it('skips a plain body (v1): a mandate granted on a computer is not a give', async () => {
@@ -269,3 +269,81 @@ describe('giving it', () => {
 });
 
 void b64uEncode;
+
+describe('a change on the phone (mockup B1): the previous version is checked against its grant', () => {
+  const AUTHZ2 = 'authz_00000000-0000-4000-8000-0000000000bb';
+  const NEW_BOUNDS: Record<string, string | number> = { ...BOUNDS, value_max: 3000 };
+
+  /** The phone gives v1 (a real grant at the Authority Server), then the computer prepares v2 with the previous values. */
+  async function changeWorld(editPrevious: (pv: Record<string, any>) => void = () => {}, edit: (c: Record<string, any>) => void = () => {}) {
+    const w = await world();
+    await w.prepare();
+    const d = new GiveDriver(w.deps);
+    d.open(await onlyItem(w));
+    await d.give();
+    const v1 = w.as.postedGrants[0].grant as MandateGrant;
+    await w.prepare((c) => {
+      c.mandate_version = 2;
+      c.give.op = 'change';
+      c.give.bounds = { ...NEW_BOUNDS };
+      c.give.payload.bounds_hash = computeBoundsHash(NEW_BOUNDS as never, SALES);
+      c.give.place.authorization_id = AUTHZ2;
+      c.give.place.replaces = AUTHZ;
+      const previous: Record<string, any> = { profile: SALES, bounds: { ...BOUNDS }, scope: { ...SCOPE }, intent: INTENT, expires_at: (v1 as unknown as Record<string, unknown>).expires_at, mandate_version: 1 };
+      editPrevious(previous);
+      c.give.previous = previous;
+      edit(c);
+    });
+    return { w, v1 };
+  }
+
+  it('shows the change with the old value crossed out, and grants version 2 with one touch', async () => {
+    const { w } = await changeWorld();
+    const item = await onlyItem(w);
+    expect(item).toMatchObject({ op: 'change', version: 2 });
+    const row = item.diff!.rows.find((r) => r.field === 'value_max');
+    expect(row).toBeTruthy();
+    expect(String(row!.before)).toContain('1');
+    expect(String(row!.after)).toContain('3');
+    const d = new GiveDriver(w.deps);
+    d.open(item);
+    await d.give();
+    expect(['signed', 'not_received']).toContain(d.get().step);
+    const posted = w.as.postedGrants.at(-1)!;
+    expect(posted.op).toBe('change');
+    await verifyGrant({ grant: posted.grant, sig: posted.sig, check: posted.check }, { chain: await w.as.state(), mandateFields: item.members, expect: { ops: ['change'], mandate_id: MID, mandate_version: 2 } });
+  });
+
+  // A computer (or a server) that shows other "old" values than the version that was signed: no card.
+  const lies: Array<[string, (pv: Record<string, any>) => void]> = [
+    ['other old limits', (pv) => { pv.bounds.value_max = 50; }],
+    ['another old scope', (pv) => { pv.scope.currency = 'USD'; }],
+    ['another old intent', (pv) => { pv.intent = 'Something else.'; }],
+    ['another old end', (pv) => { pv.expires_at += 86400; }],
+    ['the wrong previous version', (pv) => { pv.mandate_version = 0; }],
+  ];
+  for (const [name, editPrevious] of lies) {
+    it(`refuses ${name}: no card, nothing to sign`, async () => {
+      const { w } = await changeWorld(editPrevious);
+      expect(await refusedCode(w)).toBe('give_previous_mismatch');
+    });
+  }
+
+  it('refuses a previous grant that does not verify against the chain (forged at the server)', async () => {
+    const { w } = await changeWorld();
+    const rows = w.as.grants.get(MID)!;
+    rows[0] = { ...rows[0], sig: rows[0].sig.slice(0, -4) + 'AAAA' };
+    expect(await refusedCode(w)).toBe('give_previous_mismatch');
+  });
+
+  it('refuses a change that does not take over from the previous authorization', async () => {
+    const { w } = await changeWorld(() => {}, (c) => { c.give.place.replaces = 'authz_00000000-0000-4000-8000-0000000000cc'; });
+    expect(await refusedCode(w)).toBe('give_place_invalid');
+  });
+
+  it('refuses a change whose version does not follow the newest grant', async () => {
+    const { w } = await changeWorld();
+    w.as.prepared[0].mandate_version = 3;
+    expect(await refusedCode(w)).toBeDefined();
+  });
+});

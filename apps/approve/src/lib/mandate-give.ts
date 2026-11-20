@@ -25,7 +25,8 @@ import {
   activeDevices, b64uEncode, buildGrant, objectHash, randomBytes, signedBytes, verifyGrant, verifyReceipt,
   type ChainState, type MandateGrant,
 } from '@hap/core/device-keys';
-import { createGrantMembers } from '@hap/core/mandate-grant';
+import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
+import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
 import { Driver } from './driver';
 import { giveHashes } from './give-hashes';
 import { openSealedObject } from './content';
@@ -65,11 +66,14 @@ export interface GiveItem {
   expiresAt: number;
   /** Seconds the mandate lasts from now (shown as the duration). */
   lastsSeconds: number;
+  /** A change: the version it continues, as checked against that version's grant, and the diff shown (old values crossed out). */
+  previous?: { bounds: Record<string, string | number>; scope: Record<string, string | number>; intent: string; expiresAt: number; profile: AgentProfile };
+  diff?: MandateDiff;
 }
 
 export type GiveCode =
   | 'give_unreadable' | 'give_not_own' | 'give_from_unknown_device' | 'give_hash_mismatch' | 'give_place_invalid'
-  | 'give_expired' | 'give_version_invalid' | 'give_change_unsupported';
+  | 'give_expired' | 'give_version_invalid' | 'give_change_unsupported' | 'give_previous_mismatch';
 export type GiveCheck = { ok: true; item: GiveItem } | { ok: false; code: GiveCode; mandateId?: string };
 
 /** A row of `GET /api/mandates/prepared`, as far as the phone reads it. */
@@ -125,10 +129,44 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
 
   // version: a first give is v1 under an unused id; a change is shown only from a give that names the previous one (not built yet)
   const stored = ctx.grants.filter((r) => r.op === 'grant' || r.op === 'change' || r.op === 'revoke');
+  let previous: GiveItem['previous'];
+  let diff: MandateDiff | undefined;
   if (g.op === 'grant') {
     if (version !== 1 || stored.length > 0) return bad('give_version_invalid');
   } else {
-    return bad('give_change_unsupported');
+    // A change: shown only with the version it continues, and only when that version's grant verifies against THIS phone's chain
+    // and carries exactly the hashes recomputed here from the previous values the computer sent (what is crossed out is what was signed).
+    if (g.renewal === true) return bad('give_change_unsupported');
+    const pv = g.previous;
+    if (!isObj(pv) || !isObj(pv.profile) || !isScalars(pv.bounds) || !isScalars(pv.scope) || typeof pv.intent !== 'string' || pv.intent.length > 20_000
+      || typeof pv.expires_at !== 'number' || pv.mandate_version !== version - 1) return bad('give_previous_mismatch');
+    if (stored.some((r) => r.op === 'revoke')) return bad('give_version_invalid');
+    const live = stored.filter((r) => typeof r.mandate_version === 'number' && isObj(r.grant));
+    const newest = live.reduce<GrantRowLike | null>((a, r) => (!a || (r.mandate_version as number) > (a.mandate_version as number) ? r : a), null);
+    if (!newest || newest.mandate_version !== version - 1) return bad('give_version_invalid');
+    const pg = newest.grant as Record<string, unknown>;
+    const fixed = new Set(GRANT_FIXED_MEMBERS);
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(pg)) if (!fixed.has(k)) fields[k] = v;
+    try {
+      await verifyGrant({ grant: pg, sig: newest.sig, check: newest.check ?? undefined }, { chain: ctx.chain, mandateFields: fields, expect: { ops: ['grant', 'change'], mandate_id: mandateId, mandate_version: version - 1 } });
+    } catch { return bad('give_previous_mismatch'); }
+    let ph;
+    try {
+      ph = giveHashes({ profile: pv.profile as unknown as AgentProfile, bounds: pv.bounds, scope: pv.scope, intent: pv.intent });
+    } catch { return bad('give_previous_mismatch'); }
+    const gch = isObj(pg.gate_content_hashes) ? pg.gate_content_hashes : {};
+    if (pg.profile_id !== (pv.profile as { id?: unknown }).id || pg.profile_hash !== ph.profile || pg.bounds_hash !== ph.bounds || pg.scope_hash !== ph.scope
+      || gch.intent !== ph.intent || pg.expires_at !== pv.expires_at) return bad('give_previous_mismatch');
+    // The change takes over from the authorization the previous version lives under.
+    if (place.replaces !== pg.authorization_id) return bad('give_place_invalid');
+    previous = { bounds: pv.bounds, scope: pv.scope, intent: pv.intent, expiresAt: pv.expires_at, profile: pv.profile as unknown as AgentProfile };
+    try {
+      diff = computeMandateDiff({
+        before: { profile: previous.profile as never, bounds: previous.bounds, scope: previous.scope, intent: previous.intent, mode: String(pg.commitment_mode ?? ''), expiresAt: previous.expiresAt },
+        after: { profile: profile as never, bounds: g.bounds as Record<string, string | number>, scope: content.scope as Record<string, string | number>, intent: content.intent, mode: String(payload.commitment_mode ?? ''), expiresAt: payload.expires_at },
+      });
+    } catch { return bad('give_previous_mismatch'); }
   }
 
   let members: Record<string, unknown>;
@@ -142,6 +180,7 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
       title: (g.title as string).trim() || profile.name || profile.id, profile, bounds: g.bounds as Record<string, string | number>,
       scope: content.scope as Record<string, string | number>, intent: content.intent, payload, members,
       expiresAt: payload.expires_at, lastsSeconds: Math.max(0, payload.expires_at - ctx.now),
+      ...(previous ? { previous } : {}), ...(diff ? { diff } : {}),
     },
   };
 }

@@ -39,7 +39,7 @@ import {
 import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { OpenSessionScreen } from './screens/OpenSession';
 import { GiveDriver, readGives, type GiveItem } from './lib/mandate-give';
-import { EndDriver, readOwnMandates, type OwnMandate } from './lib/mandate-end';
+import { EndDriver, readOwnMandates, type OwnMandate, type EndedElsewhere } from './lib/mandate-end';
 import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
 import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
@@ -249,6 +249,7 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   // D3: mandates to give (prepared on a computer), this person's own mandates (End), and notices of gives made on other devices.
   const [gives, setGives] = useState<GiveItem[]>([]);
   const [own, setOwn] = useState<OwnMandate[]>([]);
+  const [endedElsewhere, setEndedElsewhere] = useState<EndedElsewhere[]>([]);
   const giver = useMemo(() => new GiveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
   const giving = useDriver(giver);
   const ender = useMemo(() => new EndDriver({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
@@ -260,7 +261,7 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     const g = await readGives(rt);
     if (g.ok) setGives(g.items); else if (g.code === 'session_ended') { onEnded(); return; }
     const m = await readOwnMandates(rt);
-    if (m.ok) setOwn(m.items);
+    if (m.ok) { setOwn(m.items); setEndedElsewhere(m.ended); }
   }, [rt, onEnded]);
 
   const load = useCallback(async (byPerson: boolean) => {
@@ -440,7 +441,10 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     );
   }
   const now = rt.now();
-  const notices = own.filter((m) => m.givenOn && m.givenAt !== null && now - (m.givenAt ?? 0) < 14 * 86400).map((m) => P.noticeGiven(m.title, m.givenOn!));
+  const notices = [
+    ...own.filter((m) => m.givenOn && m.givenAt !== null && now - (m.givenAt ?? 0) < 14 * 86400).map((m) => P.noticeGiven(m.title, m.givenOn!)),
+    ...endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by)),
+  ];
   return (
     <RequestsScreen
       extra={(

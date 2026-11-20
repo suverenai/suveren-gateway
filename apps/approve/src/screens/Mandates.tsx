@@ -5,7 +5,8 @@
  * (lib/mandate-give.ts): what is shown is what is signed.
  */
 import { useEffect, useRef, useState } from 'react';
-import { giveSummaryLine, limitRows, scopeLabel, durationText, EndMandate, type SchemaLike, type EndState as SharedEndState } from '@suveren/approval-card/mandate-screens';
+import { giveSummaryLine, limitRows, scopeLabel, durationText, EndMandate, S13, type SchemaLike, type EndState as SharedEndState } from '@suveren/approval-card/mandate-screens';
+import { MandateChangeDiff } from '@suveren/approval-card/components/MandateChangeCard';
 import { UnknownTop, ResultFoot } from '@suveren/approval-card/components/ApprovalResult';
 import type { GiveItem, GiveState } from '../lib/mandate-give';
 import type { OwnMandate, EndState } from '../lib/mandate-end';
@@ -20,14 +21,31 @@ export function GiveRow({ item, nowSeconds, onOpen }: { item: GiveItem; nowSecon
   return (
     <div className="av3-row" data-testid="give-row" data-key={item.key}>
       <button type="button" className="appr-item-head av3-row-head" onClick={onOpen}>
-        <span className="av3-type"><b>{P.giveRowKind}</b><span className="av3-area">{item.title}</span><span>{whenText(item.preparedAt, nowSeconds)}</span></span>
-        <span className="av3-row-title">{P.giveTitle(item.title)}</span>
+        <span className="av3-type"><b>{item.op === 'change' ? P.changeRowKind : P.giveRowKind}</b><span className="av3-area">{item.title}</span><span>{whenText(item.preparedAt, nowSeconds)}</span></span>
+        <span className="av3-row-title">{item.op === 'change' ? S13.changeTitle(item.title) : P.giveTitle(item.title)}</span>
       </button>
     </div>
   );
 }
 
+/** A change on the phone (mockup B1): the gateway's change card body, old values crossed out; the diff was checked against the previous grant. */
+function ChangeBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }) {
+  const summary = giveSummaryLine({ limits: item.bounds, scope: item.scope, boundsSchema: schemaOf(item, 'boundsSchema'), durationSeconds: item.lastsSeconds });
+  return (
+    <>
+      <div className="av3-type"><b>{P.changeRowKind}</b><span className="av3-area">{item.title}</span></div>
+      <h2 className="av3-title" data-testid="give-title">{S13.changeTitle(item.title)}</h2>
+      {summary && <p className="sum-line" data-testid="mandate-summary">{summary}</p>}
+      <p className="from" data-testid="give-from">{P.giveFrom(item.preparedBy, whenText(item.preparedAt, nowSeconds))}</p>
+      <p>{S13.changeOnlyListed}</p>
+      <div data-testid="change-diff">{item.diff && <MandateChangeDiff diff={item.diff} intentByAi={false} />}</div>
+      <p className="form-hint">{S13.changeOnlyOwner}</p>
+    </>
+  );
+}
+
 function GiveBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }) {
+  if (item.op === 'change' && item.diff) return <ChangeBody item={item} nowSeconds={nowSeconds} />;
   const bounds = schemaOf(item, 'boundsSchema');
   const scopeSchema = schemaOf(item, 'scopeSchema');
   const limits = limitRows(item.bounds, bounds);
@@ -107,14 +125,14 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onCancelTouch, on
       {state.step === 'review' && (
         <footer className="av3-foot">
           <div className="av3-btns-stack">
-            <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-give" onClick={onGive}>{P.giveButton}</button>
+            <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-give" onClick={onGive}>{item.op === 'change' ? P.changeButton : P.giveButton}</button>
             <button type="button" className="av3-btn" onClick={onLater}>{P.cancel}</button>
           </div>
         </footer>
       )}
       {state.step === 'checking' && (
         <footer className="av3-foot">
-          <TouchWait text={P.openBusy} error={state.error} onRetry={onGive} onCancel={onCancelTouch} retryLabel={P.giveButton} cancelLabel={P.cancel} />
+          <TouchWait text={P.openBusy} error={state.error} onRetry={onGive} onCancel={onCancelTouch} retryLabel={item.op === 'change' ? P.changeButton : P.giveButton} cancelLabel={P.cancel} />
         </footer>
       )}
       {state.step === 'sending' && (

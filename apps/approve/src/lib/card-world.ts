@@ -89,7 +89,7 @@ async function seal(rt: TestRuntime, args: Record<string, unknown>, context: obj
 export async function cardWorld(o: WorldOptions = {}) {
   const as = await FakeAs.create();
   const rt = testRuntime(as);
-  await registerPhone(rt, as);
+  const { recoveryCode } = await registerPhone(rt, as);
   const opened = await rt.session.open();
   if (!opened.ok) throw new Error('the session did not open');
   const account = (await rt.accounts.read())!;
@@ -119,5 +119,5 @@ export async function cardWorld(o: WorldOptions = {}) {
   };
   as.byId.set(PROPOSAL_ID, proposal);
   as.pending = [proposal];
-  return { as, rt, account, keys, proposal, payload, args };
+  return { as, rt, account, keys, proposal, payload, args, recoveryCode };
 }

@@ -3,7 +3,9 @@
  * key, granted by this phone with its check; FakeAs stores a posted revoke only when hap-core verifies it against the newest grant.
  */
 import { describe, it, expect } from 'vitest';
-import { verifyGrant, type MandateGrant } from '@hap/core/device-keys';
+import { verifyGrant, buildGrant, signedBytes, b64uEncode, randomBytes, rootKeyFromRecoveryCode, type MandateGrant } from '@hap/core/device-keys';
+import { GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
+import { PeerComputer, addWithRoot } from './test-kit';
 import { cardWorld, AUTHZ, MANDATE_ID, PROFILE_ID } from './card-world';
 import { readOwnMandates, EndDriver } from './mandate-end';
 
@@ -60,5 +62,47 @@ describe('ending a mandate on the phone', () => {
     d.open(r.items[0]);
     await d.end();
     expect(d.get()).toMatchObject({ step: 'failed', error: expect.stringContaining('still runs') });
+  });
+});
+
+describe('"ended on <device>" (mockup F2): only a revoke that verifies against this phone\'s chain', () => {
+  /** Another computer of this person ends the mandate: a revoke signed with its device key over the newest grant's members. */
+  async function endedOnComputer(tamper = false) {
+    const w = await world();
+    const root = await rootKeyFromRecoveryCode(w.recoveryCode);
+    const computer = await PeerComputer.create('Office Mac');
+    await addWithRoot(w.as, root, computer);
+    await w.rt.session.open();
+    const state = await w.as.state();
+    const top = w.as.grants.get(MANDATE_ID)![0];
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(top.grant as Record<string, unknown>)) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
+    const g = buildGrant({ op: 'revoke', owner_did: w.account.root_did, key_id: computer.keyId, chain_seq: state.head.seq, chain_head: state.head.hash, mandate_id: MANDATE_ID, mandate_version: 1, granted_at: w.as.now(), nonce: b64uEncode(randomBytes(16)) }, fields);
+    let sig = b64uEncode(await computer.sign(signedBytes(g)));
+    if (tamper) sig = sig.slice(0, -4) + 'AAAA';
+    w.as.grants.set(MANDATE_ID, [...w.as.grants.get(MANDATE_ID)!, { mandate_version: 1, op: 'revoke', grant: g, sig, check: null }]);
+    w.as.mine[0].status = 'revoked';
+    return w;
+  }
+
+  it('names the computer that ended it', async () => {
+    const w = await endedOnComputer();
+    expect(await readOwnMandates(w.deps)).toMatchObject({ ok: true, items: [], ended: [{ title: 'Purchases', by: 'Office Mac' }] });
+  });
+
+  it('a revoke row that does not verify says nothing', async () => {
+    const w = await endedOnComputer(true);
+    expect(await readOwnMandates(w.deps)).toMatchObject({ ok: true, items: [], ended: [] });
+  });
+
+  it('a revoke made on this phone is not "ended elsewhere"', async () => {
+    const w = await world();
+    const r = await readOwnMandates(w.deps);
+    if (!r.ok) throw new Error(r.code);
+    const d = new EndDriver(w.deps);
+    d.open(r.items[0]);
+    await d.end();
+    w.as.mine[0].status = 'revoked';
+    expect(await readOwnMandates(w.deps)).toMatchObject({ ok: true, ended: [] });
   });
 });
