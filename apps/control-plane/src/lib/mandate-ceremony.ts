@@ -520,16 +520,13 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
 
 // ─── give on the phone (device-keys plan 4.4 "Transport", DEC-86) ──────────────
 
-/** A give waiting on the person's phone: kept in this process only; a restart drops it (the person prepares it again). */
-interface PhoneGivePending { ctx: GrantedContext; give: PhoneGive; startedAt: number }
-const phoneGives = new Map<string, PhoneGivePending>();
-/** How long a give waits for the phone here. The Authority Server keeps the prepared row longer; after this the page prepares it again. */
-export const PHONE_GIVE_TTL_MS = 30 * 60 * 1000;
+/** What the ceremony keeps of a give waiting on the phone: the context without its functions (it is sealed in the vault, see phone-give-store.ts). */
+type StoredContext = Omit<GrantedContext, 'issueInput'>;
 
 /**
  * Prepare the give for the person's phone instead of granting it here (a computer without a check key, or the person chose the phone):
  * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
- * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`).
+ * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
  */
 export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
@@ -539,36 +536,36 @@ export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Prom
   try {
     give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title });
   } catch (err) { return grantRefused(err); }
-  const now = Date.now();
-  for (const [k, v] of phoneGives) if (now - v.startedAt > PHONE_GIVE_TTL_MS) phoneGives.delete(k);
-  phoneGives.set(give.mandateId, { ctx, give, startedAt: now });
+  const { issueInput: _fn, ...stored } = ctx;
+  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown> });
   return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
 }
 
 /**
  * Has the phone given it? `waiting` while no grant of that version is stored; `done` once the phone's grant verified here with exactly the
- * planned members AND the Authority Server issued the mandate; a refusal throws. `unknown`: nothing waits under this id here.
+ * planned members AND the Authority Server issued the mandate; a refusal throws (and ends the wait). `unknown`: nothing waits under this id.
  */
 export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
-  const p = phoneGives.get(mandateId);
-  if (!p || Date.now() - p.startedAt > PHONE_GIVE_TTL_MS) { phoneGives.delete(mandateId); return { state: 'unknown' }; }
+  const store = deps.grants!.phoneGives;
+  const p = store.get(mandateId);
+  if (!p) return { state: 'unknown' };
   let issued: Issued | null;
   try {
-    issued = await deps.grants!.phoneGrant(p.give);
-  } catch (err) { phoneGives.delete(mandateId); return grantRefused(err); }
+    issued = await deps.grants!.phoneGrant(p.give as unknown as PhoneGive);
+  } catch (err) { store.drop(mandateId); return grantRefused(err); }
   if (!issued) return { state: 'waiting' };
-  phoneGives.delete(mandateId);
-  const r = await requestGranted(p.ctx, issued, deps);
+  store.drop(mandateId);
+  const r = await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
   return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
 }
 
 /** The person stopped waiting for the phone on this page. The prepared row runs out at the Authority Server by itself. */
-export function cancelPhoneGive(mandateId: string): boolean {
-  return phoneGives.delete(mandateId);
+export function cancelPhoneGive(mandateId: string, deps: CeremonyDeps): boolean {
+  return deps.grants?.phoneGives.drop(mandateId) ?? false;
 }
 
 /** Request the granted mandate from the Authority Server, deliver its gate content, retire what it replaces. */
-async function requestGranted(ctx: GrantedContext, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+async function requestGranted(ctx: StoredContext, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
   const { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, enc } = ctx;
   const user = deps.user!;
   const grants = deps.grants!;

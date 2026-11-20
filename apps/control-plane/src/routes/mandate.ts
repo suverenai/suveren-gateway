@@ -166,7 +166,10 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     } catch (err) { answerRefusal(res, err); }
   });
   router.delete('/give-on-phone/:mandateId', (req, res) => {
-    res.json({ ok: cancelPhoneGive(req.params.mandateId) });
+    try {
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      res.json({ ok: cancelPhoneGive(req.params.mandateId, d) });
+    } catch (err) { answerRefusal(res, err); }
   });
   // End a mandate on a gateway with a device chain: signed by this computer's device key, final (plan 4.4).
   // Anything else (no chain) is not served here: the page revokes through the Authority Server as before.

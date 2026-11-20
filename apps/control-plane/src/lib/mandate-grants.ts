@@ -32,6 +32,7 @@ import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { PinRefusedError, type DevicePinStore } from './device-pin-store';
 import { MandateGrantStore } from './mandate-grant-store';
+import { PhoneGiveStore } from './phone-give-store';
 import type { TeamTrustStore, TeamTrustCode, VerifiedTeam } from './team-trust-store';
 import { ensureTeamTrust, refreshTeamTrust, honouredTeam, teamTrustFresh, type TeamTrustEnv } from './team-trust';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
@@ -169,6 +170,12 @@ export class MandateGrants {
   constructor(private readonly d: GrantDeps) {
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
   }
+
+  /** Gives waiting on the person's phone, sealed in this gateway's vault (kept across a restart). */
+  get phoneGives(): PhoneGiveStore {
+    return (this.phoneGiveStore ??= new PhoneGiveStore(this.d.vault, this.now));
+  }
+  private phoneGiveStore?: PhoneGiveStore;
 
   /** Does this gateway have a device chain (and so grant mandates itself)? Fails closed on an unreadable slot. */
   active(): boolean {

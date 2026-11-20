@@ -84,7 +84,23 @@ async function world() {
     const r = await fetch(`${as.url}${path}`, { method: 'POST', headers: { ...asAuthHeaders(gw.vault.getSpCookie()!), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     return { status: r.status, body: await r.json().catch(() => ({})) as Record<string, unknown> };
   };
-  return { as, mandates, gw, post, get, rootDid, addPhone, asPost, delivered };
+  /** Stop this gateway and start it again on the same folder (a restart), signed in again; `post`/`get` then go to the new one. */
+  const restart = async () => {
+    await gw.close();
+    const again = await bootGateway({ as, dir: gw.dir, fresh: false, mandate: { deliver: async a => { delivered.push(a); }, reads: { heldBack: async () => [] as never, signedMandate: async () => ({ refusal: 'none', code: 'MANDATE_NOT_ACTIVE' }) as never } } });
+    open.push(again);
+    const h2 = sessionHeaders(await again.unlock());
+    // after unlock the gateway signs in again by its device key, in the background (as in device-signin.test.ts)
+    for (let i = 0; i < 200 && again.vault.getSpCookie() === null; i++) await new Promise(res => setTimeout(res, 20));
+    expect(again.vault.getSpCookie(), 'signed in again after the restart').not.toBeNull();
+    return {
+      gw: again,
+      post: (path: string, body: unknown = {}) => call(again.port, 'POST', path, { headers: h2, body }),
+      get: (path: string) => call(again.port, 'GET', path, { headers: h2 }),
+    };
+  };
+  const del = (path: string) => call(gw.port, 'DELETE', path, { headers: h });
+  return { as, mandates, gw, post, get, del, rootDid, addPhone, asPost, delivered, restart };
 }
 type W = Awaited<ReturnType<typeof world>>;
 
@@ -191,6 +207,38 @@ describe('give on the phone', () => {
     expect(r.status).toBe(422);
     expect(r.body).toMatchObject({ code: 'changed_since_prepare' });
     expect(w.mandates.bodies).toHaveLength(0);
+  });
+
+  it('a give waiting on the phone survives a restart of the gateway, sealed in its vault (no plain file holds it)', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const mandateId = String(sent.body.mandateId);
+    const r = await w.restart();
+    expect((await r.get(`/api/mandate/give-on-phone/${mandateId}`)).body).toEqual({ state: 'waiting' });
+    const { c } = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, c)).status).toBe(201);
+    const done = await r.get(`/api/mandate/give-on-phone/${mandateId}`);
+    expect(done.status, done.text).toBe(200);
+    expect(done.body).toMatchObject({ state: 'done' });
+    expect(w.mandates.issued).toHaveLength(1);
+    // nothing of the request lies in the clear in the gateway's folder
+    const { readdirSync, readFileSync: rf, statSync } = await import('node:fs');
+    const walk = (d: string): string[] => readdirSync(d).flatMap(n => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+    for (const f of walk(r.gw.dir)) expect(rf(f, 'utf8').includes(REQ.intent), f).toBe(false);
+  });
+
+  it('a cancelled wait is gone: asked again, nothing waits', async () => {
+    const w = await world();
+    await w.addPhone(await makePhone());
+    const { sent } = await prepareAndSend(w);
+    const id = String(sent.body.mandateId);
+    expect((await w.get(`/api/mandate/give-on-phone/${id}`)).body).toEqual({ state: 'waiting' });
+    const d = await w.del(`/api/mandate/give-on-phone/${id}`);
+    expect(d.status, d.text).toBe(200);
+    expect(d.body).toEqual({ ok: true });
+    expect((await w.get(`/api/mandate/give-on-phone/${id}`)).body).toEqual({ state: 'unknown' });
   });
 
   it('the sealed request stays the body: the computer opens scope and intent from it after the grant', async () => {
