@@ -74,8 +74,11 @@ export class ProposalRewrap {
     const others = own.devices.filter(x => x.keyId !== own.keyId);
     if (others.length === 0) return { ...result, skipped: 'no_other_device' };
 
-    // The proposals this person reads: the ones they filed, the ones waiting for them, and the two domain lists.
+    // The proposals this person reads. `readable=me` is the AS's list of open proposals holding a wrap for one of this
+    // person's devices: it alone also carries the owner's own proposal that names no creator and no pending domain
+    // (review_above_cap with other approvers). The four older lists stay as well, so an AS without it still serves them.
     const lists = await Promise.all([
+      this.list('/api/proposals?readable=me', credential),
       this.list('/api/proposals?creator=me', credential),
       this.list('/api/proposals?approver=me', credential),
       this.list('/api/proposals?domain=owner', credential),
