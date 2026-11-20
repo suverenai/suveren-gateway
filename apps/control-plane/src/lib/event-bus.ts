@@ -26,6 +26,7 @@ export type EventType =
   | 'report-written'          // a report was saved — moves the "New" label on Reports; never a doorbell event
   | 'identity-reset-pending'  // device keys: a request for a new root DID is open — doorbell; the page reads /auth/device/status
   | 'identity-reset-cleared'  // device keys: that request ended (cancelled or gone)
+  | 'give-progress'           // device keys: where a give with Touch ID on this computer is — payload { stage: 'touched' | 'requesting' | 'delivering' }; no content
   | 'reader-chain-alarm';     // device keys, step 8: a reader's device chain did not verify, so they get no wrap — payload { did, code }; doorbell, the proposal's own answer carries the codes
 
 export interface BusEvent {

@@ -185,9 +185,11 @@ export async function checkMandateGrant(d: GrantGateDeps, i: GrantGateInput): Pr
   }
   if (received.length === 0) return firstRefusal ?? refuse('mandate_body_not_received', 'the sealed mandate has not reached this computer yet.');
   // Receipt (DEC-23): the owner's own gateway answers a verified grant once. A failure is not a refusal: asked again on the next check.
+  // Not awaited: the receipt tells the person's OTHER devices "received" and decides nothing here, so the give on this computer
+  // (and the gate) never waits for that round trip to the Authority Server.
   for (const g of received) {
     if (own.rootDid !== g.ownerDid || !g.receiptNeeded) continue;
-    try { await d.cp.sendReceipt(g.mandateId, g.version, g.grantHash); } catch { /* not a refusal: asked again on the next check */ }
+    void d.cp.sendReceipt(g.mandateId, g.version, g.grantHash).catch(() => { /* not a refusal: asked again on the next check */ });
   }
   return { ok: true, granted: received };
 }

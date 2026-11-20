@@ -518,7 +518,7 @@ export class MandateGrants {
    * Prepare, sign and store the grant for this mandate and store its sealed body. Returns what the ceremony adds
    * to its own request to the Authority Server. Throws {@link GrantRefusal}.
    */
-  async issue(i: IssueInput): Promise<Issued> {
+  async issue(i: IssueInput, opts: { onTouched?: () => void } = {}): Promise<Issued> {
     const { d } = this;
     const dk = await deviceKeys();
     const s = await this.session();
@@ -548,6 +548,8 @@ export class MandateGrants {
       if (e instanceof CheckError) return refuse('check_failed', 'The check on this computer was not given.', { reason: e.helperCode ?? e.code });
       throw e;
     }
+    // The touch is given: from here the page shows the work, not the wait for the touch (never a silent wait).
+    try { opts.onTouched?.(); } catch { /* a progress signal never fails the grant */ }
     const body = { grant, sig, check: platformCheckProof(check.signature) };
     const hash = await dk.grantHash(grant);
 
