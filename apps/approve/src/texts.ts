@@ -219,6 +219,7 @@ const BLOCKED: Record<string, string> = {
   context_missing: 'The details that belong to this request did not arrive. Decide it on your computer.', // DRAFT
   context_unreadable: 'The details that belong to this request could not be opened. Decide it on your computer.', // DRAFT
   context_mismatch: 'The numbers that suveren.ai holds for this request are not the ones this phone works out from what your AI asked. Do not approve it. Tell whoever runs your account.', // DRAFT (the execution context differs)
+  crypto_unavailable: 'This phone cannot check mandates here, so nothing can be approved on it. Nothing was decided. Decide it on your computer.', // DRAFT (no WebCrypto in this browser)
   mandate_unavailable: 'The mandate behind this request could not be found. Try again, or decide on your computer.', // DRAFT
   mandate_invalid: 'The mandate behind this request cannot be read. Decide it on your computer.', // DRAFT
   mandate_signature: 'The mandate behind this request was not signed by the suveren.ai this app trusts. Do not approve it. Tell whoever runs your account.', // DRAFT
@@ -227,6 +228,7 @@ const BLOCKED: Record<string, string> = {
   profile_unavailable: 'The rules that this mandate refers to could not be found. Try again later.', // DRAFT
   profile_mismatch: 'The rules that suveren.ai gave for this mandate are not the ones it was made under. Do not approve it. Tell whoever runs your account.', // DRAFT
   owner_not_you: 'This mandate belongs to someone else. You cannot decide it on this phone yet. Use your computer.', // DRAFT
+  mandate_not_granted: 'You did not confirm this mandate on one of your devices, so nothing can be approved under it. Do not approve it. Tell whoever runs your account.', // DRAFT (no owner grant verifies)
   action_type_missing: 'This request does not say what kind of action it is, so it cannot be checked here. Decide it on your computer.', // DRAFT
   action_type_unknown: 'This request names a kind of action that its rules do not know. Do not approve it. Tell whoever runs your account.', // DRAFT
   session_ended: 'The app closed itself. Open it again with your touch.', // DRAFT

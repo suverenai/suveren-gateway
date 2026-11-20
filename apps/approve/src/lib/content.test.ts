@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { encryptProposalContent } from '@hap/core';
-import { b64uEncode, concat, hkdfSha256, utf8 } from '@hap/core/device-keys';
+import { b64uDecode, b64uEncode, concat, hkdfSha256, utf8 } from '@hap/core/device-keys';
 import { DeviceKeyStore } from './key-store';
 import { MemoryKv } from './kv';
 import { openContent, openContext, pickWrap, NoWrapError, CONTEXT_INFO, type ContentWire } from './content';
@@ -17,6 +17,13 @@ async function setup() {
 }
 
 /** The card context, sealed the way the gateway seals it (plan 5): HKDF of the content key, AAD "context" || 0x00 || fingerprint. */
+/** The sealed text with one bit of its last byte flipped: always different bytes (replacing characters can leave them equal). */
+function tamper(sealed: string): string {
+  const bytes = b64uDecode(sealed);
+  bytes[bytes.length - 1] ^= 0x01;
+  return b64uEncode(bytes);
+}
+
 async function sealContext(store: DeviceKeyStore, wrap: { ct: string; enc: string }, fingerprint: string, context: object): Promise<string> {
   const cek = await store.openContentKey(wrap);
   const ctxKey = await hkdfSha256(cek, '', CONTEXT_INFO, 32);
@@ -94,7 +101,7 @@ describe('the card context', () => {
   it('a tampered context, and one that is not an object, fail the same way', async () => {
     const { store, keys, wire, hash, wrap } = await setup();
     const context = await sealContext(store, wrap, hash, CONTEXT);
-    expect(await openContext({ ...wire, context: context.slice(0, -2) + 'AA' }, keys.keyId, store)).toEqual({ contextError: 'context_unreadable' });
+    expect(await openContext({ ...wire, context: tamper(context) }, keys.keyId, store)).toEqual({ contextError: 'context_unreadable' });
     const notObject = await sealContext(store, wrap, hash, ['x'] as unknown as object);
     expect(await openContext({ ...wire, context: notObject }, keys.keyId, store)).toEqual({ contextError: 'context_unreadable' });
   });

@@ -69,6 +69,8 @@ export class FakeAs implements Transport {
   // ─── stage D2: what the card reads, and the decision routes ───────────────────────────
   /** Signed mandate blobs and the revoked flag, by authorization id (`GET /api/mandates?authorization_id=`). */
   mandates = new Map<string, { blobs: string[]; revoked?: boolean }>();
+  /** Grant rows by mandate id (`GET /api/mandates/:id/grants`), as the real server serves them. */
+  grants = new Map<string, Json[]>();
   /** Profiles by id (`GET /api/profiles/:id`, public). */
   profiles = new Map<string, unknown>();
   /** The mandate id the server checks a decision on a proposal against. */
@@ -227,6 +229,11 @@ export class FakeAs implements Transport {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       const m = this.mandates.get(url.searchParams.get('authorization_id') ?? '');
       return m ? { status: 200, body: { mandates: m.blobs.map((blob) => ({ blob })), revoked: m.revoked === true } } : { status: 200, body: { mandates: [], revoked: false } };
+    }
+    const gr = p.match(/^\/api\/mandates\/([^/]+)\/grants$/);
+    if (gr && method === 'GET') {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      return { status: 200, body: { grants: this.grants.get(decodeURIComponent(gr[1])) ?? [] } };
     }
     const prof = p.match(/^\/api\/profiles\/(.+)$/);
     if (prof && method === 'GET') {

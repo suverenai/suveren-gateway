@@ -3,8 +3,9 @@
  * holds, its profile, and one waiting request whose content and card context are sealed for THIS phone's reading key, the way the
  * gateway seals them (plan 5). Real keys, real signatures, real hashes; only the network is fake.
  */
-import { encryptProposalContent, computeProfileHash, type AgentProfile } from '@hap/core';
-import { b64uEncode, concat, hexDecode, hkdfSha256, utf8 } from '@hap/core/device-keys';
+import { encryptProposalContent, computeProfileHash, buildMandateProjection, type AgentProfile, type MandatePayload } from '@hap/core';
+import { b64uEncode, buildGrant, concat, hexDecode, hkdfSha256, objectHash, randomBytes, signedBytes, utf8 } from '@hap/core/device-keys';
+import { createGrantMembers } from '@hap/core/mandate-grant';
 import { FakeAs, registerPhone, testRuntime, type TestRuntime } from './test-kit';
 import { CONTEXT_INFO } from './content';
 import { didKeyOf } from './mandate-check';
@@ -43,6 +44,29 @@ export interface WorldOptions {
   ownerDid?: string;
   pendingApprovers?: string[];
   pendingDomains?: string[];
+  /** The owner's grant: `none` serves no grant; `over` changes members AFTER the members were rebuilt (a grant of another mandate). */
+  grant?: { none?: true; op?: 'grant' | 'change'; over?: Record<string, unknown>; revoke?: true; noCheck?: true; authorizationId?: string; signWith?: 'other' };
+}
+
+const { grantMembersOf } = createGrantMembers(buildMandateProjection);
+
+/**
+ * The owner's grant of the mandate, signed by THIS phone with its check, the way a granting device signs it (plan 4.4): the members are
+ * the mandate's projection plus where it lives, rebuilt with the gateway's own `createGrantMembers`.
+ */
+export async function signGrant(rt: TestRuntime, payload: MandatePayload, o: NonNullable<WorldOptions['grant']> = {}, version = 1) {
+  const account = (await rt.accounts.read())!;
+  const open = rt.session.current()!;
+  const members = grantMembersOf(payload, { authorizationId: o.authorizationId ?? AUTHZ, groupId: 'personal-user-1', replaces: null, chainDids: [account.root_did] });
+  const op = o.revoke ? 'revoke' : (o.op ?? 'grant');
+  const grant = buildGrant({
+    op, owner_did: account.root_did, key_id: account.key_id, chain_seq: open.chain.head.seq, chain_head: open.chain.head.hash,
+    mandate_id: payload.mandate_id, mandate_version: version, granted_at: rt.now(), nonce: b64uEncode(randomBytes(16)),
+  }, { ...members, ...(o.over ?? {}) });
+  const signer = o.signWith === 'other' ? (bytes: Uint8Array) => crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign']).then((k) => crypto.subtle.sign({ name: 'Ed25519' }, (k as CryptoKeyPair).privateKey, new Uint8Array(bytes))).then((b) => new Uint8Array(b)) : (bytes: Uint8Array) => rt.keys.sign(bytes);
+  const sig = b64uEncode(await signer(signedBytes(grant)));
+  const check = o.noCheck || op === 'revoke' ? null : await rt.check.prove(account.check!.cred_id, await objectHash(grant));
+  return { mandate_version: version, op, grant, sig, check };
 }
 
 /** Seal the content for `readPub` (hap-core's own encryption) and the card context under the key derived from the content key. */
@@ -81,6 +105,7 @@ export async function cardWorld(o: WorldOptions = {}) {
     issued_at: as.now() - 3600, expires_at: as.now() + 86400, ...(o.mandate ?? {}),
   };
   as.mandates.set(AUTHZ, { blobs: [await as.mandateBlob(payload)] });
+  if (!o.grant?.none) as.grants.set(MANDATE_ID, [await signGrant(rt, payload as unknown as MandatePayload, o.grant ?? {})]);
   as.mandateOf.set(PROPOSAL_ID, MANDATE_ID);
 
   const context = o.noContext ? null : { display: o.display ?? DISPLAY, execution_mapping: o.mapping ?? MAPPING, linked_record: null, gateway_version: '0.0.0-test' };
