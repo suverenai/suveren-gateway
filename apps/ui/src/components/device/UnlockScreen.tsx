@@ -6,6 +6,7 @@ import { sessionEndText } from '../../lib/access';
 import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice, useDriver } from './DeviceScreen';
 import { NotSetUpScreen } from './SetupScreens';
+import { PageLoading } from './StartScreens';
 
 export interface UnlockScreenProps {
   state: UnlockState;
@@ -21,7 +22,8 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
   const failed = state.phase === 'sign-in-failed';
 
   if (signingIn) {
-    return <DeviceScreen title={T.unlockTitle}><Notice kind="info">{T.unlockSigningIn}</Notice></DeviceScreen>;
+    // After the touch or the password: the turning Suveren mark until the dashboard, no text that flashes for a second.
+    return <PageLoading />;
   }
   if (failed) {
     return (
