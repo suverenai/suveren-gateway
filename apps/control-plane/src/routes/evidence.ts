@@ -14,12 +14,18 @@
  *                        reader opens the complete receipt. Since UI spec §14
  *                        it also carries `sentArgsCheck` and `result` (what
  *                        the tool answered) — see the route below.
- *  - `/headlines`      — the values automatic tickets' headlines are built
- *                        from (§13.4), one map per Tickets page load.
+ *  - `/proposal/:id`   — the approved toolArgs of a proposal this gateway
+ *                        executed (archive), for the decided-proposal card.
+ *  - `/headlines`      — the values tickets' headlines are built from
+ *                        (§13.4), one call per Tickets page load: `headlines`
+ *                        for automatic tickets, `approved` for review-path
+ *                        tickets (the archived approved toolArgs — the AS
+ *                        deletes a proposal's content once its ticket is
+ *                        issued, DEC-22).
  */
 
 import { Router, type Request, type Response } from 'express';
-import { getLocalEvidence, getTicketContent, getTicketHeadlines, getAttachmentPreview } from '../lib/mcp-bridge';
+import { getLocalEvidence, getTicketContent, getTicketHeadlines, getAttachmentPreview, getArchivedProposalArgs } from '../lib/mcp-bridge';
 import { findSealedAttachment } from '../lib/attachment-preview-types';
 import { createPublicKey, verify as verifyEd25519 } from 'node:crypto';
 import { verifyTicketSignature, encodeDidKey, canonicalize } from '@hap/core';
@@ -292,9 +298,29 @@ export function createEvidenceRouter(): Router {
     }
   });
 
+  // What a proposal THIS gateway executed carried, from its own archive —
+  // the decided-proposal card's source once the AS has deleted the content
+  // (DEC-22). 404 when this device never executed it.
+  router.get('/proposal/:id', async (req: Request, res: Response) => {
+    try {
+      const toolArgs = await getArchivedProposalArgs(String(req.params.id));
+      if (!toolArgs) {
+        res.status(404).json({ error: 'No local copy of this proposal' });
+        return;
+      }
+      res.json({ toolArgs });
+    } catch (err) {
+      res.status(503).json({
+        error: 'Local evidence unavailable',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   router.get('/headlines', async (_req: Request, res: Response) => {
     try {
-      res.json({ headlines: await getTicketHeadlines() });
+      const { headlines, approved } = await getTicketHeadlines();
+      res.json({ headlines, approved });
     } catch (err) {
       res.status(503).json({
         error: 'Local evidence unavailable',

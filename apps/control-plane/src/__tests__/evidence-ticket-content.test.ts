@@ -27,7 +27,13 @@ function stubMcp(ticket: (url: string) => Response) {
       return new Response(JSON.stringify({ receipts: [ENTRY], authorizations: [], gates: [] }), { status: 200 });
     }
     if (url.endsWith('/internal/evidence/headlines')) {
-      return new Response(JSON.stringify({ headlines: { 't-1': { amount: '0.10' } } }), { status: 200 });
+      return new Response(JSON.stringify({ headlines: { 't-1': { amount: '0.10' } }, approved: { 't-2': { to: 'kunde@doc-allowed.example' } } }), { status: 200 });
+    }
+    if (url.endsWith('/internal/evidence/proposal/p-2')) {
+      return new Response(JSON.stringify({ toolArgs: { to: 'kunde@doc-allowed.example' } }), { status: 200 });
+    }
+    if (url.includes('/internal/evidence/proposal/')) {
+      return new Response(JSON.stringify({ error: 'No local copy of this proposal' }), { status: 404 });
     }
     if (url.includes('/internal/evidence/ticket/')) return ticket(url);
     return new Response('not stubbed', { status: 500 });
@@ -82,5 +88,26 @@ describe('GET /api/evidence/headlines', () => {
     const { status, body } = await get('/api/evidence/headlines');
     expect(status).toBe(200);
     expect(body.headlines).toEqual({ 't-1': { amount: '0.10' } });
+  });
+
+  it('also returns the review-path tickets\' archived approved values (DEC-22: the AS copy is deleted)', async () => {
+    stubMcp(() => new Response('{}', { status: 200 }));
+    const { body } = await get('/api/evidence/headlines');
+    expect(body.approved).toEqual({ 't-2': { to: 'kunde@doc-allowed.example' } });
+  });
+});
+
+describe('GET /api/evidence/proposal/:id', () => {
+  it('returns the approved toolArgs this gateway archived when it executed the proposal', async () => {
+    stubMcp(() => new Response('{}', { status: 200 }));
+    const { status, body } = await get('/api/evidence/proposal/p-2');
+    expect(status).toBe(200);
+    expect(body.toolArgs).toEqual({ to: 'kunde@doc-allowed.example' });
+  });
+
+  it('404 when this device never executed it', async () => {
+    stubMcp(() => new Response('{}', { status: 200 }));
+    const { status } = await get('/api/evidence/proposal/p-unknown');
+    expect(status).toBe(404);
   });
 });

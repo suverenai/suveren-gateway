@@ -52,7 +52,7 @@ import { decryptRejectionNote } from '../src/lib/proposal-content';
 import { resolveProposalFacts, controlPlaneDevice } from '../src/lib/device-decisions';
 import { readSignedMandate, latestSigned } from '../src/lib/mandate-change';
 import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
-import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
+import { checkSentArgs, resultView, headlineArgs, approvedHeadlineArgs, archivedApprovedArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
@@ -1130,7 +1130,27 @@ app.get('/internal/evidence/headlines', internalOnly, (_req: Request, res: Respo
     res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
     return;
   }
-  res.json({ headlines: headlineArgs(state.receiptArchive.getReceipts()) });
+  // `approved`: review-path tickets, from the decrypted proposal copy this
+  // gateway archived when it executed — the AS deletes the proposal's content
+  // once its ticket is issued (DEC-22), so the UI must not depend on it.
+  const receipts = state.receiptArchive.getReceipts();
+  res.json({ headlines: headlineArgs(receipts), approved: approvedHeadlineArgs(receipts) });
+});
+
+// The approved toolArgs of a proposal THIS gateway executed (archived at
+// execution). The decided-proposal card reads it because the AS deletes a
+// proposal's content once its ticket is issued (DEC-22). 404 = no local copy.
+app.get('/internal/evidence/proposal/:id', internalOnly, (req: Request, res: Response) => {
+  if (state.receiptArchive.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
+    return;
+  }
+  const toolArgs = archivedApprovedArgs(state.receiptArchive.getReceipts(), String(req.params.id));
+  if (!toolArgs) {
+    res.status(404).json({ error: 'No local copy of this proposal' });
+    return;
+  }
+  res.json({ toolArgs });
 });
 
 // ─── Report (evidence-backed reports, work-plan "evidence-backed reports") ──

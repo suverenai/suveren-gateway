@@ -27,6 +27,14 @@ export type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcom
  */
 export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = ['0.8', '0.7'];
 
+/** Ticket headline values from this gateway's own archive, keyed by ticket id (UI spec §13.4). */
+export interface TicketHeadlineMaps {
+  /** Automatic tickets: what this gateway sent. */
+  automatic: Record<string, Record<string, unknown>>;
+  /** Review-path tickets: the approved toolArgs archived when this gateway executed them. */
+  approved: Record<string, Record<string, unknown>>;
+}
+
 export interface SPUser {
   id: string;
   name: string;
@@ -1004,11 +1012,23 @@ class SPClient {
    * The values automatic tickets' headlines are built from (UI spec §13.4),
    * keyed by ticket id — this device's archive only, trimmed for headlines.
    */
-  async getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+  /** The approved toolArgs of a proposal this gateway executed, from its archive; `null` = no local copy. */
+  async getArchivedProposalArgs(proposalId: string): Promise<Record<string, unknown> | null> {
+    const res = await this.fetch(`/api/evidence/proposal/${encodeURIComponent(proposalId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
+    const data = await res.json();
+    return (data?.toolArgs ?? null) as Record<string, unknown> | null;
+  }
+
+  async getTicketHeadlines(): Promise<TicketHeadlineMaps> {
     const res = await this.fetch('/api/evidence/headlines');
     if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
     const data = await res.json();
-    return (data?.headlines ?? {}) as Record<string, Record<string, unknown>>;
+    return {
+      automatic: (data?.headlines ?? {}) as Record<string, Record<string, unknown>>,
+      approved: (data?.approved ?? {}) as Record<string, Record<string, unknown>>,
+    };
   }
 
   // ─── Report (evidence-backed reports) ──────────────────────────────────
