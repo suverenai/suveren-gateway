@@ -205,6 +205,42 @@ export const P = {
   // ─── Navigation ───────────────────────────────────────────────────────────────
   navRequests: 'Requests', // DRAFT
   navDevices: 'Devices', // DRAFT
+  // Mandates on the phone (stage D3; mockup A1–A6, B2, F2). DRAFT texts.
+  giveRowKind: 'Mandate to give', // DRAFT new (mockup A1)
+  giveTitle: (title: string) => `Give the mandate for ${title}`, // = S13 screen 1 title
+  giveFrom: (device: string, when: string) => `Prepared on ${device}, ${when}.`, // DRAFT new
+  giveRead: 'This is what you sign with your touch. Read it first.', // DRAFT
+  giveMay: 'What your AI may do', // = S13
+  giveLimits: 'Limits', // = S13
+  giveScope: 'Scope', // = S13
+  giveHowLong: 'How long', // = S13
+  giveLasts: 'From your touch for', // = S13
+  giveApprovals: 'Approvals', // = S13
+  giveAboveCap: (n: number) => `Above the limit, ${n} of these people must approve first:`, // DRAFT new
+  giveCheckCode: 'Check identity code', // DRAFT new (UI review, DEC-88)
+  giveWhy: 'Why you give it (your words)', // = S13
+  giveFromRules: (area: string) => `From the rules of ${area}.`, // DRAFT new (UI review, DEC-88)
+  giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // = S13
+  giveButton: 'Give this mandate with your touch', // DRAFT new (DEC-85)
+  giveSigning: 'Signing…', // = the gateway's working word
+  giveSigned: 'Signed', // = the gateway's stamp word
+  giveReceivedBy: (device: string) => `${device} received it. Your AI can use it now.`, // DRAFT new (mockup A5)
+  giveNotReceivedWord: 'Signed', // DRAFT new
+  giveNotReceived: (device: string) => `${device} has not received it yet, so your AI cannot use it.`, // DRAFT new (mockup A4, UI review)
+  giveNotReceivedHint: (device: string) => `If it never arrives: open the gateway on ${device}.`, // DRAFT new
+  giveRefusedAs: 'suveren.ai did not accept the mandate. Try again.', // = S13
+  endTitle: 'End a mandate', // = S13 screen 4
+  endStops: 'Your AI stops using it at once.', // = S13
+  endFinal: 'This cannot be undone. To work again, you give a new mandate.', // = S13
+  endNoTouch: 'You do not need your touch to end a mandate.', // DRAFT new (mockup B2)
+  endKeep: 'Keep it', // = S13
+  endButton: (title: string) => `End the mandate for ${title}`, // = S13.endButtonNamed
+  endDone: (title: string) => `The mandate for ${title} has ended.`, // DRAFT new
+  mineTitle: 'Your mandates', // DRAFT new
+  mineEnd: 'End', // DRAFT new
+  mineActiveUntil: (when: string) => `Active until ${when}`, // DRAFT new
+  noticeGiven: (title: string, by: string) => `The mandate for ${title} was given on ${by}.`, // DRAFT new (mockup F2)
+  noticeEnded: (title: string, by: string) => `The mandate for ${title} was ended on ${by}.`, // DRAFT new (mockup F2)
 } as const;
 
 /**
@@ -325,6 +361,12 @@ const ERRORS: Record<string, string> = {
   rotate_chain_moved: 'Your list of devices changed meanwhile. Nothing changed. Start again.', // DRAFT new
   list_not_refreshed: 'The list could not be refreshed. Look at it again in a moment.', // DRAFT new
   remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
+  // Giving a mandate on the phone (stage D3, mockup A2–A6)
+  give_expired: 'This mandate was waiting too long and has run out. Nothing was signed. Prepare it again on your computer.', // DRAFT new (mockup A6)
+  grant_version_refused: 'This phone already has a newer version of this mandate. Nothing was signed.', // DRAFT new (mockup A6)
+  mandate_expired_grant: 'This mandate was waiting too long and has run out. Nothing was signed. Prepare it again on your computer.', // DRAFT new
+  check_required_grant: 'Your touch is needed to give a mandate. Nothing was signed. Try again.', // DRAFT new
+  end_failed: 'suveren.ai did not accept ending the mandate. It still runs. Try again.', // DRAFT new
 };
 
 export function errorText(code: string | undefined): string {

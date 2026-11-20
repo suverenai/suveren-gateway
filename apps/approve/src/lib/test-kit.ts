@@ -10,9 +10,10 @@
 import {
   b64uDecode, b64uEncode, buildDeviceRecord, buildEntry, comparisonCode, concat, deriveRootKey, ecdsaRawToDer, ed25519PublicKey,
   encodeCoseEc2, encodePairingQr, entryHash, entrySignedBytes, generateRecoveryCode, hashBytes, jcs, keyIdOf, objectHash, pairingCommitment,
-  randomBytes, sha256, signEd25519, signEntry, utf8, verifyChain, verifyCheck, verifyDecision, verifySignin,
+  randomBytes, sha256, signEd25519, signEntry, utf8, verifyChain, verifyCheck, verifyDecision, verifySignin, verifyGrant, grantHash,
   type ChainEntry, type ChainState, type Decision, type DeviceRecord, type PairingMessage, type PairingQr, type RootKey, type WebauthnProof,
 } from '@hap/core/device-keys';
+import { GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import type { CheckDevice, PasskeyRegistration } from './check';
 import { CheckError, registrationChallenge } from './check';
 import type { Method, Reply, Transport } from './transport';
@@ -71,6 +72,12 @@ export class FakeAs implements Transport {
   mandates = new Map<string, { blobs: string[]; revoked?: boolean }>();
   /** Grant rows by mandate id (`GET /api/mandates/:id/grants`), as the real server serves them. */
   grants = new Map<string, Json[]>();
+  /** Gives prepared for the person's devices (`GET /api/mandates/prepared`), rows as the real server serves them. */
+  prepared: Json[] = [];
+  /** The gateways' receipts by mandate id (`GET /api/mandates/:id/receipts`). */
+  receipts = new Map<string, Json[]>();
+  /** Grants a device posted (`POST /api/mandates/:id/grants`), after the same hap-core check the real server makes. */
+  postedGrants: Json[] = [];
   /** Profiles by id (`GET /api/profiles/:id`, public). */
   profiles = new Map<string, unknown>();
   /** The mandate id the server checks a decision on a proposal against. */
@@ -234,6 +241,31 @@ export class FakeAs implements Transport {
     if (gr && method === 'GET') {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       return { status: 200, body: { grants: this.grants.get(decodeURIComponent(gr[1])) ?? [] } };
+    }
+    if (route === 'GET /api/mandates/prepared') {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      return { status: 200, body: { prepared: this.prepared } };
+    }
+    const rc = p.match(/^\/api\/mandates\/([^/]+)\/receipts$/);
+    if (rc && method === 'GET') {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      return { status: 200, body: { receipts: this.receipts.get(decodeURIComponent(rc[1])) ?? [] } };
+    }
+    if (gr && method === 'POST') {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      const id = decodeURIComponent(gr[1]);
+      const raw = body.grant as Json;
+      const fields: Json = {};
+      for (const [k, v] of Object.entries(raw ?? {})) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
+      try {
+        await verifyGrant({ grant: raw, sig: body.sig, check: body.check ?? undefined }, { chain: await this.state(), mandateFields: fields, expect: { ops: [raw.op], mandate_id: id, mandate_version: raw.mandate_version } });
+      } catch (e) {
+        return refusal(403, (e as { code?: string }).code ?? 'GRANT_INVALID');
+      }
+      const row = { mandate_version: raw.mandate_version, op: raw.op, grant: raw, sig: body.sig, check: body.check ?? null };
+      this.grants.set(id, [...(this.grants.get(id) ?? []), row]);
+      this.postedGrants.push(row);
+      return { status: 201, body: { grant_hash: await grantHash(raw as never), mandate_version: raw.mandate_version } };
     }
     const prof = p.match(/^\/api\/profiles\/(.+)$/);
     if (prof && method === 'GET') {
