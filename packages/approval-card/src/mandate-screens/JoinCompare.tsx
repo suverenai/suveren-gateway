@@ -7,7 +7,8 @@
  *   admin:  read your code to the member -> type the member's code -> (button off until the member's anchor is there)
  *           -> [Add <member> with Touch ID] -> done
  */
-import { S13, groupCode } from './texts';
+import { S13 } from './texts';
+import { CodeBlock } from '../components/DeviceFrame';
 
 export type JoinState =
   | { phase: 'compare' }
@@ -32,15 +33,6 @@ export interface JoinFacts {
   yourCode: string;
   /** Admin only: the member's anchor as the gateway verified it. `none` keeps the Add button off. */
   anchor?: 'none' | 'ok' | 'invalid';
-}
-
-function Code({ label, code, testid }: { label: string; code: string; testid: string }) {
-  return (
-    <div style={{ margin: '0.75rem 0' }}>
-      <div style={{ color: 'var(--text-secondary)' }}>{label}</div>
-      <div data-testid={testid} style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '1.25rem', letterSpacing: '0.05em', overflowWrap: 'anywhere' }}>{groupCode(code)}</div>
-    </div>
-  );
 }
 
 export interface JoinCompareProps {
@@ -79,7 +71,7 @@ export function JoinCompare({ role, facts, state, typed, onType, onCheck, onSign
       <h3 className="card-title">{admin ? S13.joinAdminTitle(facts.memberName, facts.teamName) : S13.joinMemberTitle(facts.adminName)}</h3>
       <p>{admin ? S13.joinAdminIntro(facts.memberName) : S13.joinMemberIntro(facts.teamName, facts.adminName)}</p>
       {admin && <p style={{ color: 'var(--text-secondary)' }}>{S13.joinNameNotChecked(facts.memberName)}</p>}
-      <Code label={S13.joinYourCode} code={facts.yourCode} testid="join-code-own" />
+      <CodeBlock label={S13.joinYourCode} code={facts.yourCode} testid="join-code-own" />
       <p>{admin ? S13.joinAdminRead(facts.memberName) : S13.joinMemberRead(facts.teamName, facts.adminName)}</p>
       {!matched ? (
         <form onSubmit={e => { e.preventDefault(); if (!busy && typed.trim()) onCheck(); }}>

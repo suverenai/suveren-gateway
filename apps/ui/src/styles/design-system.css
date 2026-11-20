@@ -5174,3 +5174,9 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
   body.print-recovery-code .recovery-code-print, body.print-recovery-code .recovery-code-print * { visibility: visible; }
   body.print-recovery-code .recovery-code-print { position: absolute; left: 0; top: 0; width: 100%; }
 }
+
+/* ─── Small shared utilities (spacing and quiet text), used by the phone app's screens ─── */
+.mt-6 { margin-top: var(--space-6); }
+.mb-6 { margin-bottom: var(--space-6); }
+.text-sm { font-size: var(--text-body-sm); }
+.text-muted, .device-screen .text-muted { color: var(--text-muted); }

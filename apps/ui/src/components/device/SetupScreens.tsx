@@ -6,6 +6,7 @@ import { SetupDriver, type SetupState } from '../../lib/setup-driver';
 import { spClient } from '../../lib/sp-client';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginPage } from '../../pages/LoginPage';
+import { RecoveryCodeBox } from '@suveren/approval-card/components/DeviceFrame';
 import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
 
@@ -76,7 +77,7 @@ export function SetupScreen(p: SetupScreenProps) {
           <PrintScope />
           {st.error && <Notice kind="error">{st.error}</Notice>}
           <p>{T.codeWhy}</p>
-          <div className="recovery-code-print"><div className="recovery-code" data-testid="recovery-code">{p.code ?? ''}</div></div>
+          <RecoveryCodeBox code={p.code ?? ''} />
           <p><strong>{T.codeOnce}</strong></p>
           <p>{T.codePaper}</p>
           <p style={{ fontSize: '0.875rem' }}>{T.codeNever}</p>

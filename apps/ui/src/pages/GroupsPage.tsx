@@ -1,3 +1,4 @@
+import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -132,21 +133,12 @@ export function GroupsPage() {
           <h2 className="ob-title is-h3">{activeTeam.name}</h2>
 
           {memberCount > 0 && (
-            <section className="ob-tile su-members">
-              <div className="su-tile-h">Members</div>
+            <TileList title="Members">
               {groupDetail?.members.map(member => (
-                <div className="su-m" key={member.id}>
-                  <span className="su-av">
-                    {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                  </span>
-                  <div className="su-who">
-                    <b>{member.name}</b>
-                    <span>{member.email}</span>
-                  </div>
-                  <span className={`su-role${member.isAdmin ? ' is-admin' : ''}`}>{member.role}</span>
-                </div>
+                <TileRow key={member.id} mark={member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  name={member.name} detail={member.email} tag={member.role} strongTag={member.isAdmin} />
               ))}
-            </section>
+            </TileList>
           )}
 
           {/* DEC-73: the admin of a team with device keys compares identity codes with each person who asks to join, then adds them with Touch ID. */}

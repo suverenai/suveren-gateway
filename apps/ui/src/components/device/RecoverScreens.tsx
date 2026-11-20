@@ -1,3 +1,4 @@
+import { RecoveryCodeBox } from '@suveren/approval-card/components/DeviceFrame';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DRAFT, T } from '../../lib/device-texts';
@@ -86,7 +87,7 @@ export function RecoverScreen(p: RecoverScreenProps) {
         <DeviceScreen title={DRAFT.rotateNewTitle}>
           <PrintScope />
           <p>{T.codeWhy}</p>
-          <div className="recovery-code-print"><div className="recovery-code" data-testid="new-recovery-code">{p.newCode ?? ''}</div></div>
+          <RecoveryCodeBox code={p.newCode ?? ''} testid="new-recovery-code" />
           <p><strong>{T.codeOnce}</strong></p>
           <p>{T.codePaper}</p>
           <p style={{ fontSize: '0.875rem' }}>{T.codeNever}</p>

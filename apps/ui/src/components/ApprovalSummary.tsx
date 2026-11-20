@@ -1,25 +1,2 @@
-import type { IntegrationManifest, Proposal } from '../lib/sp-client';
-import { useProposalContent } from '@suveren/approval-card/lib/use-proposal-content';
-import { approvalSummary } from '@suveren/approval-card/lib/approval-summary';
-import { summaryPreviewFrom, useProposalPreview } from '@suveren/approval-card/lib/preview-store';
-import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
-import { areaName } from '@suveren/approval-card/lib/core-objects';
-import { CREATE_MANDATE_TOOL, mandateTitleParts, mandateTargetProfile } from '@suveren/approval-card/lib/mandate-proposal';
-
-/**
- * The approval's one sentence for list rows (UI spec §12.2): decrypts the
- * proposal's sealed values on this device — same path as the card — and fills
- * the manifest's summary template. Until then, or without a template, the
- * plain action name.
- */
-export function ApprovalSummary({ proposal, manifests }: { proposal: Proposal; manifests: IntegrationManifest[] | undefined }) {
-  const content = useProposalContent(proposal);
-  // `{x|ref}` names a record once the card has read it (preview-store.ts).
-  const preview = useProposalPreview(proposal.id);
-  const catalog = useAreaCatalog();
-  if (proposal.tool === CREATE_MANDATE_TOOL && content.toolArgs) {
-    const t = mandateTitleParts(areaName(mandateTargetProfile(content.toolArgs, proposal.profileId), catalog), content.toolArgs);
-    return <>{t.area} · {t.name ?? 'new mandate'}</>;
-  }
-  return <>{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(preview, content.toolArgs))}</>;
-}
+/** Moved into the shared package. */
+export { ApprovalSummary } from '@suveren/approval-card/components/ApprovalSummary';

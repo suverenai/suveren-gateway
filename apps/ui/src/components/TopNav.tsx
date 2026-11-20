@@ -1,5 +1,5 @@
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../hooks/useTheme';
+import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
 import { useUpdateCheck } from '../hooks/useUpdateCheck';
 import { useWorkspacePolicy } from '../hooks/useWorkspacePolicy';
 import { BrandMark } from './BrandMark';
@@ -15,11 +15,6 @@ function formatVersion(v: string): string {
   return v;
 }
 
-const THEME_ICONS: Record<string, string> = {
-  system: '\u25D1',
-  light: '\u2600',
-  dark: '\u263E',
-};
 
 interface TopNavProps {
   onMenuToggle?: () => void;
@@ -27,7 +22,6 @@ interface TopNavProps {
 
 export function TopNav({ onMenuToggle }: TopNavProps) {
   const { user, logout, mode, activeTeam } = useAuth();
-  const { theme, toggle } = useTheme();
   const { version, updateAvailable, latestVersion } = useUpdateCheck();
   const { managed } = useWorkspacePolicy();
   const versionLabel = formatVersion(version);
@@ -82,15 +76,11 @@ export function TopNav({ onMenuToggle }: TopNavProps) {
               <span className="user-chip">
                 <strong>{user.name}</strong>
               </span>
-              <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
-                {THEME_ICONS[theme]}
-              </button>
+              <ThemeToggle />
               <button className="nav-logout" onClick={logout}>Logout</button>
             </>
           ) : (
-            <button className="theme-toggle" onClick={toggle} title={`Theme: ${theme}`}>
-              {THEME_ICONS[theme]}
-            </button>
+            <ThemeToggle />
           )}
         </div>
         {user && onMenuToggle && (
