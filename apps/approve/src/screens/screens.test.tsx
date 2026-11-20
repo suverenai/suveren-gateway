@@ -7,8 +7,10 @@ import { NeedsScreen, WelcomeScreen } from './Start';
 import { RegisterScreen, type RegisterScreenProps } from './Register';
 import { JoinScreen } from './Join';
 import { AdmitScreen } from './Admit';
-import { DevicesScreen, DeviceList } from './Devices';
+import { DevicesScreen, DeviceList, RemoveScreen } from './Devices';
 import { RequestsScreen, RequestDetail } from './Requests';
+import { RequestPanel } from './RequestPanel';
+import { RotateScreen } from './Rotate';
 import type { CardCheck, ReadyCard } from '../lib/card-checks';
 import { OpenSessionScreen } from './OpenSession';
 import { ScanView } from './ScanView';
@@ -229,10 +231,192 @@ describe('the phone screens (both widths use the same markup and the same tokens
       });
     });
 
+    describe('the panel that opens by itself (DEC-86: the gateway\'s mechanism)', () => {
+      const proposal = { id: 'p1', tool: 'email__send_message', profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending', toolArgs: {}, executionContext: {}, pendingDomains: ['owner'], committedBy: {}, rejectedBy: null, executionResult: null, path: 'x' } as never;
+      const readyCard: ReadyCard = { facts: { mandateId: 'm1', actionType: 'send' }, contentHash: 'sha256:' + '0'.repeat(64), args: {}, executionContext: {}, display: {}, route: { kind: 'domain', domain: 'owner' } };
+      const panel = (over: Partial<Parameters<typeof RequestPanel>[0]> = {}) => html(
+        <RequestPanel position={{ index: 1 }} total={2} prevId={null} nextId="p2" onMove={noop} onLater={noop} autoOpen onToggleAuto={noop}
+          shown={{ proposal, card: { userId: 'u1', check: { ok: true, ready: readyCard }, decide: async () => ({}) } }} {...over} />,
+      );
+
+      it('is the gateway\'s panel: full screen, the compact head with "1 of 2", ‹ ›, the setting and Later', () => {
+        const m = panel();
+        expect(m).toContain('apr-panel is-open ap-panel');
+        expect(m).toContain('apr-head is-compact');
+        expect(text(m)).toContain('Waiting for you');
+        expect(m).toContain('data-testid="approval-position"');
+        expect(text(m)).toContain('1 of 2');
+        expect(m).toContain('data-testid="approval-prev"');
+        expect(m).toContain('data-testid="approval-next"');
+        expect(m).toContain('data-testid="approval-head-menu"');
+        expect(m).toContain('data-testid="approval-later"');
+      });
+
+      it('the card sits in the gateway\'s stage, with its buttons in the fixed footer', () => {
+        const m = panel();
+        expect(m).toContain('apr-body');
+        expect(m).toContain('apr-stage');
+        expect(m).toContain('av3-scroll');
+        expect(m).toMatch(/<footer class="av3-foot">[\s\S]*data-testid="btn-approve"/);
+      });
+
+      it('one waiting approval: no arrows; a setting that could not be read: no switch (never guessed)', () => {
+        const m = panel({ total: 1, nextId: null, autoOpen: null });
+        expect(m).not.toContain('data-testid="approval-prev"');
+        expect(m).not.toContain('data-testid="approval-head-menu"');
+        expect(m).toContain('data-testid="approval-later"');
+      });
+
+      it('while a decision is being signed the head moves nothing: no arrows, Later and the setting disabled (nav lock)', () => {
+        const m = panel({ prevId: 'p0', nextId: 'p2', locked: true });
+        expect(m).toMatch(/data-testid="approval-prev"[^>]*disabled|disabled[^>]*data-testid="approval-prev"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-next"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-later"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-head-menu"/);
+        const free = panel({ prevId: 'p0', nextId: 'p2' });
+        expect(free).not.toMatch(/disabled[^>]*data-testid="approval-later"/);
+      });
+
+      it('while the approval is read: the panel says so, and no card', () => {
+        const m = panel({ shown: null });
+        expect(text(m)).toContain(P.listLoading);
+        expect(m).not.toContain('apr-stage');
+      });
+    });
+
     it('a failed read is said, not hidden behind an empty list', () => {
       const t = text(html(<RequestsScreen proposals={[]} error={P.listFailed} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />));
       expect(t).toContain(P.listFailed);
       expect(t).not.toContain(P.listEmpty);
+    });
+  });
+
+  describe('removing a device (stage D3, mockup C1–C5)', () => {
+    const office = rows[0];
+    const me = rows[1];
+    const rs = (state: Parameters<typeof RemoveScreen>[0]['state']) => html(<RemoveScreen state={state} nowSeconds={NOW} onConfirm={noop} onCancel={noop} onCancelTouch={noop} onAdd={noop} onDone={noop} />);
+
+    it('every row has Remove, this phone included (DEC-85)', () => {
+      const m = html(<DeviceList rows={rows} nowSeconds={NOW} onRemove={noop} />);
+      expect(m.match(/data-testid="device-remove"/g)).toHaveLength(2);
+      expect(html(<DeviceList rows={rows} nowSeconds={NOW} />)).not.toContain('device-remove');
+    });
+
+    it('a computer: what it does, its logins, the list after the change, then the touch button', () => {
+      const t = text(rs({ step: 'confirm', target: office, after: [me], self: false }));
+      expect(t).toContain(P.removeTitle('Office Mac'));
+      expect(t).toContain(P.removeComputerEffect('Office Mac'));
+      expect(t).toContain(P.removeLogins('Office Mac'));
+      expect(t).toContain(P.removeListAfter);
+      expect(t).toContain(P.removeButton);
+      expect(t).toContain('My iPhone');
+    });
+
+    it('this phone: its own words, no logins line', () => {
+      const t = text(rs({ step: 'confirm', target: me, after: [office], self: true }));
+      expect(t).toContain(P.removeSelfTitle);
+      expect(t).toContain(P.removeSelfEffect);
+      expect(t).not.toContain(P.removeLogins('My iPhone'));
+    });
+
+    it('refused before the touch: the reason, no touch button, a way to add a device', () => {
+      const m = rs({ step: 'refused', target: me, self: true, error: errorText('last_granting_self') });
+      expect(m).toContain('data-testid="remove-refused"');
+      expect(text(m)).toContain(errorText('last_granting_self'));
+      expect(text(m)).not.toContain(P.removeButton);
+      expect(text(m)).toContain(P.devAddComputer);
+    });
+
+    it('while the touch is asked: "Waiting for your touch…" with the gateway\'s spinner in place of the buttons, and Cancel', () => {
+      const m = rs({ step: 'checking', target: office, self: false });
+      expect(m).toContain('data-testid="touch-wait"');
+      expect(m).toContain('av3-spin');
+      expect(text(m)).toContain(P.touchWait);
+      expect(text(m)).not.toContain(P.removeButton);
+      expect(m).toContain('data-testid="touch-cancel"');
+      expect(m.match(/<button/g)).toHaveLength(1);
+    });
+
+    it('a failed touch: said in the same place, with Try again and Cancel', () => {
+      const m = rs({ step: 'checking', target: office, self: false, error: errorText('check_failed') });
+      expect(m).toContain('data-testid="touch-failed"');
+      expect(text(m)).toContain(errorText('check_failed'));
+      expect(m).toContain('data-testid="touch-retry"');
+      expect(m).toContain('data-testid="touch-cancel"');
+      expect(m).not.toContain('av3-spin');
+    });
+
+    it('done: the new list', () => {
+      const t = text(rs({ step: 'done', label: 'Office Mac', rows: [me], self: false }));
+      expect(t).toContain(P.removeDone('Office Mac'));
+      expect(t).toContain(P.removeListNow);
+    });
+
+    it('the devices screen shows the notices from the other devices', () => {
+      const m = html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} notices={[P.noticeAdded('Home Mac', 'today', 'Office Mac')]} />);
+      expect(m).toContain('data-testid="chain-notice"');
+      expect(text(m)).toContain('Home Mac was added to your account today on Office Mac. If this was not you, remove it.');
+    });
+
+    it('removed on another device (C5): the start screen says so', () => {
+      const m = html(<JoinScreen state={{ step: 'scan', busy: false }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} notice={errorText('device_removed')} />);
+      expect(m).toContain('data-testid="join-notice"');
+      expect(text(m)).toContain(errorText('device_removed'));
+    });
+  });
+
+  describe('replacing the recovery code (DEC-85, mockup D1–D5)', () => {
+    const rot = (state: Parameters<typeof RotateScreen>[0]['state']) => html(<RotateScreen state={state} onOld={noop} onNew={noop} onCancel={noop} onCancelTouch={noop} onRetryTouch={noop} onDone={noop} />);
+
+    it('the join\'s done screen offers it, with Later', () => {
+      const t = text(html(<JoinScreen state={{ step: 'done' }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} onRotate={noop} />));
+      expect(t).toContain(P.rotateOfferTitle);
+      expect(t).toContain(P.rotateStart);
+      expect(t).toContain(P.rotateLater);
+    });
+
+    it('the devices screen keeps offering it, naming where the code was made', () => {
+      const t = text(html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} rotateOffer="Office Mac" onRotate={noop} />));
+      expect(t).toContain(P.rotateOfferBody('Office Mac'));
+      expect(t).toContain(P.rotateStart);
+    });
+
+    it('the old code: scan or type, never shown back', () => {
+      const m = rot({ step: 'old', busy: false });
+      expect(text(m)).toContain(P.rotateOldScan);
+      expect(m).toContain('type="password"');
+    });
+
+    it('the new code once: "Write it on paper" only (no print), never give it to the AI, typed again, the touch button', () => {
+      const t = text(rot({ step: 'new', code: 'SV1-AAAA-BBBB' }));
+      expect(t).toContain('SV1-AAAA-BBBB');
+      expect(t).toContain(P.rotateNewPaper);
+      expect(P.rotateNewPaper.toLowerCase()).not.toContain('print');
+      expect(t).not.toContain(P.codePrint);
+      expect(t).toContain(P.codeNever);
+      expect(t).toContain(P.rotateButton);
+    });
+
+    it('the touch: "Waiting for your touch…" with the spinner and Cancel, no code; a failure offers Try again', () => {
+      const m = rot({ step: 'checking' });
+      expect(m).toContain('data-testid="touch-wait"');
+      expect(m.match(/<button/g)).toHaveLength(1);
+      const f = rot({ step: 'checking', error: errorText('cancelled') });
+      expect(f).toContain('data-testid="touch-retry"');
+    });
+
+    it('waiting for the email: where it went, the six digits to compare', () => {
+      const t = text(rot({ step: 'waiting', confirmCode: '123456', email: 'a•••@example.com', expiresAt: NOW + 600 }));
+      expect(t).toContain(P.rotateEmail('a•••@example.com'));
+      expect(t).toContain(P.rotateCompare);
+      expect(t).toContain('123456');
+      expect(t).toContain(P.rotateWaiting);
+    });
+
+    it('done: the old code no longer works; throw the paper away', () => {
+      const t = text(rot({ step: 'done' }));
+      expect(t).toContain(P.rotateDone);
+      expect(t).toContain(P.rotateThrowAway);
     });
   });
 

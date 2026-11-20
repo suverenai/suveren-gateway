@@ -21,8 +21,8 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
     }
   });
 
-  it('keeps only what is phone-specific: full height with safe areas, the scan frame, the background blank', () => {
-    expect([...code.matchAll(/^\.([a-z-]+)/gm)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i)).toEqual(['ap-shell', 'ap-top', 'ap-scan', 'ap-scan-frame', 'ap-scan-line']);
+  it('keeps only what is phone-specific: full height with safe areas, the scan frame, the background blank, the panel without rail and nav', () => {
+    expect([...code.matchAll(/^\.([a-z-]+)/gm)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i)).toEqual(['ap-shell', 'ap-top', 'ap-scan', 'ap-scan-frame', 'ap-scan-line', 'ap-panel']);
     expect(code).toMatch(/safe-area-inset-top/);
     expect(code).toMatch(/max-width: 40rem/);
   });

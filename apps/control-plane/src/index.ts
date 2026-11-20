@@ -47,7 +47,8 @@ import { createAIPromptsRouter } from './routes/ai-prompts';
 import { requireAuth, requireAuthQueryOrHeader, closeStreamWhenSessionEnds, type PageSessionDeps } from './middleware/auth';
 import { PageSessions } from './lib/page-session';
 import { UnlockLimiter } from './lib/unlock-limiter';
-import { ChangeConfirmations } from './lib/change-confirmation';
+import { ChangeConfirmations, type ChangeKind } from './lib/change-confirmation';
+import { describeChange } from './lib/change-describe';
 import { scrubProxyRequest } from './lib/proxy-headers';
 import { OAuthStartTickets } from './lib/oauth-start-ticket';
 import { RekeyRetrier } from './lib/rekey-retry';
@@ -160,7 +161,12 @@ const checkKeyStore = deviceKeys ? new CheckKeyStore(vault, new DeviceChainStore
 const platformHelper = deviceKeys
   ? new PlatformHelper({ locate: () => locateHelper({ here: import.meta.dirname ?? __dirname }) })
   : null;
-const loginChangeConfirmations = new ChangeConfirmations(checkKeyStore ? { checkRequired: () => checkKeyStore.has() } : {});
+const loginChangeConfirmations = new ChangeConfirmations({
+  ...(checkKeyStore ? { checkRequired: () => checkKeyStore.has() } : {}),
+  // What the person's phone is shown of a change (plan 20.4): the connector's name and the fields it changes, no secret value.
+  // Only a gateway with the switch on can send it to a phone; the description is built from the manifests read last.
+  ...(deviceKeys ? { describe: (kind: ChangeKind, name: string, change: unknown) => describeChange(kind, name, change, manifestCache, (n) => vault.getCredential(n)) } : {}),
+});
 
 // AU10 §8.4 — "what you saw" snapshots, encrypted at rest with the same
 // vault key as the credential store (shown-snapshot.ts).

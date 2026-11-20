@@ -12,7 +12,8 @@
     ]
   },
   "include": [
-    "src/__tests__/device-pairing.test.ts"
+    "src/__tests__/device-pairing.test.ts",
+    "src/__tests__/phone-confirmation.test.ts"
   ],
   "exclude": [
     "node_modules",

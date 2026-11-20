@@ -2,7 +2,7 @@
   "name": "@suveren/pairing",
   "version": "0.1.0",
   "private": true,
-  "description": "The pairing ceremony's shared, non-React logic (device-keys plan 4.3): the mailbox, the check of the opened entry, the comparison-code choices, the device list. ONE implementation for the phone app (apps/approve) and the gateway's control plane. Source-only: the host's bundler compiles it. No DOM, no network, no storage.",
+  "description": "The device-keys logic the phone app and the gateway share, non-React: the pairing ceremony (plan 4.3: the mailbox, the check of the opened entry, the comparison-code choices, the device list) and the change confirmation (plan 7 phone path: the sealed view, the gateway's signed envelope, the phone's signed answer and both ends' checks). ONE implementation for the phone app (apps/approve) and the gateway's control plane. Source-only: the host's bundler compiles it. No DOM, no network, no storage.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

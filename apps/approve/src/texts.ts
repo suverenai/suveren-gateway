@@ -173,6 +173,67 @@ export const P = {
   pushStateDenied: 'This phone blocks notifications for Suveren. Allow them in the phone\'s settings, then come back here.', // DRAFT
   pushStateUnsupported: 'This phone cannot show notifications from this app. Open the app now and then to see what waits.', // DRAFT
   pushMissed: (n: number) => (n === 1 ? '1 waiting request came without a notice.' : `${n} waiting requests came without a notice.`), // DRAFT (plan 8: the app counts them)
+  // ─── Remove a device (stage D3, mockup C1–C5) ─────────────────────────────────
+  devRemove: 'Remove', // DRAFT new
+  removeTitle: (label: string): string => `Remove "${label}"?`, // DRAFT new
+  removeSelfTitle: 'Remove this phone?', // DRAFT new
+  removeComputerEffect: (label: string): string => `${label} can no longer sign in, read new requests or decide. Its gateway locks.`, // DRAFT new
+  removePhoneEffect: (label: string): string => `${label} can no longer sign in, read new requests or decide.`, // DRAFT new
+  removeLogins: (label: string): string => `The logins of your connected systems stay on ${label} until someone clears it. If it was lost or stolen, change those passwords too.`, // DRAFT new
+  removeSelfEffect: 'This phone can no longer sign in, read requests or decide. The app then clears its data on this phone.', // DRAFT new
+  removeListAfter: SP.admitListTitle, // shared (approval-card pairing-texts): "Your devices after this:"
+  removeButton: 'Remove with your touch', // DRAFT new (DEC-85: "... with your touch")
+  touchWait: 'Waiting for your touch…', // DRAFT (Andreas 2026-11-20: the only line while the system's touch window comes)
+  // A computer's change to a connector login, confirmed here (stage D3, mockup E1–E3; plan 7 phone path)
+  changeRowType: 'Change', // DRAFT new (mockup E1)
+  changeRemoveTitle: (name: string) => `Remove the login of "${name}"`, // DRAFT new (mockup E1; gateway changeSentence)
+  changeReplaceTitle: (name: string) => `Replace the login of "${name}"`, // DRAFT new (gateway changeSentence)
+  changeConfirmTitle: 'Confirm this change', // = T.confirmTitle (70)
+  changeAskedBy: (computer: string) => `Asked by ${computer}.`, // DRAFT new (mockup E2)
+  changeRemoveEffect: (name: string) => `Your AI can no longer use ${name}.`, // DRAFT new (mockup E2)
+  changeReplaceEffect: 'Your AI then works with the new login.', // DRAFT new
+  changeFieldSecret: 'changes (the value is not shown)', // DRAFT new
+  changeScope: 'This confirms this one change only.', // = T.confirmScope (72)
+  changeRunsOut: (left: string) => `Runs out in ${left}.`, // DRAFT new (mockup E2)
+  changeConfirmButton: 'Confirm with your touch', // DRAFT new (DEC-85: "... with your touch")
+  changeDeny: 'Do not allow', // DRAFT new (mockup E2)
+  changeConfirming: 'Confirming…', // DRAFT (approved mockup v6: after the touch)
+  changeConfirmed: 'Confirmed', // DRAFT (approved mockup v6: the gateway's result stamp)
+  changeRecorded: 'Recorded', // DRAFT (approved mockup v6: no ticket line)
+  changeNext: (title: string) => `Next: ${title}`, // DRAFT (approved mockup v6: during the 1.5 s auto-advance)
+  changeNotAllowed: (computer: string, name: string) => `Not allowed. ${computer} keeps the login of "${name}".`, // DRAFT new (mockup E3)
+  changeExpired: 'This confirmation has run out. Make the change again.', // = T.confirmExpired (74)
+  removeDone: (label: string): string => `${label} was removed.`, // DRAFT new
+  removeListNow: SP.admitDoneList, // shared (approval-card pairing-texts): "Your devices now:"
+  removedSelf: 'This phone was removed from your account.', // DRAFT new
+
+  // ─── Replace the recovery code after joining (DEC-85, mockup D1–D5) ───────────
+  rotateOfferTitle: 'Replace your recovery code', // DRAFT
+  rotateOfferBody: (label: string): string => `Your recovery code was made on ${label}. Replace it now on this phone, so only the new code works.`, // DRAFT new
+  rotateNeedPaper: 'You need the paper with your old code.', // DRAFT new
+  rotateOfferJoined: 'Your recovery code was made on another of your devices. Replace it now on this phone, so only the new code works.', // DRAFT new (the join knows no label yet)
+  rotateStart: 'Make a new code', // DRAFT
+  rotateLater: 'Later', // DRAFT new
+  rotateTitle: 'Replace your recovery code', // DRAFT
+  rotateOldScan: 'Scan the code on your recovery paper.', // DRAFT new
+  rotateTypeInstead: 'Type it instead', // DRAFT new
+  rotateOldLabel: 'Old recovery code', // DRAFT new
+  rotateNewTitle: 'Your new recovery code', // DRAFT
+  rotateNewPaper: 'Write it on paper. Do not take a screenshot or save it in a file on this phone.', // DRAFT (DEC-85: paper only, no print)
+  rotateNewAgain: 'New recovery code, typed again', // DRAFT new
+  rotateButton: 'Replace code with your touch', // DRAFT new (DEC-85: "... with your touch")
+  rotateEmail: (to: string | null): string => (to ? `We sent an email to ${to}. Open the link in it on this phone.` : 'We sent an email to the address of your account. Open the link in it on this phone.'), // DRAFT new
+  rotateCompare: 'Check that the page from the email shows this number:', // DRAFT
+  rotateWaiting: 'Waiting for the email link...', // DRAFT
+  rotateDone: 'Done. Your new recovery code works. The old one does not.', // DRAFT
+  rotateThrowAway: 'Throw away the paper with the old code.', // DRAFT new
+  rotateGoDevices: 'Go to your devices', // DRAFT
+
+  // ─── Notices from the other devices (mockup F1–F3, plan 20.17) ────────────────
+  noticeAdded: (label: string, when: string, by: string): string => `${label} was added to your account ${when} on ${by}. If this was not you, remove it.`, // DRAFT new
+  noticeRemoved: (label: string, by: string): string => `${label} was removed from your account on ${by}.`, // DRAFT new
+  noticeRotated: (by: string): string => `${by} replaced your recovery code. The old code no longer works. If this was not you, contact support.`, // DRAFT new
+  noticeByCode: 'your recovery code', // DRAFT new (who signed: the recovery code, not a device)
 
   // ─── Navigation ───────────────────────────────────────────────────────────────
   navRequests: 'Requests', // DRAFT
@@ -286,6 +347,24 @@ const ERRORS: Record<string, string> = {
   push_subscribe_failed: 'The phone did not set up notifications. Nothing changed. Try again.', // DRAFT
   push_not_configured: 'suveren.ai does not send notifications yet. Open the app now and then to see what waits.', // DRAFT
   push_endpoint_not_allowed: 'suveren.ai did not accept this phone\'s notification service. Nothing changed. Tell support.', // DRAFT
+  // Removing a device (stage D3)
+  last_granting_self: 'This phone is the only one of your devices that can confirm changes. Add a device that can, then remove this phone. Nothing changed.', // DRAFT new (mockup C3)
+  last_granting: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new
+  no_granting_device: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new (the AS code NO_GRANTING_DEVICE)
+  bad_target: 'This device is no longer in your list. Nothing changed.', // DRAFT new (BAD_TARGET)
+  recovery_code_invalid: 'This is not a recovery code. Check each character and try again.', // DRAFT new
+  recovery_code_wrong: 'This is not the recovery code of your account. Nothing changed.', // DRAFT new
+  new_code_mismatch: 'What you typed is not the new code. Look at it again.', // DRAFT new
+  handoff_expired: 'The email link ran out. Nothing changed. Start again.', // DRAFT new
+  handoff_used: 'This replacement was already used. Nothing changed. Start again.', // DRAFT new
+  mail_failed: 'The email could not be sent. Nothing changed. Try again.', // DRAFT new
+  no_chain: 'suveren.ai did not accept the old code. Nothing changed. Check the code and try again.', // DRAFT new (NO_CHAIN: the same answer for every failure before the root signature)
+  bad_op: 'suveren.ai did not accept this change. Nothing changed. Try again; if it repeats, tell support.', // DRAFT new
+  rotate_chain_moved: 'Your list of devices changed meanwhile. Nothing changed. Start again.', // DRAFT new
+  list_not_refreshed: 'The list could not be refreshed. Look at it again in a moment.', // DRAFT new
+  remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
+  // Confirming a computer's change (stage D3)
+  change_answered: 'This change was already answered on another of your devices. Nothing changed here.', // DRAFT new
 };
 
 export function errorText(code: string | undefined): string {

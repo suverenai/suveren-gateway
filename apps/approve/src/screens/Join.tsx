@@ -18,6 +18,10 @@ export interface JoinScreenProps {
   scanning?: boolean;
   /** A way back to a start screen with another choice (only while phone-first setup is on, DEC-83). */
   canGoBack?: boolean;
+  /** Why the phone is back here (mockup C5: it was removed from the account). */
+  notice?: string;
+  /** Replace the recovery code now (DEC-85, mockup D1: offered with "Later"). */
+  onRotate?: () => void;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {
@@ -33,6 +37,7 @@ export function JoinScreen(p: JoinScreenProps) {
     case 'scan':
       return (
         <Screen title={P.joinTitle}>
+          {p.notice && <div data-testid="join-notice"><Notice kind="error">{p.notice}</Notice></div>}
           <p>{P.joinIntro}</p>
           <p>{P.joinScanWhy}</p>
           {st.error && <Notice kind="error">{st.error}</Notice>}
@@ -101,7 +106,15 @@ export function JoinScreen(p: JoinScreenProps) {
       return (
         <Screen title={P.joinDoneTitle}>
           <Notice kind="success">{P.setupDoneBody}</Notice>
-          <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>
+          {p.onRotate ? (
+            <div data-testid="rotate-offer">
+              <h2 style={{ fontSize: 'var(--text-lead)' }}>{P.rotateOfferTitle}</h2>
+              <p>{P.rotateOfferJoined}</p>
+              <p>{P.rotateNeedPaper}</p>
+              <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onRotate}>{P.rotateStart}</button>
+              <button type="button" className="btn btn-ghost btn-full" onClick={p.onDone}>{P.rotateLater}</button>
+            </div>
+          ) : <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>}
         </Screen>
       );
   }

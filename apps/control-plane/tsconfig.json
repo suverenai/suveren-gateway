@@ -12,6 +12,6 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  // The interop test imports the phone app's sources: it is typechecked by tsconfig.interop.json.
-  "exclude": ["node_modules", "dist", "src/__tests__/device-pairing.test.ts"]
+  // The interop tests import the phone app's sources: they are typechecked by tsconfig.interop.json.
+  "exclude": ["node_modules", "dist", "src/__tests__/device-pairing.test.ts", "src/__tests__/phone-confirmation.test.ts"]
 }

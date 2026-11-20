@@ -14,10 +14,21 @@ export interface ConfirmState {
   phase: 'starting' | 'asking' | 'busy' | 'closed';
   kind: 'replace' | 'remove';
   name: string;
-  /** Which way this computer confirms. */
-  mode: 'password' | 'touch';
+  /**
+   * Which way this computer confirms: Touch ID where it has a check key; otherwise the person's phone first (plan 7 phone path,
+   * when a phone is in the chain) and the unlock password after it.
+   */
+  mode: 'password' | 'touch' | 'phone';
+  /** Phone mode: the request is waiting on the phone (epoch ms when it runs out). */
+  phoneUntil?: number;
   error?: string;
 }
+
+/**
+ * Codes of `/auth/confirm/phone` that mean "no phone path here": the password is offered without a word. `bad_request` is also the
+ * answer of a control plane without the route.
+ */
+const NO_PHONE = new Set(['no_phone', 'not_set_up', 'change_not_describable', 'check_key_required', 'password_required', 'bad_request']);
 
 export class ConfirmDriver extends Driver<ConfirmState> {
   private request: ChangeRequest | null = null;
@@ -44,7 +55,41 @@ export class ConfirmDriver extends Driver<ConfirmState> {
       return;
     }
     this.request = req.data.request;
-    this.set({ ...this.state, phase: 'asking', mode: caps.ok && caps.data.checkKey === true ? 'touch' : 'password' });
+    if (caps.ok && caps.data.checkKey === true) { this.set({ ...this.state, phase: 'asking', mode: 'touch' }); return; }
+    // No check key: the phone first, where there is one (plan 7, DEC-47).
+    const sent = await this.d.client.confirmViaPhone(this.request.request_id);
+    if (sent.ok) { this.set({ ...this.state, phase: 'asking', mode: 'phone', phoneUntil: sent.data.expiresAt }); return; }
+    // A phone is there but could not be reached: said in its own words before the password (independent review L3).
+    const notice = sent.code === 'phone_unreachable' ? T.confirmPhoneUnreachable : NO_PHONE.has(sent.code) ? undefined : textForCode(sent.code, { screen: 'confirm' });
+    this.set({ ...this.state, phase: 'asking', mode: 'password', ...(notice ? { error: notice } : {}) });
+  }
+
+  /** Phone mode: what became of the request. The page calls it every few seconds. */
+  async poll(): Promise<void> {
+    if (!this.request || this.state.mode !== 'phone' || this.state.phase !== 'asking' || this.settled) return;
+    const r = await this.d.client.confirmPhoneStatus(this.request.request_id);
+    if (this.state.mode !== 'phone' || this.settled) return;
+    if (!r.ok) {
+      if (r.code === 'request_unknown') this.set({ ...this.state, error: T.confirmExpired });
+      return;   // anything else: try again on the next poll
+    }
+    const st = r.data.status;
+    if (st === 'confirmed') { this.end(this.request.request_id); return; }
+    if (st === 'denied') { this.set({ ...this.state, error: T.confirmPhoneDenied, phoneUntil: undefined }); return; }
+    if (st === 'expired') { this.set({ ...this.state, error: T.confirmExpired, phoneUntil: undefined }); return; }
+    if (st === 'invalid') { this.set({ ...this.state, error: T.confirmPhoneInvalid, phoneUntil: undefined }); }
+  }
+
+  /** Phone mode: "Use the password instead". The phone's request is withdrawn first. */
+  async usePassword(): Promise<void> {
+    if (!this.request || this.state.mode !== 'phone') return;
+    const id = this.request.request_id;
+    this.set({ ...this.state, mode: 'password', phoneUntil: undefined, error: undefined });
+    await this.d.client.confirmPhoneCancel(id);
+    // The withdrawal forgets the request on the computer too: a fresh one for the password.
+    const req = await this.d.client.confirmRequest(this.d.ask.kind, this.d.ask.name, this.d.ask.change);
+    if (!req.ok) { this.set({ ...this.state, error: textForCode(req.code, { screen: 'confirm' }) }); return; }
+    this.request = req.data.request;
   }
 
   private refused(code: string, retryAfterSeconds?: number): void {
@@ -77,6 +122,8 @@ export class ConfirmDriver extends Driver<ConfirmState> {
   }
 
   cancel(): void {
+    // A request still waiting on the phone is withdrawn, so the phone stops showing it.
+    if (this.request && this.state.mode === 'phone') void this.d.client.confirmPhoneCancel(this.request.request_id);
     this.end(null);
   }
 }

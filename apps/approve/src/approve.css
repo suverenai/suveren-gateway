@@ -16,3 +16,8 @@
 
 /* When the app goes to the background its content is hidden (plan 8, DEC-24; iOS 18.7 shows the content in the switcher anyway: 12.2 line 14). */
 body.ap-blank #root { visibility: hidden; }
+
+/* The approval panel (DEC-86): the gateway's own panel, full screen on a phone. The gateway's leaves room for its icon rail and nav bar;
+   the phone has neither, only the notch and the home bar. The card's buttons stay above the home bar. */
+.ap-panel.apr-panel { left: 0; top: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.ap-panel .av3-foot { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }

@@ -89,6 +89,14 @@ export class AsApi {
     return this.go<{ head: { seq: number; hash: string } }>('POST', '/api/devices/chain', { body: { entry, ...extra }, bearer });
   }
 
+  /**
+   * Stage a `rotate-root` for the email confirmation (the recovery hand-off, `return: "app"`: no port, no state, no PKCE; the
+   * phone reads the chain itself afterwards). No session: the entry carries its own proof.
+   */
+  stageRecovery(entry: unknown) {
+    return this.go<{ handoff_id?: unknown; expires_at?: unknown }>('POST', '/api/devices/recovery/handoffs', { body: { entry, return: 'app' } });
+  }
+
   // ─── pairing mailbox (PROPOSED: not built in the Authority Server) ─────────────
 
   createMailbox(pairingId: string, expiresAt: number, bearer: string) {
@@ -143,6 +151,18 @@ export class AsApi {
   /** A profile by id (`GET /api/profiles/:id`): public, no session needed, so none is sent. The phone checks its hash against the signed mandate. */
   profile(profileId: string) {
     return this.go<unknown>('GET', `/api/profiles/${encodeURIComponent(profileId)}`);
+  }
+
+  // ─── a computer's change to a connector login, confirmed here (plan 7 phone path, stage D3) ────────────────────────────
+
+  /** The open change requests this phone holds a wrap for, its own wrap only. */
+  confirmations(bearer: string) {
+    return this.go<{ requests?: unknown[] }>('GET', '/api/devices/confirmations', { bearer });
+  }
+
+  /** The phone's signed answer `{ confirmation, sig, check? }`. The first answer wins (409 after). */
+  answerConfirmation(requestId: string, body: { confirmation: unknown; sig: string; check?: unknown }, bearer: string) {
+    return this.go<{ status?: string }>('POST', `/api/devices/confirmations/${encodeURIComponent(requestId)}/answer`, { body, bearer });
   }
 
   /** A signed decision (`POST /api/proposals/:id/(approve|reject|resolve|withdraw)`); a phone session is allowed to. */
