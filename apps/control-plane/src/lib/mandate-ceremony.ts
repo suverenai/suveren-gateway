@@ -577,7 +577,7 @@ type StoredContext = Omit<GrantedContext, 'issueInput'>;
  * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
  * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
  */
-export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, meta: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
   const plan = await planMandate(req, deps);
   const ctx = await grantedContext(req, plan, deps);
@@ -586,7 +586,7 @@ export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, meta:
     give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title, ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}) });
   } catch (err) { return grantRefused(err); }
   const { issueInput: _fn, ...stored } = ctx;
-  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown>, ...(meta.proposalId ? { proposalId: meta.proposalId } : {}) });
+  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown> });
   return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
 }
 
@@ -647,12 +647,12 @@ async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise
  * A change the person approved (an AI proposal, setup__change_mandate) on a computer that cannot grant it: the same checks as
  * `changeMandate` (the diff still the one approved), then sent to the phone like a give from the page (DEC-90).
  */
-export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps, meta: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   const { diff, request } = await planMandateChange(req, deps);
   if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
     refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
   }
-  return giveOnPhone(request, deps, meta);
+  return giveOnPhone(request, deps);
 }
 
 /** Can this gateway hand a grant to the person's phone (an active device of the chain, other than this one, with a check key)? */
@@ -664,16 +664,16 @@ export function isNoCheckKeyRefusal(err: unknown): boolean {
  * Finish every give that waits on the phone, page or not (an approved AI proposal has no page that polls): what the timer in index.ts
  * runs. A give whose phone grant arrived is requested and delivered; a refusal ends it. `onDone` is told of each mandate that went live.
  */
-export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string; proposalId?: string }) => void, onRefused?: (r: { mandateId: string; proposalId?: string; message: string }) => void): Promise<void> {
+export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string }) => void, onRefused?: (r: { mandateId: string; message: string }) => void): Promise<void> {
   if (!deps.grants?.active()) return;
-  let waiting: Array<{ mandateId: string; proposalId?: string }>;
+  let waiting: Array<{ mandateId: string }>;
   try { waiting = deps.grants.phoneGives.list(); } catch { return; }
   for (const g of waiting) {
     try {
       const r = await pollPhoneGive(g.mandateId, deps);
-      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId, ...(g.proposalId ? { proposalId: g.proposalId } : {}) });
+      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId });
     } catch (err) {
-      onRefused?.({ mandateId: g.mandateId, ...(g.proposalId ? { proposalId: g.proposalId } : {}), message: err instanceof Error ? err.message : String(err) });
+      onRefused?.({ mandateId: g.mandateId, message: err instanceof Error ? err.message : String(err) });
     }
   }
 }

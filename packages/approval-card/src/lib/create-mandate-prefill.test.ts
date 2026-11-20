@@ -109,3 +109,11 @@ describe('shouldWithdrawProposalAfter', () => {
     expect(shouldWithdrawProposalAfter('failed')).toBe(false);
   });
 });
+
+describe('the card path hands the give page exactly the proposed values (same input → same prepare, same grant members)', () => {
+  it('limits, scope, intent, mode and duration of the proposal are what a person typing the same values would hand the give page', () => {
+    const args = { profile: 'records', limits: { read_access: 'unlimited', write_daily_max: 50, delete_access: 'none', archive_access: 'none' }, scope: {}, intent: 'Keep the notes.', mode: 'review' as const, duration_hours: 720 };
+    const byHand = { bounds: { read_access: 'unlimited', write_daily_max: 50, delete_access: 'none', archive_access: 'none' }, context: {}, gateContent: { intent: 'Keep the notes.' }, templateMode: 'review', templateTtl: 720 * 3600 };
+    expect(mandatePrefillGate(args)).toEqual(byHand);
+  });
+});

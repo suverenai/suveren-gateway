@@ -37,7 +37,6 @@ const { registerBuiltins } = await import('../src/lib/builtins');
 const { createGatedToolHandler } = await import('../src/lib/tool-proxy');
 const { executeCommitted } = await import('../src/tools/commitments');
 const { hashToolArgs } = await import('../src/lib/execution-journal');
-const { computeProposalContentHash } = await import('../src/lib/proposal-content');
 const { buildMandateBrief } = await import('../src/lib/mandate-brief');
 const { writeContextFile, CONTEXT_MAX_BYTES } = await import('../src/lib/context-loader');
 const { computeSubmissionPreviewHash } = await import('../src/lib/preview');
@@ -312,23 +311,6 @@ describe('setup__create_mandate', () => {
     expect(seen[1].request).toMatchObject({ profile: 'sales', limits: { value_max: 1000 }, scope: { currency: 'EUR' }, mode: 'automatic', durationHours: 24 });
   });
 
-  it('the creation names the fingerprint the person approved — not one over the ticket the gateway added at execution', async () => {
-    // A gateway with a device chain creates the mandate only for the signed approval of exactly this fingerprint
-    // (control-plane lib/device-approvals.ts). The executor adds `ticket_id` (the tool declares it) before the
-    // handler runs; hashing that changed the fingerprint and refused every AI-proposed mandate (dev lane, 2026-11-20).
-    process.env.SUVEREN_SIMULATION = '1';
-    process.env.SUVEREN_INTERNAL_SECRET = 'sec';
-    const seen = stubControlPlane((dryRun) => dryRun
-      ? { status: 200, body: { ok: true } }
-      : { status: 200, body: { ok: true, authorizationId: 'authz_created', profileId: 'p/sales@0.3', groupName: 'Anna', mode: 'automatic', ttlSeconds: 86400 } });
-    const { call, approve, submitProposal } = mandateTool();
-    await call(ARGS);
-    const submitted = (submitProposal as unknown as { mock: { calls: Array<[{ proposalContentHash?: string; toolArgs?: Record<string, unknown> }]> } }).mock.calls[0][0];
-    const approvedHash = computeProposalContentHash(submitted.toolArgs!);
-    const done = await approve();
-    expect(done.isError, done.text).toBeFalsy();
-    expect(seen[1].request.approvalHash).toBe(approvedHash);
-  });
 
   // DL1 decision 1: create_mandate now works OUTSIDE simulation too — gated
   // instead by decision 5 (mandate version) and decision 3 (its scope).
@@ -477,16 +459,6 @@ describe('setup__create_mandate', () => {
     expect(im.isBuiltin('setup')).toBe(true);
     const hash = await computeSubmissionPreviewHash(im, 'setup', 'create_mandate', ARGS);
     expect(hash).toBeUndefined();
-  });
-});
-
-describe('approvedFingerprint (create and change both use it)', () => {
-  it('is the fingerprint of the arguments as proposed: the ticket the gateway adds at execution is not part of it', async () => {
-    const { approvedFingerprint } = await import('../src/lib/builtins/setup');
-    const change = { mandate_id: 'authz_1', change: { limits: { value_max: 2000 } }, intent: 'Why — test.' };
-    expect(approvedFingerprint({ ...change, ticket_id: 'tkt_123' })).toBe(computeProposalContentHash(change));
-    // Anything else the person approved stays in: a different value is a different fingerprint.
-    expect(approvedFingerprint({ ...change, intent: 'Other.' })).not.toBe(computeProposalContentHash(change));
   });
 });
 

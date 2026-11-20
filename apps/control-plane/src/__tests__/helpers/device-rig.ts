@@ -122,7 +122,6 @@ export interface GatewayRig {
   checkStore: CheckKeyStore;
   /** Grants mandates on this computer (step 13); undefined with the switch off. */
   grants: MandateGrants | undefined;
-  approvals: import('../../lib/device-approvals').DeviceApprovals | undefined;
   /** What the mandate router handed to the intent delivery and the gate resync. */
   delivered: Array<{ authorizationId: string }>;
   resynced: { count: number };
@@ -179,7 +178,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   // Wired like index.ts: with the helper, the check key's slot decides whether the password still confirms.
   const checkStore = new CheckKeyStore(vault, new DeviceChainStore(vault));
   const confirmations = new ChangeConfirmations(o.platform ? { checkRequired: () => checkStore.has() } : {});
-  const { deviceChainState, signin, loginChangeGate, grants, approvals } = mountDeviceKeyRoutes(app, {
+  const { deviceChainState, signin, loginChangeGate, grants } = mountDeviceKeyRoutes(app, {
     enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations,
     hasCheckKey: o.platform ? () => checkStore.has() : () => false, internalSecret: () => 'sekret', jsonParser: json,
     platform: o.platform ? { host: o.platform, checkStore, opensPageSession: o.opensPageSession } : undefined,
@@ -232,13 +231,13 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       ...(grants ? { grants } : {}),
     });
     app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps, o.mandate.reads));
-    app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps, approvals));
+    app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps));
   }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
   const ceremony = ceremonyOut;
   const port = (server.address() as { port: number }).port;
   return {
-    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, approvals, delivered, resynced,
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, delivered, resynced,
     /** The ceremony's deps as the routers get them (undefined without `mandate`): what index.ts's background completion runs with. */
     ceremony,
     unlock: async () => {

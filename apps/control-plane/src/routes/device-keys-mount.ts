@@ -43,7 +43,6 @@ import { TeamTrustStore } from '../lib/team-trust-store';
 import { MandateGrants, type TeamTrustPort } from '../lib/mandate-grants';
 import { DeviceReaders } from '../lib/device-readers';
 import { ProposalRewrap } from '../lib/proposal-rewrap';
-import { DeviceApprovals } from '../lib/device-approvals';
 import { TeamJoin } from '../lib/team-join';
 import { TeamListChanges } from '../lib/team-changes';
 import { DevicePairing } from '../lib/device-pairing';
@@ -121,7 +120,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   /** Grants mandates on this computer with its check (step 13): only with device set-up. */
   grants?: MandateGrants;
   /** Checks what the person approved on ANY of their own devices, for the Setup tools; `/internal/mandate` runs only for these (plan 20.21.6). */
-  approvals?: DeviceApprovals;
   /** The verified head of the team's list (step 3's port; the join screens use it internally). */
   teamTrust?: TeamTrustPort;
   /** The verified member DIDs, null when nothing is honoured (stage C). */
@@ -135,7 +133,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing; firstStart: FirstStart } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing; firstStart: FirstStart } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -185,7 +183,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    const approvals = new DeviceApprovals({ vault: o.vault, client, grants, pins, now: o.device.now });
     const teamJoin = new TeamJoin({
       vault: o.vault, store, grants, trust: grants.teamTrustPort(), now: o.device.now,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
@@ -197,7 +194,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
       otherFlowPending: () => setup.status().setupPending || setup.isBusy() || recovery.status().recoveryPending,
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, teamChanges, readers, rewrap, pairing, firstStart };
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, teamJoin, teamChanges, readers, rewrap, pairing, firstStart };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -274,6 +271,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, teamChanges: device.teamChanges, readers: device.readers, rewrap: device.rewrap } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, teamChanges: device.teamChanges, readers: device.readers, rewrap: device.rewrap } : {}),
   };
 }

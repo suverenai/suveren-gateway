@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
@@ -357,6 +357,25 @@ export function AgentReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, giveRequestKey, prepareTick]);
 
+  /**
+   * The AI's proposal this give was opened from is closed once the person's own mandate is live (DL6 "no double"; the card's
+   * "Give this mandate" on a device-key gateway opens this page the same way). Outcome `replaced`, not a plain reject: the AI
+   * uses the mandate. The route depends on the proposal (review: /resolve per domain; above cap: /reject). Returns a problem, or ''.
+   */
+  const withdrawReplacedProposal = async (proposalId: string): Promise<string> => {
+    try {
+      const proposal = await spClient.getProposal(proposalId);
+      if (proposal.status !== 'pending') return '';
+      const route = replacedWithdrawRoute(proposal, user?.id ?? '');
+      if (!route) return 'you are not one of the people who may decide it';
+      if (route.route === 'approver') await spClient.rejectProposal(proposalId, replacedOutcomeArgs());
+      else await spClient.resolveProposal(proposalId, 'reject', route.domain, replacedOutcomeArgs());
+      return '';
+    } catch (e) {
+      return e instanceof Error ? e.message : 'unknown error';
+    }
+  };
+
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
@@ -411,30 +430,14 @@ export function AgentReviewPage() {
       // domain (/resolve), an above-cap one by its approvers (/reject). Using
       // /reject for everything left review proposals PENDING (found live
       // 2026-10-12). A failure is shown, never swallowed.
-      let withdrawProblem = '';
-      if (replacesProposalId) {
-        try {
-          const proposal = await spClient.getProposal(replacesProposalId);
-          if (proposal.status === 'pending') {
-            const route = replacedWithdrawRoute(proposal, user?.id ?? '');
-            if (!route) {
-              withdrawProblem = 'you are not one of the people who may decide it';
-            } else if (route.route === 'approver') {
-              await spClient.rejectProposal(replacesProposalId, replacedOutcomeArgs());
-            } else {
-              await spClient.resolveProposal(replacesProposalId, 'reject', route.domain, replacedOutcomeArgs());
-            }
-          }
-        } catch (e) {
-          withdrawProblem = e instanceof Error ? e.message : 'unknown error';
-        }
-      }
+      const withdrawProblem = replacesProposalId ? await withdrawReplacedProposal(replacesProposalId) : '';
 
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
       sessionStorage.removeItem('agentChangeAiIntent');
+      sessionStorage.removeItem('agentGiveNow');
       if (revokeProblem) {
         if (chain) setTouchView({ s: 'offered' });
         // Stay on the page: a mandate the person believes is replaced is still live.
@@ -503,8 +506,13 @@ export function AgentReviewPage() {
   }, [waitingId]);
   useEffect(() => {
     if (phoneGive.s !== 'given' || !authData) return;
-    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent']) sessionStorage.removeItem(k);
+    const fromProposal = sessionStorage.getItem('agentReplacesProposal');
+    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent', 'agentGiveNow']) sessionStorage.removeItem(k);
     if (phoneGive.revokeError) { setError(replacedRevokeProblem(phoneGive.revokeError) || phoneGive.revokeError); }
+    // Given on the phone from an AI proposal: that proposal is closed the same way as after a give on this computer.
+    if (fromProposal) void withdrawReplacedProposal(fromProposal).then(problem => {
+      if (problem) setError(`Your mandate is given and active. The AI's proposal could not be withdrawn (${problem}) — reject it under Approvals.`);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneGive.s]);
 
@@ -615,6 +623,11 @@ export function AgentReviewPage() {
   // three — understating the cumulative case and overstating the mode case.
   const giveSummary = giveSummaryLine({ limits: gateData.bounds as Record<string, string | number>, scope: gateData.context, durationSeconds: ttlSeconds, boundsSchema: profile?.boundsSchema as never, hidden: hiddenLimits });
   const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
+
+  const giveDisabled = submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0;
+  // Opened from the card's "Give this mandate" (device-key gateway): the give starts at once, the same way the button starts it —
+  // Touch ID here, or the phone where this computer cannot give it. Only when nothing is missing; otherwise the page waits for the person.
+  const giveNow = chain && !!prepared && sessionStorage.getItem('agentGiveNow') === '1';
 
   return (
     <>
@@ -992,12 +1005,13 @@ export function AgentReviewPage() {
           </div>
         ) : (
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {giveNow && <GiveNowStart phone={phoneOffered} ready={!giveDisabled} onPhone={() => void handleGiveOnPhone()} onGive={() => void handleCommit()} />}
             <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
             <button
               className="btn btn-primary btn-lg"
               style={{ flex: 1 }}
               onClick={handleCommit}
-              disabled={submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+              disabled={giveDisabled}
             >
               {chain ? (submitting ? S13.giveBusy : S13.giveButton) : submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
             </button>
@@ -1010,4 +1024,18 @@ export function AgentReviewPage() {
       </div>
     </>
   );
+}
+
+/** Starts the give once, when the page was opened from the card's "Give this mandate" and nothing is missing (renders nothing). */
+function GiveNowStart({ phone, ready, onPhone, onGive }: { phone: boolean; ready: boolean; onPhone: () => void; onGive: () => void }) {
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    if (phone) { started.current = true; onPhone(); return; }
+    if (!ready) return;
+    started.current = true;
+    onGive();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone, ready]);
+  return null;
 }

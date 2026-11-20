@@ -172,17 +172,6 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       res.json({ ok: true, ...(await giveOnPhone(request, d)) });
     } catch (err) { answerRefusal(res, err); }
   });
-  // The give an approved AI proposal sent to the phone (DEC-90): the approval card asks by its proposal id and then waits like the page.
-  router.get('/give-on-phone', (req, res) => {
-    try {
-      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
-      if (!d.grants?.active()) { res.json({ waiting: null }); return; }
-      const proposal = typeof req.query.proposal === 'string' ? req.query.proposal : '';
-      if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(proposal)) { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
-      const g = d.grants.phoneGives.byProposal(proposal);
-      res.json({ waiting: g ? { mandateId: g.mandateId, startedAt: g.startedAt } : null });
-    } catch (err) { answerRefusal(res, err); }
-  });
   router.get('/give-on-phone/:mandateId', async (req, res) => {
     try {
       const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };

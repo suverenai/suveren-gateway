@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { workingWord, stampWord, stampLine, ticketIdOf, nextAfter, positionLabel, nextLabel, navKeyFor } from './approval-flow';
+import { approveRoute, workingWord, stampWord, stampLine, ticketIdOf, nextAfter, positionLabel, nextLabel, navKeyFor } from './approval-flow';
 
 describe('approval flow words (UI spec §17.5)', () => {
   it('names the call while it is out, and the stamp after', () => {
@@ -63,5 +63,16 @@ describe('nav badge refresh', () => {
     announceApprovalDecided(t);
     expect(n).toBe(1);
     expect(() => announceApprovalDecided(undefined)).not.toThrow();
+  });
+});
+
+describe('approveRoute: one mechanism for giving a mandate (2026-11-20)', () => {
+  it('a device-key account gives an AI-proposed mandate (create or change) on the give page, never with a bare decision', () => {
+    expect(approveRoute({ giveWording: true, isMandate: true, canOpenGivePage: true })).toBe('give_page');
+  });
+  it('everything else is decided on the card: an action, a gateway without device keys, content not readable here', () => {
+    expect(approveRoute({ giveWording: true, isMandate: false, canOpenGivePage: true })).toBe('decide');
+    expect(approveRoute({ giveWording: false, isMandate: true, canOpenGivePage: true })).toBe('decide');
+    expect(approveRoute({ giveWording: true, isMandate: true, canOpenGivePage: false })).toBe('decide');
   });
 });

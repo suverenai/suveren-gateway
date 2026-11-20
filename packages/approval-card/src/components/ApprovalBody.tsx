@@ -99,6 +99,12 @@ interface Props {
    */
   onShownSnapshot?: (snapshot: ShownSnapshotPayload | null) => void;
   /**
+   * A device-key gateway gives an AI-proposed mandate with the give page's own flow (same prepare, same Touch ID or phone, same
+   * progress and result): the card's "Give this mandate" opens that page from this proposal and starts the give at once.
+   * The body hands the card the function that does it (null while the content is not readable here).
+   */
+  registerGive?: (give: (() => void) | null) => void;
+  /**
    * Real-gateway e2e (2026-10-15) — the "Cannot read this proposal yet"
    * note used to join raw userIds (`tom-fecb81a6-…@test.local`), which the
    * gateway already has a display name for (member-names.ts) wherever its
@@ -117,7 +123,7 @@ interface Props {
  *  limits/scope/intent/mode/duration_hours) is acceptable even though every
  *  other part of this module stays generic (brief decision 6). */
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras, registerGive }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -176,7 +182,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // own `team`). Nothing is created here; AgentReviewPage withdraws THIS
   // proposal only after the person actually signs (sessionStorage
   // `agentReplacesProposal`, read in its handleCommit).
-  const handleEditBeforeSigning = async () => {
+  const handleEditBeforeSigning = async (giveNow = false) => {
     if (!groupId) {
       setEditError('No active workspace; cannot open the mandate screen.');
       return;
@@ -211,6 +217,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         })],
         ['agentGate', JSON.stringify({ ...prefill, bounds, context })],
         ['agentReplacesProposal', proposal.id],
+        ...(giveNow ? [['agentGiveNow', '1'] as [string, string]] : []),
       ]);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Could not open the mandate screen.');
@@ -221,7 +228,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
 
   // "Change it myself": the form opens pre-filled with what the AI proposed, computed
   // from the signed mandate; the diff is recomputed on the form's review step.
-  const handleChangeMyself = async () => {
+  const handleChangeMyself = async (giveNow = false) => {
     if (!groupId) { setEditError('No active workspace; cannot open the mandate screen.'); return; }
     setEditingBeforeSigning(true);
     setEditError(null);
@@ -242,6 +249,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         ['agentEditReplaces', args.mandate_id],
         ['agentReplacesProposal', proposal.id],
         ['agentChangeAiIntent', typeof args.intent === 'string' ? args.intent : ''],
+        ...(giveNow ? [['agentGiveNow', '1'] as [string, string]] : []),
       ]);
     } catch (err) {
       setEditError(err instanceof Error ? err.message : 'Could not open the mandate screen.');
@@ -265,6 +273,16 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   // One fetch for the card; where the box sits depends on what it shows.
   const previewState = useProposalPreview(proposal.id, systemName, content.toolArgs, setPreviewTone, setPreviewData, readable);
+  // The card's "Give this mandate" on a device-key gateway: the give page's own flow, started from this proposal.
+  const giveTool = proposal.tool === CREATE_MANDATE_TOOL || proposal.tool === CHANGE_MANDATE_TOOL;
+  useEffect(() => {
+    if (!registerGive) return;
+    registerGive(readable && giveTool && openMandateScreen
+      ? () => { void (proposal.tool === CHANGE_MANDATE_TOOL ? handleChangeMyself(true) : handleEditBeforeSigning(true)); }
+      : null);
+    return () => registerGive(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerGive, readable, giveTool, openMandateScreen, proposal.id, content.toolArgs, groupId]);
   const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
   // A record read from the system that is NOT shown as a change is context,
   // not what runs: it sits after the sealed tile, and the bound values are open.
@@ -382,7 +400,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         proposalId={proposal.id}
         args={content.toolArgs as ChangeArgs}
         areaTitle={typeArea}
-        onChangeMyself={openMandateScreen ? () => void handleChangeMyself() : undefined}
+        onChangeMyself={openMandateScreen ? () => void handleChangeMyself(false) : undefined}
         editBusy={editingBeforeSigning}
         editError={editError}
       />
@@ -463,7 +481,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               type="button"
               className="av3-link"
               data-testid="edit-before-signing"
-              onClick={handleEditBeforeSigning}
+              onClick={() => void handleEditBeforeSigning(false)}
               disabled={editingBeforeSigning}
             >
               {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
