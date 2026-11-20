@@ -9,6 +9,7 @@ import { JoinScreen } from './Join';
 import { AdmitScreen } from './Admit';
 import { DevicesScreen, DeviceList } from './Devices';
 import { RequestsScreen, RequestDetail } from './Requests';
+import { RequestPanel } from './RequestPanel';
 import type { CardCheck, ReadyCard } from '../lib/card-checks';
 import { OpenSessionScreen } from './OpenSession';
 import { ScanView } from './ScanView';
@@ -226,6 +227,49 @@ describe('the phone screens (both widths use the same markup and the same tokens
         expect(text(m)).toContain(blockedText('content_mismatch'));
         expect(text(m)).toContain(P.cardBlockedTitle);
         expect(text(m)).not.toContain('content_mismatch');
+      });
+    });
+
+    describe('the panel that opens by itself (DEC-86: the gateway\'s mechanism)', () => {
+      const proposal = { id: 'p1', tool: 'email__send_message', profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending', toolArgs: {}, executionContext: {}, pendingDomains: ['owner'], committedBy: {}, rejectedBy: null, executionResult: null, path: 'x' } as never;
+      const readyCard: ReadyCard = { facts: { mandateId: 'm1', actionType: 'send' }, contentHash: 'sha256:' + '0'.repeat(64), args: {}, executionContext: {}, display: {}, route: { kind: 'domain', domain: 'owner' } };
+      const panel = (over: Partial<Parameters<typeof RequestPanel>[0]> = {}) => html(
+        <RequestPanel position={{ index: 1 }} total={2} prevId={null} nextId="p2" onMove={noop} onLater={noop} autoOpen onToggleAuto={noop}
+          shown={{ proposal, card: { userId: 'u1', check: { ok: true, ready: readyCard }, decide: async () => ({}) } }} {...over} />,
+      );
+
+      it('is the gateway\'s panel: full screen, the compact head with "1 of 2", ‹ ›, the setting and Later', () => {
+        const m = panel();
+        expect(m).toContain('apr-panel is-open ap-panel');
+        expect(m).toContain('apr-head is-compact');
+        expect(text(m)).toContain('Waiting for you');
+        expect(m).toContain('data-testid="approval-position"');
+        expect(text(m)).toContain('1 of 2');
+        expect(m).toContain('data-testid="approval-prev"');
+        expect(m).toContain('data-testid="approval-next"');
+        expect(m).toContain('data-testid="approval-head-menu"');
+        expect(m).toContain('data-testid="approval-later"');
+      });
+
+      it('the card sits in the gateway\'s stage, with its buttons in the fixed footer', () => {
+        const m = panel();
+        expect(m).toContain('apr-body');
+        expect(m).toContain('apr-stage');
+        expect(m).toContain('av3-scroll');
+        expect(m).toMatch(/<footer class="av3-foot">[\s\S]*data-testid="btn-approve"/);
+      });
+
+      it('one waiting approval: no arrows; a setting that could not be read: no switch (never guessed)', () => {
+        const m = panel({ total: 1, nextId: null, autoOpen: null });
+        expect(m).not.toContain('data-testid="approval-prev"');
+        expect(m).not.toContain('data-testid="approval-head-menu"');
+        expect(m).toContain('data-testid="approval-later"');
+      });
+
+      it('while the approval is read: the panel says so, and no card', () => {
+        const m = panel({ shown: null });
+        expect(text(m)).toContain(P.listLoading);
+        expect(m).not.toContain('apr-stage');
       });
     });
 

@@ -25,7 +25,13 @@ import { RegisterScreen } from './screens/Register';
 import { JoinScreen } from './screens/Join';
 import { AdmitScreen } from './screens/Admit';
 import { DevicesScreen } from './screens/Devices';
-import { RequestsScreen, RequestDetail } from './screens/Requests';
+import { RequestsScreen } from './screens/Requests';
+import { RequestPanel } from './screens/RequestPanel';
+import { loadAutoOpen, saveAutoOpen } from './lib/panel-setting';
+import {
+  INITIAL_PANEL, RESULT_SHOW_MS, afterDecision, neighbour, panelChrome, positionOf, reconcilePanel, resolveCurrent, type PanelState,
+} from '@suveren/approval-card/lib/approval-panel';
+import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { OpenSessionScreen } from './screens/OpenSession';
 import { useDriver } from './screens/Frame';
 
@@ -199,10 +205,27 @@ function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
   );
 }
 
+interface OpenCard { proposal: Proposal; check: CardCheck | null }
+
+/**
+ * The requests: the list, and the panel that opens a waiting approval full screen by itself (DEC-86, the gateway's mechanism). The
+ * rules are the shared ones (approval-panel.ts of the package): an arrival opens the panel when the setting is on; Later sends it
+ * back to the list; a decision's result stays on the card for the gateway's time (or until Next / Close when it was refused or is
+ * not known), then the next one opens or the panel closes.
+ */
 function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [error, setError] = useState<string | undefined>();
-  const [open, setOpen] = useState<{ proposal: Proposal; check: CardCheck | null } | null>(null);
+  const [autoOpen, setAutoOpenState] = useState<boolean | null>(null);
+  const [settingRead, setSettingRead] = useState(false);
+  const [panel, setPanel] = useState<PanelState>(INITIAL_PANEL);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [settling, setSettling] = useState<{ id: string; before: string[]; stay: boolean } | null>(null);
+  const settlingRef = useRef<{ id: string; before: string[] } | null>(null);
+  const [cards, setCards] = useState<Record<string, OpenCard>>({});
+  const [busy, setBusy] = useState(false);
+  const timers = useRef<number[]>([]);
+  useEffect(() => () => { timers.current.forEach((t) => window.clearTimeout(t)); }, []);
 
   const load = useCallback(async (byPerson: boolean) => {
     const r = await rt.reader.list(byPerson);
@@ -217,33 +240,122 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     return () => window.clearInterval(t);
   }, [load]);
 
-  const openOne = useCallback(async (id: string) => {
+  useEffect(() => {
+    void loadAutoOpen(rt.kv).then((v) => { setAutoOpenState(v); setSettingRead(true); });
+  }, [rt]);
+
+  // The panel's order is the gateway's: oldest first. The list screen shows newest first.
+  const ids = useMemo(() => [...(proposals ?? [])].sort((a, b) => a.createdAt - b.createdAt).map((p) => p.id), [proposals]);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
+  const hold = settling !== null;
+  const idsKey = ids.join('\u0001');
+  useEffect(() => {
+    setPanel((prev) => reconcilePanel(prev, {
+      ids: idsRef.current, loaded: proposals !== null && settingRead, autoOpen, typing: false, onApprovalsPage: false, hold,
+    }));
+  }, [idsKey, proposals, settingRead, autoOpen, hold]);
+
+  const chrome = panelChrome({ count: ids.length, open: panel.open, typing: false, onApprovalsPage: false, hold });
+  const showId = resolveCurrent(ids, currentId);
+  const shownId = settling?.id ?? showId;
+
+  // The card on screen is read fresh and checked; the buttons come only when every check passed (lib/card-checks.ts).
+  const openCard = useCallback(async (id: string) => {
     const r = await rt.reader.get(id, true);
     if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
-    // The card is drawn at once WITHOUT buttons; they come only when every check before a decision passed (lib/card-checks.ts).
-    setOpen({ proposal: r.data, check: null });
+    setCards((c) => ({ ...c, [id]: { proposal: r.data, check: null } }));
     const check = await checkCard(rt.checks, r.data);
     if (!check.ok && check.reason === 'session_ended') { onEnded(); return; }
-    setOpen((cur) => (cur && cur.proposal.id === id ? { proposal: cur.proposal, check } : cur));
+    setCards((c) => (c[id] ? { ...c, [id]: { proposal: c[id].proposal, check } } : c));
   }, [rt, onEnded]);
 
+  const shownCard = shownId ? cards[shownId] : undefined;
+  useEffect(() => {
+    if (chrome.panel && shownId && !cards[shownId]) void openCard(shownId);
+  }, [chrome.panel, shownId, cards, openCard]);
+
+  const later = useCallback(() => {
+    setPanel((p) => ({ ...p, open: false }));
+    if (settlingRef.current) { settlingRef.current = null; setSettling(null); }
+  }, []);
+
+  const finishSettling = useCallback((id: string) => {
+    const s = settlingRef.current;
+    if (!s || s.id !== id) return;
+    settlingRef.current = null;
+    const { next } = afterDecision(s.before, id);
+    setCards((c) => { const { [id]: _gone, ...rest } = c; return rest; });
+    if (next) setCurrentId(next);
+    else setPanel((p) => ({ ...p, open: false }));
+    setSettling(null);
+  }, []);
+
+  const handleDecided = useCallback((id: string) => {
+    settlingRef.current = { id, before: idsRef.current };
+    setSettling({ id, before: idsRef.current, stay: false });
+    void load(true);
+  }, [load]);
+
+  const handleOutcome = useCallback((id: string, outcome: ApprovalOutcome) => {
+    if (settlingRef.current?.id !== id) return;
+    if (outcome === 'done') timers.current.push(window.setTimeout(() => finishSettling(id), RESULT_SHOW_MS));
+    else if (outcome === 'refused' || outcome === 'unknown') setSettling((s) => (s && s.id === id ? { ...s, stay: true } : s));
+  }, [finishSettling]);
+
+  const toggleAuto = useCallback(() => {
+    const value = autoOpen !== true;
+    if (!value) later();
+    void saveAutoOpen(rt.kv, value).then(setAutoOpenState, () => setAutoOpenState(null));
+  }, [autoOpen, later, rt]);
+
   // The one place a button becomes a signed decision. The decider reads the request again and signs; a session over its limit asks for the touch first.
-  const decide = useCallback(async (args: DecideArgs) => {
-    const cur = open;
+  const decideFor = useCallback((id: string) => async (args: DecideArgs) => {
+    const cur = cards[id];
     if (!cur || !cur.check || !cur.check.ok) throw new DecideError('generic');
     if (args.kind === 'change') throw new DecideError('generic');
     return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
-  }, [rt, open]);
+  }, [rt, cards]);
 
-  if (open) {
+  if (chrome.panel) {
+    const before = settling ? settling.before : ids;
+    const pos = positionOf(before, shownId);
     return (
-      <RequestDetail
-        proposal={open.proposal} userId={rt.session.current()?.user.id ?? ''} check={open.check} decide={decide}
-        onBack={() => { setOpen(null); void load(true); }} onDecided={() => void load(true)}
+      <RequestPanel
+        position={pos}
+        total={before.length}
+        prevId={settling || busy ? null : neighbour(ids, showId, -1)}
+        nextId={settling || busy ? null : neighbour(ids, showId, 1)}
+        onMove={setCurrentId}
+        onLater={later}
+        autoOpen={autoOpen}
+        onToggleAuto={toggleAuto}
+        error={error}
+        shown={shownId && shownCard ? {
+          proposal: shownCard.proposal,
+          card: {
+            userId: rt.session.current()?.user.id ?? '',
+            check: shownCard.check,
+            decide: decideFor(shownId),
+            onDecided: () => handleDecided(shownId),
+            onBusyChange: setBusy,
+            onOutcome: (o) => handleOutcome(shownId, o),
+            ...(settling?.stay && settling.id === shownId ? {
+              dismissLabel: resultDismissLabel(afterDecision(settling.before, shownId).next !== null),
+              onDismissResult: () => finishSettling(shownId),
+            } : {}),
+          },
+        } : null}
       />
     );
   }
-  return <RequestsScreen proposals={proposals} error={error} nowMs={Date.now()} onOpen={(id) => void openOne(id)} onRefresh={() => void load(true)} />;
+  return (
+    <RequestsScreen
+      proposals={proposals} error={error} nowMs={Date.now()}
+      onOpen={(id) => { setCurrentId(id); setPanel((p) => ({ ...p, open: true, owed: false })); }}
+      onRefresh={() => void load(true)}
+    />
+  );
 }
 
 function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void }) {
