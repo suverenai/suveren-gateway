@@ -469,7 +469,9 @@ export class StubAs {
   private async stage(body: Record<string, unknown>, json: Json, refuse: Refuse): Promise<void> {
     if (typeof body.code_challenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.code_challenge)) return refuse(400, 'MALFORMED', 'code_challenge must be a base64url SHA-256');
     const entry = validateEntryShape(body.entry);
-    if (entry.signer !== 'root' || (entry.op !== 'reset' && entry.op !== 'rotate-root')) return refuse(400, 'BAD_OP', 'only a root-signed reset or rotate-root is staged');
+    if (entry.signer !== 'root' || (entry.op !== 'reset' && entry.op !== 'rotate-root' && entry.op !== 'set')) return refuse(400, 'BAD_OP', 'only a root-signed reset, rotate-root or set is staged');
+    // As the real AS: a root-signed `set` only ADDS a computer's platform check key.
+    if (entry.op === 'set' && (!entry.check || entry.check.type !== 'platform')) return refuse(400, 'BAD_OP', 'a root-signed set only adds a platform check key');
     // an unknown root DID, a suspended account: the same 404 as no chain at all
     if (!this.chainUser || this.suspended || entry.root_did !== this.accounts.get(this.chainUser)!.rootDid) return refuse(404, 'NO_CHAIN', 'no device chain');
     const rootDid = this.accounts.get(this.chainUser)!.rootDid!;

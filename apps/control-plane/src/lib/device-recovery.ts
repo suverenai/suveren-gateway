@@ -11,6 +11,9 @@
  *                session, which stays in the browser: lib/device-recovery-contract.ts.
  *   rotate-root  "Recovery code exposed or to be replaced" (DEC-37): a NEW code, signed by the
  *                old root key and by this computer as a granting device (signature AND check).
+ *   set          "Turn on Touch ID for approvals": a computer set up without a check key (no Touch ID helper at
+ *                set-up) gets one. The root key signs a `set` naming this computer and its NEW platform check
+ *                key; the new key checks the entry (its one touch). Appended only with the email link (DEC-15).
  *   cancel       A pending request for a new identity (the alarm of lib/identity-reset-alarm.ts)
  *                is cancelled by a `suveren-identity-cancel` this computer signs, with its check
  *                where the chain gives it one.
@@ -64,13 +67,13 @@ const SAFE_CODE = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 interface Flow {
   id: string;
-  kind: 'reset' | 'rotate';
+  kind: 'reset' | 'rotate' | 'set';
   entry: ChainEntry;
   entryHash: string;
   rootDid: string;
   keyId: string;
   label: string;
-  /** The check key made for a `reset` (moved into its slot when the chain is stored). */
+  /** The check key made for a `reset` or a `set` (moved into its slot when the chain is stored / the entry is in it). */
   checkKey?: StoredCheckKey;
   /** Memory only: the verifier and the state are never kept across a lock. */
   handoff: LoopbackHandoff | null;
@@ -144,7 +147,7 @@ export class DeviceRecovery {
   // ─── state ──────────────────────────────────────────────────────────────
 
   /** What the page needs; never a code, never a key. */
-  status(): { recoveryPending: boolean; kind?: 'reset' | 'rotate'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string } {
+  status(): { recoveryPending: boolean; kind?: 'reset' | 'rotate' | 'set'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string } {
     const f = this.live();
     // A step that is running counts as pending: a set-up must not start under it.
     if (!f) return { recoveryPending: this.busy };
@@ -167,7 +170,7 @@ export class DeviceRecovery {
     try { raw = this.d.vault.getSecretSlot<Record<string, unknown>>(PENDING_SLOT); } catch { return null; }
     if (!raw || raw.v !== 1) return null;
     const { id, entry, entryHash, rootDid, keyId, label, checkKey, confirmCode, kind, expiresAt } = raw;
-    if (kind !== 'reset' && kind !== 'rotate') return null;
+    if (kind !== 'reset' && kind !== 'rotate' && kind !== 'set') return null;
     // A chain is stored: a `reset` slot is a leftover (a crash between storing the chain and clearing the slot).
     // A `rotate` slot belongs to a chain that is stored; it stays until finished, cancelled or dropped.
     if (kind === 'reset' && this.d.store.exists()) return null;
@@ -636,10 +639,106 @@ export class DeviceRecovery {
     }
   }
 
+  // ─── 3. set: turn on Touch ID for approvals on a computer set up without it ──────────────
+
+  /**
+   * A computer set up without a check key gets one: the root key (from the typed recovery code) signs a `set` that names
+   * THIS computer and a NEW platform check key; the new key checks the entry (the one touch of this step). The Authority
+   * Server appends it only with the person's email link (DEC-15), exactly as a `rotate-root`.
+   */
+  async checkKeySubmit(input: { code: unknown; port: number; sessionId: string; localAddress?: string }): Promise<{
+    recoveryId: string; pageUrl: string; checkEmail: true; sameBrowser: true; confirmCode: string; expiresAt: number;
+  }> {
+    this.requireUnlocked();
+    const stored = this.storedChain();
+    this.dropExpiredRotate();
+    if (this.busy) throw new SetupRefusal(409, 'setup_busy');
+    if (this.live()) throw new SetupRefusal(409, 'recovery_pending');
+    if (!this.d.checks || !this.d.checkStore) throw new SetupRefusal(409, 'helper_unavailable');
+    this.checkLoopback(input.port, input.sessionId, input.localAddress);
+    this.busy = true;
+    let rootSeed: Uint8Array | null = null;
+    try {
+      const dk = await deviceKeys();
+      const root = await this.rootKeyOf(dk, input.code);
+      rootSeed = root.privateSeed;
+      const key = await this.d.checkAs();
+      if (!key.ok) throw new SetupRefusal(key.code === 'as_key_mismatch' || key.code === 'as_tls_mismatch' ? 409 : 502, key.code);
+      const { state, entries } = await this.ownChain(stored);
+      if (state.root_pub !== dk.b64uEncode(root.publicKey)) throw new SetupRefusal(409, 'recovery_code_wrong');
+      if (!dk.isActive(state, stored.keyId)) throw new SetupRefusal(409, 'device_removed');
+      if (state.devices[stored.keyId].check) throw new SetupRefusal(409, 'check_key_present');
+      let made: StoredCheckKey;
+      try { made = await this.d.checks.createKey(); } catch (err) { throw checkRefusal(err); }
+
+      const entry = dk.buildEntry({
+        root_did: stored.rootDid, seq: state.head.seq + 1, prev: state.head.hash, op: 'set',
+        created_at: Math.floor(this.now() / 1000), signer: 'root', target: stored.keyId, check: platformCheckKey(made.publicKey),
+      });
+      entry.sigs.push(await dk.signEntry(entry, 'root', root.privateSeed));
+      rootSeed.fill(0);
+      let signed;
+      try { signed = await this.d.checks.sign(made, dk.entrySignedBytes(entry)); } catch (err) { throw checkRefusal(err); }
+      entry.checks.push({ by: stored.keyId, check: platformCheckProof(signed.signature) });
+      try {
+        await dk.verifyChain({ expectedRootDid: stored.rootDid, entries: [...entries, entry] });
+      } catch (e) {
+        if (isDeviceKeysError(e)) throw new SetupRefusal(409, 'entry_invalid', { asCode: e.code });
+        throw e;
+      }
+      const hash = await dk.entryHash(entry);
+      const f: Flow = {
+        id: randomBytes(16).toString('base64url'), kind: 'set', entry, entryHash: hash, rootDid: stored.rootDid,
+        keyId: stored.keyId, label: stored.label, checkKey: made, handoff: null, confirmCode: confirmCodeOf(hash), expiresAt: 0,
+      };
+      this.requireUnlocked();
+      const handed = await this.stage(f, input.port, input.sessionId);
+      this.requireUnlocked();
+      this.persist(f);
+      this.flow = f;
+      return { recoveryId: f.id, ...handed };
+    } finally {
+      rootSeed?.fill(0);
+      this.busy = false;
+    }
+  }
+
+  /** `set`: the chain holds our entry: the check key goes into its slot, then the stored head moves. */
+  async checkKeyFinish(input: { recoveryId: unknown }): Promise<{ rootDid: string; head: { seq: number; hash: string }; checkKey: true }> {
+    this.requireUnlocked();
+    const stored = this.storedChain();
+    if (this.busy) throw new SetupRefusal(409, 'setup_busy');
+    const f = this.flowFor(input.recoveryId);
+    if (f.kind !== 'set' || !f.checkKey) throw new SetupRefusal(404, 'recovery_unknown');
+    if (!this.d.checkStore) throw new SetupRefusal(409, 'helper_unavailable');
+    this.busy = true;
+    try {
+      if (!isBearerCredential(this.d.vault.getSpCookie())) await this.d.signin.signIn();
+      const { state } = await this.ownChain(stored);
+      if (state.hashes[f.entry.seq] !== f.entryHash) {
+        const failed = f.handoff?.status === 'failed' ? f.handoff.failure : undefined;
+        throw new SetupRefusal(409, 'recovery_not_done', failed ? { handoffCode: failed.code, ...(failed.asCode ? { asCode: failed.asCode } : {}) } : {});
+      }
+      // From the moment the chain names this computer's check key, the slot holds it (a password is then no confirmation here).
+      this.d.checkStore.write(f.checkKey);
+      try {
+        this.d.store.advance(state.head);
+      } catch (e) {
+        if (e instanceof ChainHeadRefusedError) throw new SetupRefusal(409, e.reason === 'rollback' ? 'chain_rollback' : 'chain_fork');
+        throw e;
+      }
+      this.flow = null;
+      try { this.persist(null); } catch { /* locked: the slot is dropped at the next finish or cancel */ }
+      return { rootDid: stored.rootDid, head: state.head, checkKey: true };
+    } finally {
+      this.busy = false;
+    }
+  }
+
   /** A rotation whose time is over is dropped (and its sealed slot with it): nothing may stay wedged behind it. */
   private dropExpiredRotate(): void {
     const f = this.live();
-    if (f?.kind === 'rotate' && f.expiresAt <= this.now() && f.handoff?.status !== 'authorised') {
+    if ((f?.kind === 'rotate' || f?.kind === 'set') && f.expiresAt <= this.now() && f.handoff?.status !== 'authorised') {
       this.flow = null;
       try { this.persist(null); } catch { /* locked */ }
     }

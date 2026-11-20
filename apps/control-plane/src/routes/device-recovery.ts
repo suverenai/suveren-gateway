@@ -13,6 +13,9 @@
  *   POST /auth/device/rotate-root/submit     { rotateId, oldCode, newCode } -> same hand-off as recover
  *   GET  /auth/device/rotate-root/status     ?recoveryId
  *   POST /auth/device/rotate-root/finish     { recoveryId } -> check the chain, move the stored head
+ *   POST /auth/device/check-key/submit       { code } -> a `set` that gives THIS computer a Touch ID check key; same hand-off
+ *   GET  /auth/device/check-key/status       ?recoveryId
+ *   POST /auth/device/check-key/finish       { recoveryId } -> the chain holds it: store the key, move the head
  *   POST /auth/device/identity-reset/cancel  { requestId } -> a signed cancel of the pending request for a new identity
  *   GET  /recover/callback                   the system browser's way back (no page session; `state` authorises it)
  *
@@ -52,6 +55,7 @@ export const RECOVERY_MESSAGES: Record<string, string> = {
   rotate_unknown: 'No such new code.',
   rotate_expired: 'The new code was not used in time. Make another.',
   new_code_mismatch: 'The new code typed again is not the one shown.',
+  check_key_present: 'This computer already has its check key.',
   granting_device_required: 'This computer needs its check key to replace the recovery code.',
   check_unavailable: 'This computer\'s check key is not available.',
   not_signed_in: 'This computer is not signed in to the Authority Server.',
@@ -153,6 +157,27 @@ export function createDeviceRecoveryRouter(deps: DeviceRecoveryRouterDeps): Rout
 
   api.post('/rotate-root/finish', run(async (req, res) => {
     const done = await recovery.rotateFinish({ recoveryId: body(req).recoveryId });
+    noStore(res);
+    res.json({ ok: true, ...done });
+  }));
+
+  api.post('/check-key/submit', run(async (req, res) => {
+    const b = body(req);
+    const out = await recovery.checkKeySubmit({
+      code: b.code, port: req.socket.localPort ?? 0, sessionId: sessionIdOf(req), localAddress: req.socket.localAddress,
+    });
+    delete b.code;
+    noStore(res);
+    res.json({ ok: true, ...out });
+  }));
+
+  api.get('/check-key/status', run((req, res) => {
+    noStore(res);
+    res.json({ ok: true, ...recovery.handoffStatus(req.query.recoveryId, sessionIdOf(req)) });
+  }));
+
+  api.post('/check-key/finish', run(async (req, res) => {
+    const done = await recovery.checkKeyFinish({ recoveryId: body(req).recoveryId });
     noStore(res);
     res.json({ ok: true, ...done });
   }));

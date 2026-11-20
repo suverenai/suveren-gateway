@@ -50,7 +50,7 @@ export interface PlatformUnlockAnswer { unlocked: true; sessionOpened: boolean; 
 export interface PlatformCapabilities { unlockEnabled: boolean; checkKey: boolean; available?: boolean }
 
 export interface PendingIdentityReset { id: string; effectiveAt: number; raisedAt?: number }
-export interface RecoveryStatus { recoveryPending: boolean; kind?: 'reset' | 'rotate'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string }
+export interface RecoveryStatus { recoveryPending: boolean; kind?: 'reset' | 'rotate' | 'set'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string }
 export interface DeviceStatus {
   setUp: boolean;
   setupPending: boolean;
@@ -158,6 +158,10 @@ export class DeviceClient {
   rotateSubmit(rotateId: string, oldCode: string, newCode: string) { return this.go<HandoffStarted>('/auth/device/rotate-root/submit', json({ rotateId, oldCode, newCode })); }
   rotateStatus(recoveryId: string) { return this.go<HandoffStatus>(`/auth/device/rotate-root/status?recoveryId=${encodeURIComponent(recoveryId)}`); }
   rotateFinish(recoveryId: string) { return this.go<{ rootDid: string }>('/auth/device/rotate-root/finish', json({ recoveryId })); }
+  // A computer set up without Touch ID gets its check key (a root-signed `set`, recovery code + email link).
+  checkKeySubmit(code: string) { return this.go<HandoffStarted>('/auth/device/check-key/submit', json({ code })); }
+  checkKeyStatus(recoveryId: string) { return this.go<HandoffStatus>(`/auth/device/check-key/status?recoveryId=${encodeURIComponent(recoveryId)}`); }
+  checkKeyFinish(recoveryId: string) { return this.go<{ rootDid: string; checkKey: true }>('/auth/device/check-key/finish', json({ recoveryId })); }
   identityResetCancel(requestId: string) { return this.go<{ cancelled: true; requestId: string }>('/auth/device/identity-reset/cancel', json({ requestId })); }
 
   // Pairing with the phone app: the list, "Add a phone" (admit), "Add this computer" (join)
