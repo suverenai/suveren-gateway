@@ -16,6 +16,7 @@ function loadWorker() {
   const opened: string[] = [];
   const messages: unknown[] = [];
   let windows: { url: string; focus: () => Promise<void>; postMessage: (m: unknown) => void }[] = [];
+  const subscribed: unknown[] = [];
   // A tiny IndexedDB stand-in: one store, get/put, completes asynchronously.
   const indexedDB = {
     open() {
@@ -40,7 +41,12 @@ function loadWorker() {
   const self = {
     location: { origin: 'https://approve.example' },
     addEventListener: (t: string, h: Handler) => { handlers[t] = h; },
-    registration: { showNotification: async (title: string, opts: never) => { shown.push({ title, opts }); } },
+    registration: {
+      showNotification: async (title: string, opts: never) => { shown.push({ title, opts }); },
+      // The notice still on screen is the last one shown under the tag (each replaces the one before).
+      getNotifications: async ({ tag }: { tag: string }) => { const last = shown.at(-1); return last && last.opts.tag === tag ? [{ data: last.opts.data }] : []; },
+      pushManager: { subscribe: async (o: unknown) => { subscribed.push(o); return {}; } },
+    },
     clients: {
       matchAll: async () => windows,
       openWindow: async (u: string) => { opened.push(u); },
@@ -54,7 +60,7 @@ function loadWorker() {
     await p;
   };
   const push = (body: unknown) => fire('push', { data: { json: () => (typeof body === 'string' ? JSON.parse(body) : body) } });
-  return { push, fire, shown, stored, opened, messages, setWindows: (w: typeof windows) => { windows = w; } };
+  return { push, fire, shown, stored, opened, messages, subscribed, setWindows: (w: typeof windows) => { windows = w; } };
 }
 
 describe('public/sw.js: push', () => {
@@ -73,6 +79,7 @@ describe('public/sw.js: push', () => {
     await w.push({ ids: ['a'] });
     await w.push({ ids: ['a', 'b', 'c'] });
     expect(w.shown[1].opts.body).toBe(P.pushMany(3));
+    expect(w.shown[1].opts.data.ids).toEqual(['a', 'b', 'c']);
     expect(w.stored.get('push:seen')).toEqual(['a', 'b', 'c']);
   });
 
@@ -82,6 +89,26 @@ describe('public/sw.js: push', () => {
     await w.fire('push', { data: { json: () => { throw new Error('not json'); } } });
     expect(w.shown.map((s) => s.opts.body)).toEqual([P.pushOne, P.pushOne]);
     expect(w.stored.get('push:seen')).toEqual(['ok']);
+  });
+
+  it('L2: a new notice replacing one still shown carries its ids: the count and a tap cover both', async () => {
+    const w = loadWorker();
+    await w.push({ ids: ['first'] });
+    await w.push({ ids: ['second'] });
+    expect(w.shown[1].opts.body).toBe(P.pushMany(2));
+    expect(w.shown[1].opts.data.ids).toEqual(['first', 'second']);
+    await w.fire('notificationclick', { notification: { close: () => {}, data: w.shown[1].opts.data } });
+    expect(w.opened).toEqual(['/']);
+  });
+
+  it('L3: a replaced subscription is made again with the same server key and the app is marked to send it', async () => {
+    const w = loadWorker();
+    const key = new Uint8Array([4, 1, 2]).buffer;
+    await w.fire('pushsubscriptionchange', { oldSubscription: { options: { applicationServerKey: key } }, newSubscription: null });
+    expect(w.subscribed).toEqual([{ userVisibleOnly: true, applicationServerKey: key }]);
+    expect(w.stored.get('push:resync')).toBe(true);
+    await w.fire('pushsubscriptionchange', { oldSubscription: null, newSubscription: {} });
+    expect(w.subscribed).toHaveLength(1);
   });
 
   it('a tap opens the app at the one request, or at the list; an open window is focused and told instead', async () => {

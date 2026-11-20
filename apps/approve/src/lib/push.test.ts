@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { MemoryKv } from './kv';
 import { AsApi } from './as-api';
 import type { Transport, Reply, Method } from './transport';
-import { PushControl, requestFromHash, SEEN_KEY, SINCE_KEY, type PushPlatform, type SubscriptionLike } from './push';
+import { PushControl, requestFromHash, RESYNC_KEY, SEEN_KEY, SINCE_KEY, type PushPlatform, type SubscriptionLike } from './push';
 
 const KEY = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
 const keyBytes = () => Uint8Array.from(atob(KEY.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (KEY.length % 4)) % 4)), (c) => c.charCodeAt(0));
@@ -108,7 +108,54 @@ describe('turning notifications on', () => {
     await c.turnOn('tok');
     t.calls.length = 0;
     await c.resync('tok2');
-    expect(t.calls.map((x) => `${x.method} ${x.bearer}`)).toEqual(['PUT tok2']);
+    expect(t.calls.filter((x) => x.method === 'PUT').map((x) => `${x.method} ${x.bearer}`)).toEqual(['PUT tok2']);
+  });
+
+  it('L3: resync makes a subscription the browser dropped again, when the person had turned notifications on', async () => {
+    const { p, st } = platform();
+    const { c, t, kv } = control(p);
+    await c.turnOn('tok');
+    st.sub = null; // the browser dropped it (pushsubscriptionchange without a new one)
+    await kv.set(RESYNC_KEY, true);
+    t.calls.length = 0;
+    await c.resync('tok3');
+    expect(st.sub).not.toBeNull();
+    expect(t.calls.filter((x) => x.method === 'PUT').map((x) => x.bearer)).toEqual(['tok3']);
+    expect(await kv.get(RESYNC_KEY)).toBeUndefined();
+    expect(await c.state()).toBe('on');
+  });
+
+  it('L3: resync does nothing when the person turned them off, or the permission was withdrawn', async () => {
+    const { p, st } = platform();
+    const { c, t } = control(p);
+    await c.turnOn('tok');
+    await c.turnOff('tok');
+    t.calls.length = 0;
+    await c.resync('tok');
+    expect(t.calls).toHaveLength(0);
+    const two = platform();
+    const ctl = control(two.p);
+    await ctl.c.turnOn('tok');
+    two.st.permission = 'denied';
+    ctl.t.calls.length = 0;
+    await ctl.c.resync('tok');
+    expect(ctl.t.calls).toHaveLength(0);
+    expect(st.asked).toBe(1);
+  });
+
+  it('L1: a server key that does not decode is a code, never a throw', async () => {
+    const t = new FakeTransport();
+    t.answers.set('GET /api/push/key', { status: 200, body: { key: '%%% not base64 %%%' } });
+    expect(await control(platform().p, t).c.turnOn('tok')).toEqual({ ok: false, code: 'push_subscribe_failed' });
+  });
+
+  it('turnOn and turnOff never throw, whatever the transport does', async () => {
+    const boom: Transport = { call: async () => { throw new Error('boom'); } };
+    const { p } = platform();
+    const c = new PushControl({ platform: p, api: new AsApi(boom), kv: new MemoryKv(), now: () => 1 });
+    expect(await c.turnOn('tok')).toEqual({ ok: false, code: 'push_subscribe_failed' });
+    expect((await c.turnOff('tok')).ok).toBe(false);
+    await expect(c.resync('tok')).resolves.toBeUndefined();
   });
 });
 

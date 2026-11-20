@@ -19,6 +19,8 @@ import type { AsApi } from './as-api';
 export const SEEN_KEY = 'push:seen';
 /** When notifications were turned on (seconds). Requests older than that are not counted as missed. */
 export const SINCE_KEY = 'push:since';
+/** Set by the service worker when the browser replaced the subscription (`pushsubscriptionchange`): send it again. */
+export const RESYNC_KEY = 'push:resync';
 /** The person said "not now" to the offer on the requests screen. */
 export const DISMISSED_KEY = 'push:offer-dismissed';
 export const SEEN_MAX = 500;
@@ -79,15 +81,26 @@ export class PushControl {
     return sub && (await this.d.kv.get(SINCE_KEY)) !== undefined ? 'on' : 'off';
   }
 
-  /** From a tap: ask for the permission, subscribe with the AS's key, store the subscription at the AS. */
+  /** From a tap: ask for the permission, subscribe with the AS's key, store the subscription at the AS. Never throws. */
   async turnOn(bearer: string): Promise<PushResult> {
+    try {
+      return await this.turnOnInner(bearer);
+    } catch {
+      return { ok: false, code: 'push_subscribe_failed' };
+    }
+  }
+
+  /** Subscribe with the AS's current key (replacing one made with another key) and store it at the AS. */
+  private async subscribeAndStore(bearer: string): Promise<PushResult> {
     const p = this.d.platform;
-    if (!p.supported()) return { ok: false, code: 'push_unsupported' };
-    const perm = p.permission() === 'granted' ? 'granted' : await p.requestPermission();
-    if (perm !== 'granted') return { ok: false, code: perm === 'denied' ? 'push_denied' : 'push_dismissed' };
     const k = await this.d.api.pushKey();
     if (!k.ok) return { ok: false, code: k.code };
-    const key = fromB64u(k.data.key);
+    let key: Uint8Array;
+    try {
+      key = fromB64u(k.data.key);
+    } catch {
+      return { ok: false, code: 'push_subscribe_failed' };
+    }
     let sub = await p.getSubscription().catch(() => null);
     // A subscription made with another server key cannot be used for this one.
     const had = sub?.options?.applicationServerKey;
@@ -104,12 +117,30 @@ export class PushControl {
     if (!body) return { ok: false, code: 'push_subscribe_failed' };
     const r = await this.d.api.putPush(body, bearer);
     if (!r.ok) return { ok: false, code: r.code };
+    return { ok: true };
+  }
+
+  private async turnOnInner(bearer: string): Promise<PushResult> {
+    const p = this.d.platform;
+    if (!p.supported()) return { ok: false, code: 'push_unsupported' };
+    const perm = p.permission() === 'granted' ? 'granted' : await p.requestPermission();
+    if (perm !== 'granted') return { ok: false, code: perm === 'denied' ? 'push_denied' : 'push_dismissed' };
+    const r = await this.subscribeAndStore(bearer);
+    if (!r.ok) return r;
     if ((await this.d.kv.get(SINCE_KEY)) === undefined) await this.d.kv.set(SINCE_KEY, this.d.now());
     return { ok: true };
   }
 
-  /** From a tap: remove the subscription at the AS and in the browser. */
+  /** From a tap: remove the subscription at the AS and in the browser. Never throws. */
   async turnOff(bearer: string): Promise<PushResult> {
+    try {
+      return await this.turnOffInner(bearer);
+    } catch {
+      return { ok: false, code: 'generic' };
+    }
+  }
+
+  private async turnOffInner(bearer: string): Promise<PushResult> {
     const r = await this.d.api.deletePush(bearer);
     if (!r.ok) return { ok: false, code: r.code };
     const sub = await this.d.platform.getSubscription().catch(() => null);
@@ -119,14 +150,21 @@ export class PushControl {
   }
 
   /**
-   * After a session opens: if notifications are on, send the subscription again (the browser may have renewed it, or the
-   * AS deleted it after a 410). Quiet: a failure only means the next session tries again.
+   * After a session opens: if the person turned notifications on (and the permission still holds), send the
+   * subscription again: the browser may have renewed it (the service worker marks that), or the AS deleted it after a
+   * 410. A subscription the browser dropped is made again. Quiet and never throws: a failure only means the next
+   * session tries again.
    */
   async resync(bearer: string): Promise<void> {
-    if ((await this.state()) !== 'on') return;
-    const sub = await this.d.platform.getSubscription().catch(() => null);
-    const body = sub && subscriptionBody(sub);
-    if (body) await this.d.api.putPush(body, bearer).catch(() => undefined);
+    try {
+      const p = this.d.platform;
+      if (!p.supported() || p.permission() !== 'granted') return;
+      if ((await this.d.kv.get(SINCE_KEY)) === undefined) return;
+      const r = await this.subscribeAndStore(bearer);
+      if (r.ok) await this.d.kv.delete(RESYNC_KEY);
+    } catch {
+      // the next session tries again
+    }
   }
 
   /** Waiting requests, created since notifications were turned on, that no notification named. */

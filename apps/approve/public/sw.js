@@ -90,20 +90,45 @@ function kvUpdate(key, fn) {
   });
 }
 
+const TAG = 'suveren-waiting';
+
 self.addEventListener('push', (event) => {
   const ids = idsOf(event);
-  // A push without a notice is not allowed (userVisibleOnly): even an unreadable message shows the generic one.
-  const body = ids.length > 1 ? PUSH_TEXT.many.replace('{n}', String(ids.length)) : PUSH_TEXT.one;
-  event.waitUntil(Promise.all([
-    kvUpdate(SEEN_KEY, (old) => [...(Array.isArray(old) ? old : []).filter((x) => !ids.includes(x)), ...ids].slice(-SEEN_MAX)),
-    self.registration.showNotification(PUSH_TEXT.title, {
-      body,
-      tag: 'suveren-waiting',
-      renotify: true,
-      icon: '/icons/icon-192.png',
-      data: { ids },
-    }),
-  ]));
+  event.waitUntil((async () => {
+    // One notice at a time (one tag): a new one replaces the one still shown, so it carries that one's ids too and a
+    // tap opens the list when more than one request waits.
+    let shown = [];
+    try {
+      for (const n of await self.registration.getNotifications({ tag: TAG })) {
+        const prev = n.data && Array.isArray(n.data.ids) ? n.data.ids : [];
+        shown = shown.concat(prev.filter((x) => typeof x === 'string' && ID_SHAPE.test(x)));
+      }
+    } catch {
+      shown = [];
+    }
+    const all = [...new Set([...shown, ...ids])].slice(-100);
+    // A push without a notice is not allowed (userVisibleOnly): even an unreadable message shows the generic one.
+    const body = all.length > 1 ? PUSH_TEXT.many.replace('{n}', String(all.length)) : PUSH_TEXT.one;
+    await Promise.all([
+      kvUpdate(SEEN_KEY, (old) => [...(Array.isArray(old) ? old : []).filter((x) => !ids.includes(x)), ...ids].slice(-SEEN_MAX)),
+      self.registration.showNotification(PUSH_TEXT.title, { body, tag: TAG, renotify: true, icon: '/icons/icon-192.png', data: { ids: all } }),
+    ]);
+  })());
+});
+
+// The browser replaced or dropped the subscription. The worker has no session (the token lives in the app's memory
+// only), so it subscribes again where it can and marks the app to send the subscription to suveren.ai at its next
+// session (lib/push.ts RESYNC_KEY, PushControl.resync).
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const key = event.oldSubscription && event.oldSubscription.options && event.oldSubscription.options.applicationServerKey;
+      if (!event.newSubscription && key) await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    } catch {
+      // the app's next session subscribes again
+    }
+    await kvUpdate('push:resync', () => true);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
