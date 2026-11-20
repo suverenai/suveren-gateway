@@ -328,6 +328,47 @@ describe('replacing a mandate', () => {
     expect((await createMandate(base, d)).revokeError).toBeUndefined();
   });
 
+  it('the old mandate stops being honoured locally BEFORE the revoke, and a failed revoke stays recorded for the retry', async () => {
+    const { as } = fakeAs();
+    const order: string[] = [];
+    const failing: CeremonyDeps['as'] = async (m, p, b) => {
+      order.push(p);
+      return p.endsWith('/revoke') ? { status: 503, body: { error: 'down' } } : as(m, p, b);
+    };
+    const replaced = {
+      record: vi.fn(async (oldId: string, newId: string) => { order.push(`record ${oldId}->${newId}`); }),
+      noteAttempt: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    const { d } = deps(failing, { replaced });
+    const r = await createMandate(base, d);
+    expect(r).toMatchObject({ authorizationId: 'authz_new', revokeError: 'down', oldStoppedLocally: true });
+    expect(order.indexOf('record authz_old->authz_new')).toBeLessThan(order.indexOf('/api/authorizations/authz_old/revoke'));
+    expect(replaced.noteAttempt).toHaveBeenCalledWith('authz_old', 'down');
+    expect(replaced.clear).not.toHaveBeenCalled();
+  });
+
+  it('a revoke that goes through clears the local record', async () => {
+    const { as } = fakeAs();
+    const replaced = { record: vi.fn(async () => {}), noteAttempt: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
+    const { d } = deps(as, { replaced });
+    const r = await createMandate(base, d);
+    expect(r.revokeError).toBeUndefined();
+    expect(r.oldStoppedLocally).toBeUndefined();
+    expect(replaced.record).toHaveBeenCalledWith('authz_old', 'authz_new');
+    expect(replaced.clear).toHaveBeenCalledWith('authz_old');
+  });
+
+  it('when even the local record fails, the failed revoke is reported without claiming a local stop', async () => {
+    const { as } = fakeAs();
+    const failing: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 500, body: { error: 'down' } } : as(m, p, b));
+    const replaced = { record: vi.fn(async () => { throw new Error('mcp down'); }), noteAttempt: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
+    const { d } = deps(failing, { replaced });
+    const r = await createMandate(base, d);
+    expect(r.revokeError).toBe('down');
+    expect(r.oldStoppedLocally).toBeUndefined();
+  });
+
   it('an undelivered new mandate is revoked and the old one is left alone', async () => {
     const { as, calls } = fakeAs();
     const { d } = deps(as, { deliverGateContent: vi.fn(async () => { throw new Error('mcp down'); }) });

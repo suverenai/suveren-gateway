@@ -61,10 +61,12 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts, getHeldBack, getSignedMandate } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts, getHeldBack, getSignedMandate, recordReplacedMandate, listReplacedMandates, noteReplacedRevokeAttempt, clearReplacedMandate } from './lib/mcp-bridge';
 import { createEstablish } from './lib/device-session-establish';
 import { createSignInSweep } from './lib/device-signin-sweep';
 import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
+import { startReplacedRevokeRetry, type RetryDeps } from './lib/replaced-revoke-retry';
+import { createReplacedMandatesRouter } from './routes/replaced-mandates';
 import { backfillReadPolicyDefaults } from './lib/read-policy-defaults';
 import { createMCPRouter } from './routes/mcp';
 import { createAutostartRouter } from './routes/autostart';
@@ -582,8 +584,21 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   signedMandate: async (authorizationId) => { const r = await getSignedMandate(authorizationId); return 'old' in r ? r.old : null; },
   // A gateway with a device chain grants the mandate on this computer first (step 13); undefined with the switch off.
   ...(deviceGrants ? { grants: deviceGrants } : {}),
+  replaced: { record: recordReplacedMandate, noteAttempt: noteReplacedRevokeAttempt, clear: clearReplacedMandate },
 });
 app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps, deviceApprovals));
+
+// A replaced mandate whose revoke at the AS failed stays recorded on the MCP
+// server (not honoured here) and is retried until the AS confirms it.
+const replacedRetryDeps = (): RetryDeps => ({
+  as: (method, path, body) => mandateCeremonyDeps().as(method, path, body),
+  signedIn: () => vault.isUnlocked() && !!vault.getSpCookie(),
+  list: listReplacedMandates,
+  noteAttempt: noteReplacedRevokeAttempt,
+  clear: clearReplacedMandate,
+  resyncGates: () => resyncGates(),
+});
+startReplacedRevokeRetry(replacedRetryDeps());
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.
@@ -615,6 +630,7 @@ app.use('/api/mandate', jsonParser, authGuard, createMandateRouter(mandateCeremo
 // The join screens (DEC-73 step 4): a gateway with a device chain only; without one the path stays the proxy's, unchanged.
 if (deviceTeamJoin) app.use('/api/team-join', jsonParser, authGuard, createTeamJoinRouter(deviceTeamJoin));
 if (deviceTeamChanges) app.use('/api/team-changes', jsonParser, authGuard, createTeamChangesRouter(deviceTeamChanges));
+app.use('/api/replaced-mandates', jsonParser, authGuard, createReplacedMandatesRouter(listReplacedMandates));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)

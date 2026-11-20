@@ -107,13 +107,13 @@ export function createInternalMandateRouter(
           res.json({ ok: true, groupName: plan.groupName, profileId: plan.profile.id, mode: plan.mode, ttlSeconds: plan.ttlSeconds, diff });
           return;
         }
-        const { authorizationId, plan, revokeError } = await changeMandate(change, d);
+        const { authorizationId, plan, revokeError, oldStoppedLocally } = await changeMandate(change, d);
         await spend?.settled();
         // The Authority Server holds the new mandate now: the Mandates list and the
         // dashboard re-read it at once (this path never crosses the /api proxy,
         // which is where every other mandate write announces itself).
         eventBus.emit('attestation-changed');
-        res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}) });
+        res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}), ...(oldStoppedLocally ? { oldStoppedLocally } : {}) });
         return;
       }
       if (dryRun === true && (request as { rightsOnly?: unknown }).rightsOnly === true) {

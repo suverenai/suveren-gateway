@@ -663,6 +663,12 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
           const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change }, approvalHash: computeProposalContentHash(args) });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
+          if (r.revokeError && r.oldStoppedLocally) {
+            // The change happened: the new mandate is in place and the old one is no
+            // longer used on this gateway. Only its revoke at the Authority Server is
+            // still open, and the gateway retries it — not a failed action.
+            return builtinText(changeRevokePendingText(r.authorizationId!, read.old.authorizationId, r.revokeError));
+          }
           if (r.revokeError) {
             return {
               ...builtinText(`The new mandate ${r.authorizationId} is signed and active, but the old mandate ${read.old.authorizationId} could not be revoked and is still live with its old limits. Tell the person: they should revoke the old one in the gateway. (${r.revokeError})`),
@@ -767,4 +773,18 @@ function mandateRequest(args: Record<string, unknown>): Record<string, unknown> 
     durationHours: args.duration_hours,
     title: args.title,
   };
+}
+
+/**
+ * The change went through, but the old mandate's revoke at the Authority Server
+ * did not yet: the old one is no longer used on this gateway and the gateway
+ * ends it there by itself (approved wording, Andreas 2026-11-20). The id pair
+ * and the reason follow for the AI's own record. Exported for its test.
+ */
+export function changeRevokePendingText(newId: string, oldId: string, revokeError: string): string {
+  return (
+    'The change is in place. The old mandate is no longer used on this computer. ' +
+    'It will be ended on suveren.ai as soon as possible.' +
+    ` (New mandate ${newId}, old mandate ${oldId}; ending it there did not go through yet: ${revokeError})`
+  );
 }

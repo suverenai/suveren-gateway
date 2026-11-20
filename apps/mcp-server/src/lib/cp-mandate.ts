@@ -22,6 +22,8 @@ export interface MandateResult {
   diff?: unknown;
   /** The new mandate is live but the old one could not be revoked. */
   revokeError?: string;
+  /** The old mandate is no longer honoured on this gateway (its revoke is retried). */
+  oldStoppedLocally?: boolean;
 }
 
 export async function controlPlaneMandate(dryRun: boolean, request: Record<string, unknown>): Promise<MandateResult> {

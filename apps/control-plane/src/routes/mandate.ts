@@ -137,8 +137,8 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
         const now = await prepareMandate(request, d);
         if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was signed. Look at it again.' }); return; }
       }
-      const { authorizationId, revokeError } = await createMandate(request, d);
-      res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}) });
+      const { authorizationId, revokeError, oldStoppedLocally } = await createMandate(request, d);
+      res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}), ...(oldStoppedLocally ? { oldStoppedLocally } : {}) });
     } catch (err) { answerRefusal(res, err); }
   });
   // Give on the phone (plan 4.4 "Transport", DEC-86): the same prepared plan as /sign, sealed to the person's devices; the phone grants it.

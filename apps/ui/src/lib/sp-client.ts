@@ -1413,6 +1413,14 @@ class SPClient {
 
   // ─── Archived mandates (local display flag; deletes nothing) ───
 
+  /** Ids of mandates the person replaced whose revoke on the AS is still open (no longer used here). */
+  async getReplacedMandates(): Promise<string[]> {
+    const res = await this.fetch('/api/replaced-mandates');
+    if (!res.ok) throw new Error(`Failed to load replaced mandates: ${res.status}`);
+    const body = (await res.json()) as { entries?: Array<{ authorizationId?: unknown }> };
+    return (body.entries ?? []).map((e) => e.authorizationId).filter((id): id is string => typeof id === 'string');
+  }
+
   async getArchivedMandates(): Promise<string[]> {
     const res = await this.fetch('/api/archived-mandates');
     if (!res.ok) throw new Error(`Failed to load archived mandates: ${res.status}`);
