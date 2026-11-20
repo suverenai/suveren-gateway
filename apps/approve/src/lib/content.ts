@@ -34,6 +34,15 @@ export class NoWrapError extends Error {
   }
 }
 
+/** The content opened, but is not the content its fingerprint names (rule 8). Never shown; a decision on it is never offered. */
+export class ContentMismatchError extends Error {
+  readonly code = 'content_mismatch';
+  constructor() {
+    super('Decrypted proposal content does not match its fingerprint.');
+    this.name = 'ContentMismatchError';
+  }
+}
+
 const STRICT_B64URL = /^[A-Za-z0-9_-]+$/;
 export const CONTEXT_INFO = 'suveren-context';
 
@@ -79,10 +88,10 @@ export async function openContent(wire: ContentWire, ownKeyId: string, keys: Dev
     try { args = JSON.parse(plaintext); } catch { throw new Error('not JSON'); }
     if (typeof args !== 'object' || args === null || Array.isArray(args)) throw new Error('not an object');
     // Rule 8: never show content whose fingerprint does not match.
-    if ((await sha256Hash(utf8(jcs(args)))) !== fingerprint) throw new Error('Decrypted proposal content does not match its fingerprint.');
+    if ((await sha256Hash(utf8(jcs(args)))) !== fingerprint) throw new ContentMismatchError();
     return { plaintext, fingerprint };
   } catch (e) {
-    if (e instanceof NoWrapError) throw e;
+    if (e instanceof NoWrapError || e instanceof ContentMismatchError) throw e;
     throw new Error('This content could not be opened on this device.');
   } finally {
     cek?.fill(0);

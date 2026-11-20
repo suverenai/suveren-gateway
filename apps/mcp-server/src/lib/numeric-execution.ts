@@ -18,40 +18,14 @@
  */
 
 import { getProfile, type AgentProfile } from '@hap/core';
+import { parseNumericString, declaredNumericFields as sharedDeclaredNumericFields } from '@hap/core/execution-mapping';
 
-/**
- * Parse a numeric string for a numeric execution-context field. Accepts only
- * a PLAIN decimal — optional leading "-", digits, optional "." + digits:
- * "0.10", "12", "1234.50". Rejects everything `Number()` would otherwise
- * accept that a plain decimal should not: exponents ("1e3"), hex ("0x10"),
- * empty or whitespace-padded strings ("", " 1"), thousands separators
- * ("1,00"), and the non-finite literals ("NaN", "Infinity").
- *
- * Returns `undefined` on anything that fails the check, so the caller can
- * leave the original string in place — the existing type-mismatch bound
- * error then still fires with that original value visible in its message,
- * rather than silently passing a malformed input through as some number.
- */
-export function parseNumericString(value: string): number | undefined {
-  if (!/^-?\d+(\.\d+)?$/.test(value)) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
+// One implementation, shared with the phone approval app: packages/hap-core/src/execution-mapping.ts.
+export { parseNumericString };
 
-/**
- * The execution-context field names a profile's OWN `executionContextSchema`
- * declares as `source: 'declared'` and `constraint.type: 'number'` — e.g.
- * `amount` on `charge`. Schema-driven: reads the profile's own declaration,
- * never a field name or connector literal.
- */
+/** The execution-context field names a profile declares numeric (see hap-core `declaredNumericFields`). */
 export function declaredNumericFields(profile: AgentProfile | undefined): Set<string> {
-  const out = new Set<string>();
-  const fields = profile?.executionContextSchema?.fields;
-  if (!fields) return out;
-  for (const [name, def] of Object.entries(fields)) {
-    if (def.source === 'declared' && def.constraint?.type === 'number') out.add(name);
-  }
-  return out;
+  return sharedDeclaredNumericFields(profile);
 }
 
 /**

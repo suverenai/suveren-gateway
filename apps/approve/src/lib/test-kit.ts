@@ -10,8 +10,8 @@
 import {
   b64uDecode, b64uEncode, buildDeviceRecord, buildEntry, comparisonCode, concat, deriveRootKey, ecdsaRawToDer, ed25519PublicKey,
   encodeCoseEc2, encodePairingQr, entryHash, entrySignedBytes, generateRecoveryCode, hashBytes, jcs, keyIdOf, objectHash, pairingCommitment,
-  randomBytes, sha256, signEd25519, signEntry, utf8, verifyChain, verifyCheck, verifySignin,
-  type ChainEntry, type ChainState, type DeviceRecord, type PairingMessage, type PairingQr, type RootKey, type WebauthnProof,
+  randomBytes, sha256, signEd25519, signEntry, utf8, verifyChain, verifyCheck, verifyDecision, verifySignin,
+  type ChainEntry, type ChainState, type Decision, type DeviceRecord, type PairingMessage, type PairingQr, type RootKey, type WebauthnProof,
 } from '@hap/core/device-keys';
 import type { CheckDevice, PasskeyRegistration } from './check';
 import { CheckError, registrationChallenge } from './check';
@@ -24,6 +24,8 @@ import { DeviceKeyStore } from './key-store';
 import { AccountStore } from './account-store';
 import { DeviceSession } from './session';
 import { ProposalReader } from './proposals';
+import { PhoneDecider } from './decide';
+import type { CheckDeps } from './card-checks';
 import { RegisterDriver } from './register-driver';
 
 export const AS_URL = 'https://as.test';
@@ -63,6 +65,28 @@ export class FakeAs implements Transport {
   /** The key that SIGNS challenges (default: the key named by `keyHex`). */
   challengeKey: CryptoKey | null = null;
   private seq = 0;
+
+  // ─── stage D2: what the card reads, and the decision routes ───────────────────────────
+  /** Signed mandate blobs and the revoked flag, by authorization id (`GET /api/mandates?authorization_id=`). */
+  mandates = new Map<string, { blobs: string[]; revoked?: boolean }>();
+  /** Profiles by id (`GET /api/profiles/:id`, public). */
+  profiles = new Map<string, unknown>();
+  /** The mandate id the server checks a decision on a proposal against. */
+  mandateOf = new Map<string, string>();
+  /** Decisions the server accepted. */
+  decisions: Array<{ id: string; route: string; body: Json; decision: Decision }> = [];
+  private seenNonces = new Set<string>();
+  /** The next decision call finds the session over (the server's own limit): 401 SESSION_EXPIRED, session gone. */
+  expireSessionOnDecision = false;
+  /** Refuse the next decision call with this code. */
+  refuseDecision: { status: number; code: string } | null = null;
+
+  /** A mandate blob signed by this server's key, as `{ header, payload, signature }`. */
+  async mandateBlob(payload: Json, over: { signWith?: CryptoKey } = {}): Promise<string> {
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, over.signWith ?? this.key.privateKey, new Uint8Array(utf8(jcs(payload)))));
+    const mandate = { header: { typ: 'HAP-mandate', alg: 'EdDSA' }, payload, signature: b64uEncode(sig) };
+    return b64uEncode(utf8(JSON.stringify(mandate)));
+  }
 
   private constructor(private readonly key: CryptoKeyPair, readonly keyHex: string) {}
 
@@ -186,12 +210,56 @@ export class FakeAs implements Transport {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       return { status: 200, body: { proposals: url.searchParams.get('approver') === 'me' ? this.approverPending : this.pending } };
     }
+    const mand = p === '/api/mandates' && method === 'GET';
+    if (mand) {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      const m = this.mandates.get(url.searchParams.get('authorization_id') ?? '');
+      return m ? { status: 200, body: { mandates: m.blobs.map((blob) => ({ blob })), revoked: m.revoked === true } } : { status: 200, body: { mandates: [], revoked: false } };
+    }
+    const prof = p.match(/^\/api\/profiles\/(.+)$/);
+    if (prof && method === 'GET') {
+      const found = this.profiles.get(decodeURIComponent(prof[1]));
+      return found ? { status: 200, body: found as Json } : refusal(404, 'NOT_FOUND');
+    }
+    const dec = p.match(/^\/api\/proposals\/([^/]+)\/(approve|reject|resolve|withdraw)$/);
+    if (dec && method === 'POST') return this.decideRoute(dec[1], dec[2], body, opts.bearer);
     if (pr && method === 'GET') {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       const found = this.byId.get(pr[1]);
       return found ? { status: 200, body: { proposal: found } } : refusal(404, 'NOT_FOUND');
     }
     return refusal(404, 'NOT_FOUND');
+  }
+
+  /** The decision routes, verified the way the real server verifies a device decision (plan 4.2). */
+  private async decideRoute(id: string, route: string, body: Json, bearer?: string): Promise<Reply> {
+    const keyId = this.bearerKey(bearer);
+    if (!keyId) return refusal(401, 'UNAUTHENTICATED');
+    if (this.expireSessionOnDecision) { this.expireSessionOnDecision = false; if (bearer) this.sessions.delete(bearer); return refusal(401, 'SESSION_EXPIRED'); }
+    if (this.refuseDecision) { const r = this.refuseDecision; this.refuseDecision = null; return refusal(r.status, r.code); }
+    const prop = this.byId.get(id);
+    if (!prop) return refusal(404, 'NOT_FOUND');
+    if (prop.status !== 'pending') return refusal(409, 'PROPOSAL_ALREADY_DECIDED');
+    const kind = route === 'approve' || (route === 'resolve' && body.action === 'commit') ? 'commit' : 'reject';
+    if (route === 'resolve' && !(prop.pendingDomains as string[]).includes(body.domain)) return refusal(400, 'DOMAIN_NOT_PENDING');
+    if (body.content_hash !== prop.contentHash || body.proposalContentHash !== prop.contentHash) return refusal(409, 'CONTENT_MISMATCH');
+    if (!body.device_decision) return refusal(400, 'DEVICE_DECISION_REQUIRED');
+    let decision: Decision;
+    try {
+      decision = await verifyDecision(body.device_decision, {
+        chain: await this.state(),
+        expect: { proposal_id: id, mandate_id: this.mandateOf.get(id) ?? '', action: prop.tool, action_type: prop.actionType, proposal_content_hash: prop.contentHash },
+      });
+    } catch (e) {
+      return refusal(403, (e as { code?: string }).code ?? 'REFUSED');
+    }
+    if (decision.decision !== kind) return refusal(400, 'DECISION_KIND_MISMATCH');
+    if (decision.key_id !== keyId) return refusal(403, 'DEVICE_MISMATCH');
+    if (this.seenNonces.has(decision.nonce)) return refusal(409, 'DECISION_NONCE_REUSED');
+    this.seenNonces.add(decision.nonce);
+    prop.status = kind === 'commit' ? 'committed' : 'rejected';
+    this.decisions.push({ id, route, body, decision });
+    return { status: 200, body: kind === 'commit' ? { receipt: { id: `tk-${this.decisions.length}` }, status: 'committed' } : { status: 'rejected' } };
   }
 
   private async postChain(body: Json, bearer?: string): Promise<Reply> {
@@ -484,7 +552,9 @@ export function testRuntime(as: FakeAs, over: { passkeys?: FakePasskeys; kv?: Me
   const api = new AsApi(as);
   const session = new DeviceSession({ accounts, keys, check, api, transport: as, now: as.now });
   const reader = new ProposalReader(api, session, () => session.current()?.user.id ?? '');
-  return { kv, keys, accounts, check, api, session, reader, transport: as as Transport, now: as.now, asUrl: AS_URL, rpId: APP_RP_ID };
+  const checks: CheckDeps = { api, session, keys, accounts, now: as.now };
+  const decider = new PhoneDecider({ api, session, keys, accounts, reader, now: as.now });
+  return { kv, keys, accounts, check, api, session, reader, checks, decider, transport: as as Transport, now: as.now, asUrl: AS_URL, rpId: APP_RP_ID };
 }
 export type TestRuntime = ReturnType<typeof testRuntime>;
 

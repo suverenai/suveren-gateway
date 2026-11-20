@@ -129,4 +129,29 @@ export class AsApi {
   proposal(id: string, bearer: string) {
     return this.go<{ proposal: unknown }>('GET', `/api/proposals/${encodeURIComponent(id)}`, { bearer });
   }
+
+  // ─── what the card needs besides the proposal (stage D2) ───────────────────────────────
+
+  /**
+   * The signed mandates of one authorization (`GET /api/mandates?authorization_id=`). PROPOSED for a phone session: `approveAppMayCall`
+   * refuses it today. The phone reads `mandates[].blob` and `revoked` only; everything else in the answer is ignored.
+   */
+  mandates(authorizationId: string, bearer: string) {
+    return this.go<{ mandates?: unknown[]; revoked?: unknown }>('GET', `/api/mandates?authorization_id=${encodeURIComponent(authorizationId)}`, { bearer });
+  }
+
+  /** The grants stored for a mandate (`GET /api/mandates/:id/grants`: a device session of `approve-app` is allowed today). The phone verifies each. */
+  grants(mandateId: string, bearer: string) {
+    return this.go<{ grants?: unknown[] }>('GET', `/api/mandates/${encodeURIComponent(mandateId)}/grants`, { bearer });
+  }
+
+  /** A profile by id (`GET /api/profiles/:id`): public, no session needed, so none is sent. The phone checks its hash against the signed mandate. */
+  profile(profileId: string) {
+    return this.go<unknown>('GET', `/api/profiles/${encodeURIComponent(profileId)}`);
+  }
+
+  /** A signed decision (`POST /api/proposals/:id/(approve|reject|resolve|withdraw)`); a phone session is allowed to. */
+  decide(proposalId: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw', body: unknown, bearer: string) {
+    return this.go<Record<string, unknown>>('POST', `/api/proposals/${encodeURIComponent(proposalId)}/${route}`, { body, bearer });
+  }
 }

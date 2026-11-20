@@ -30,6 +30,8 @@ export interface ProposalContentState {
   loading: boolean;
   /** True once we know this row carries sealed `content` rather than plain `toolArgs`. */
   sealed: boolean;
+  /** The server's plain `toolArgs` differ from the sealed content: nothing is shown, no decision is offered. */
+  mismatch: boolean;
   /** True once decryption has settled and failed (sealed, not loading, toolArgs null). */
   undecryptable: boolean;
 }
@@ -46,16 +48,38 @@ export async function decryptProposalArgs(
   /** Opens a sealed payload with this device's key. Defaults to the configured host's. */
   decrypt: SealedDecryptor = (wire) => hostData().decryptProposalContent(wire),
 ): Promise<Record<string, unknown> | null> {
-  if (proposal.toolArgs) return proposal.toolArgs;
-  if (!proposal.content) return null;
+  return (await openProposalArgs(proposal, decrypt)).args;
+}
+
+export interface OpenedArgs {
+  args: Record<string, unknown> | null;
+  /** The row carries sealed content AND plain `toolArgs`, and they are not the same arguments. Nothing is shown or decided. */
+  mismatch: boolean;
+}
+
+/**
+ * The arguments to SHOW and to HASH for a decision. A row with sealed content shows only what the sealed content opens to: plain
+ * `toolArgs` served beside it is the server's word, never the person's. If both are present and differ, nothing is returned and
+ * `mismatch` says why (a server that shows one thing and seals another). Only a legacy row (no sealed content) uses `toolArgs`.
+ */
+export async function openProposalArgs(
+  proposal: ProposalForContent,
+  decrypt: SealedDecryptor = (wire) => hostData().decryptProposalContent(wire),
+): Promise<OpenedArgs> {
+  if (!proposal.content) return { args: proposal.toolArgs ?? null, mismatch: false };
+  let opened: Record<string, unknown> | null = null;
   try {
     const { plaintext } = await decrypt(proposal.content);
     const parsed = JSON.parse(plaintext);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) opened = parsed as Record<string, unknown>;
   } catch {
-    return null;
+    opened = null;
   }
+  if (!opened) return { args: null, mismatch: false };
+  if (proposal.toolArgs && (await computeContentHashBrowser('jcs', proposal.toolArgs)) !== (await computeContentHashBrowser('jcs', opened))) {
+    return { args: null, mismatch: true };
+  }
+  return { args: opened, mismatch: false };
 }
 
 /**
@@ -162,26 +186,22 @@ export function useDecryptedNote(by: NoteCarrier | null | undefined): string | n
   return note;
 }
 
-const INITIAL: ProposalContentState = { toolArgs: null, loading: false, sealed: false, undecryptable: false };
+const INITIAL: ProposalContentState = { toolArgs: null, loading: false, sealed: false, undecryptable: false, mismatch: false };
 
 export function useProposalContent(proposal: ProposalForContent): ProposalContentState {
   const [state, setState] = useState<ProposalContentState>(INITIAL);
 
   useEffect(() => {
     let live = true;
-    if (proposal.toolArgs) {
-      setState({ toolArgs: proposal.toolArgs, loading: false, sealed: false, undecryptable: false });
-      return;
-    }
     if (!proposal.content) {
-      setState({ toolArgs: null, loading: false, sealed: false, undecryptable: false });
+      setState({ toolArgs: proposal.toolArgs ?? null, loading: false, sealed: false, undecryptable: false, mismatch: false });
       return;
     }
-    setState({ toolArgs: null, loading: true, sealed: true, undecryptable: false });
+    setState({ toolArgs: null, loading: true, sealed: true, undecryptable: false, mismatch: false });
     (async () => {
-      const toolArgs = await decryptProposalArgs(proposal);
+      const { args, mismatch } = await openProposalArgs(proposal);
       if (!live) return;
-      setState({ toolArgs, loading: false, sealed: true, undecryptable: toolArgs === null });
+      setState({ toolArgs: args, loading: false, sealed: true, undecryptable: args === null && !mismatch, mismatch });
     })();
     return () => { live = false; };
     // Re-run exactly when the sealed payload (or the legacy field) actually

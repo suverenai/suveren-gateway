@@ -54,6 +54,11 @@ interface Props {
   topExtras?: ReactNode;
   /** False: no Approve button (the proposer of an above-cap action). */
   canApprove?: boolean;
+  /**
+   * False: no "Ask for changes" button. A host that cannot seal the note for the people who must read it (the phone app: it has
+   * no key of anyone else's) leaves it out rather than send it in the clear. Default true: every existing host is unchanged.
+   */
+  canAskChanges?: boolean;
   /** True: this person already approved — no buttons, just the note in topExtras. */
   alreadyDecided?: boolean;
   /**
@@ -83,7 +88,7 @@ type Phase =
 
 export function ApprovalCard({
   proposal, currentUserId, manifests, toolDisplay, proposalLinks, mandateTitle, nameOf, topExtras,
-  canApprove = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, className,
+  canApprove = true, canAskChanges = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, className,
 }: Props) {
   const isChange = proposal.tool === CHANGE_MANDATE_TOOL;
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL || isChange;
@@ -267,13 +272,13 @@ export function ApprovalCard({
               </div>
             </div>
           )}
-          <div className={`av3-btns${canApprove && !mandateEnded && !isChange ? '' : ' av3-btns-two'}`}>
+          <div className={`av3-btns${canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => void run('approve')}>
                 {approveWord}
               </button>
             )}
-            {!mandateEnded && !isChange && (
+            {!mandateEnded && !isChange && canAskChanges && (
               <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>
                 <span className="long">Ask for changes</span><span className="short">Changes</span>
               </button>

@@ -12,6 +12,8 @@ import { DirectTransport, type Transport } from './transport';
 import { AsApi } from './as-api';
 import { DeviceSession } from './session';
 import { ProposalReader } from './proposals';
+import { PhoneDecider } from './decide';
+import type { CheckDeps } from './card-checks';
 
 export interface Runtime {
   kv: Kv;
@@ -22,6 +24,9 @@ export interface Runtime {
   api: AsApi;
   session: DeviceSession;
   reader: ProposalReader;
+  /** What the checks before a decision read with, and the object that signs and sends a decision. */
+  checks: CheckDeps;
+  decider: PhoneDecider;
   asUrl: string;
   /** The passkey's relying-party id: this app's own host. */
   rpId: string;
@@ -50,5 +55,7 @@ export function createRuntime(p: RuntimeParts = {}): Runtime {
   const session = new DeviceSession({ accounts, keys, check, api, transport, now });
   // The Personal domain is the account id, known once a session is open.
   const reader = new ProposalReader(api, session, () => session.current()?.user.id ?? '');
-  return { kv, keys, accounts, check, transport, api, session, reader, asUrl, rpId, now };
+  const checks: CheckDeps = { api, session, keys, accounts, now };
+  const decider = new PhoneDecider({ api, session, keys, accounts, reader, now });
+  return { kv, keys, accounts, check, transport, api, session, reader, checks, decider, asUrl, rpId, now };
 }

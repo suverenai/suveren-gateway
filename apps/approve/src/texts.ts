@@ -26,8 +26,8 @@ export const P = {
 
   // ─── Start ────────────────────────────────────────────────────────────────────
   welcomeTitle: 'Your AI asks, you decide', // DRAFT
-  welcomeBody: 'This phone becomes one of your devices. Here you can read what your AI wants to do.', // DRAFT
-  welcomeReadOnly: 'For now you read requests here. You approve or reject them on your computer.', // DRAFT (D1 is read-only)
+  welcomeBody: 'This phone becomes one of your devices. Here you read what your AI wants to do, and you decide.', // DRAFT
+  welcomeReadOnly: 'Here you approve or reject what your AI asks for.', // DRAFT (D2: decisions on the phone)
   welcomeNew: 'Set up my account on this phone', // DRAFT
   welcomeNewWhy: 'You come from suveren.ai and have a setup code.', // DRAFT
   welcomeJoin: 'Add this phone to my account', // DRAFT
@@ -86,7 +86,7 @@ export const P = {
 
   // ─── Join: this phone is added to an account that exists ──────────────────────
   joinTitle: 'Add this phone to your account', // DRAFT
-  joinIntro: 'This phone becomes one of your devices. Here you read what your AI wants to do. You approve or reject on your computer for now.', // DRAFT (DEC-83: the start screen is this one)
+  joinIntro: 'This phone becomes one of your devices. Here you read what your AI wants to do, and you approve or reject it.', // DRAFT (DEC-83: the start screen is this one)
   joinScanWhy: 'On a device that already has your account, choose to add a device. It shows a code. Scan it here.', // DRAFT
   reviewTitle: 'You are about to join this account', // DRAFT
   reviewIdentity: 'Identity code', // = S13.joinYourCode (312)
@@ -143,7 +143,11 @@ export const P = {
   listLoading: 'Loading...', // DRAFT
   listOpen: 'Open', // DRAFT
   listBack: 'Back to the list', // DRAFT
-  readOnlyNote: 'You can read this here. Approve or reject it on your computer for now.', // DRAFT (D1)
+  cardChecking: 'Checking this request...', // DRAFT
+  cardBlockedTitle: 'You cannot decide this request here', // DRAFT
+  cardBlockedNothing: 'Nothing was decided.', // DRAFT
+  decideAskTouch: 'Your break ended the session. Touch to go on with your decision.', // DRAFT (the check comes before the decision, DEC-47)
+  decideChangesElsewhere: 'To ask your AI for changes, use your computer.', // DRAFT (the note cannot be sealed for your AI from this phone yet)
   listFailed: 'The list could not be read. Nothing changed. Try again.', // DRAFT
 
   // ─── Time ─────────────────────────────────────────────────────────────────────
@@ -155,6 +159,40 @@ export const P = {
   navRequests: 'Requests', // DRAFT
   navDevices: 'Devices', // DRAFT
 } as const;
+
+/**
+ * Why a request shows no buttons (card-checks.ts). One sentence each, written for a person who knows nothing of keys or
+ * fingerprints: what is wrong in their words, that nothing was decided, and what to do. Every text DRAFT.
+ */
+const BLOCKED: Record<string, string> = {
+  not_pending: 'This request was already decided, or it ran out.', // DRAFT
+  content_not_here: 'This phone has not received the key to this request yet. Another of your devices will pass it on. Try again in a little while.', // DRAFT (= S8.notYetOpenable, shorter)
+  content_unreadable: 'This phone cannot open this request. Decide it on another of your devices.', // DRAFT
+  content_mismatch: 'What this phone opened is not what suveren.ai says was asked. Do not approve it. Tell whoever runs your account.', // DRAFT (the fingerprint differs)
+  context_missing: 'The details that belong to this request did not arrive. Decide it on your computer.', // DRAFT
+  context_unreadable: 'The details that belong to this request could not be opened. Decide it on your computer.', // DRAFT
+  context_mismatch: 'The numbers that suveren.ai holds for this request are not the ones this phone works out from what your AI asked. Do not approve it. Tell whoever runs your account.', // DRAFT (the execution context differs)
+  mandate_unavailable: 'The mandate behind this request could not be found. Try again, or decide on your computer.', // DRAFT
+  mandate_invalid: 'The mandate behind this request cannot be read. Decide it on your computer.', // DRAFT
+  mandate_signature: 'The mandate behind this request was not signed by the suveren.ai this app trusts. Do not approve it. Tell whoever runs your account.', // DRAFT
+  mandate_expired: 'The mandate behind this request has run out. Nothing can be approved under it.', // DRAFT
+  mandate_ended: 'The mandate behind this request was ended. Nothing can be approved under it.', // DRAFT
+  profile_unavailable: 'The rules that this mandate refers to could not be found. Try again later.', // DRAFT
+  profile_mismatch: 'The rules that suveren.ai gave for this mandate are not the ones it was made under. Do not approve it. Tell whoever runs your account.', // DRAFT
+  owner_not_you: 'This mandate belongs to someone else. You cannot decide it on this phone yet. Use your computer.', // DRAFT
+  action_type_missing: 'This request does not say what kind of action it is, so it cannot be checked here. Decide it on your computer.', // DRAFT
+  action_type_unknown: 'This request names a kind of action that its rules do not know. Do not approve it. Tell whoever runs your account.', // DRAFT
+  session_ended: 'The app closed itself. Open it again with your touch.', // DRAFT
+  reads_failed: 'This request could not be checked right now. Nothing was decided. Try again.', // DRAFT
+  proposal_invalid: 'This request could not be read. Nothing was decided.', // DRAFT
+};
+
+export function blockedText(reason: string): string {
+  return Object.prototype.hasOwnProperty.call(BLOCKED, reason) ? BLOCKED[reason] : BLOCKED.reads_failed;
+}
+
+/** Every reason with a text of its own. */
+export const BLOCKED_REASONS: readonly string[] = Object.keys(BLOCKED);
 
 /** The sentence for a code. Total: a code nobody knows gets the generic text, never the code itself and never the server's message. */
 const ERRORS: Record<string, string> = {
@@ -215,6 +253,25 @@ const ERRORS: Record<string, string> = {
   chain_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // = DRAFT_CODES.chain_moved
   chain_head_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // = DRAFT_CODES.chain_moved
   check_cancelled: 'Cancelled. Nothing was added.', // DRAFT
+  // A decision (decide.ts): the Authority Server's codes, lower-cased. None of them tells the person a code or the server's words.
+  not_pending: 'This request was already decided, or it ran out. Nothing changed.', // DRAFT
+  content_changed: 'This request changed while you looked at it. Nothing was decided. Open it again.', // DRAFT
+  content_mismatch: 'What suveren.ai holds for this request is not what you saw. Nothing was decided. Tell whoever runs your account.', // DRAFT
+  device_decision_required: 'This phone\'s decision did not reach suveren.ai in the way it needs. Nothing was decided. Try again; if it repeats, tell support.', // DRAFT
+  device_mismatch: 'suveren.ai did not accept this phone for this decision. Nothing was decided. Try again; if it repeats, tell support.', // DRAFT
+  not_active: 'This phone is no longer one of your devices. Nothing was decided.', // DRAFT
+  wrong_root: 'This phone does not belong to the account that owns this request. Nothing was decided.', // DRAFT
+  bad_signature: 'suveren.ai did not accept this phone\'s signature. Nothing was decided. Try again; if it repeats, tell support.', // DRAFT
+  fork: 'Your list of devices does not match what suveren.ai holds. Nothing was decided. Contact support.', // DRAFT
+  chain_ahead: 'Your list of devices changed meanwhile. Nothing was decided. Open the app again and try again.', // DRAFT
+  proposal_mismatch: 'suveren.ai did not find this request the way this phone checked it. Nothing was decided. Open it again.', // DRAFT
+  action_type_unknown: 'This request does not say what kind of action it is, so it cannot be decided here. Use your computer.', // DRAFT
+  decision_nonce_reused: 'This decision was already sent once. Nothing changed. Open the request again.', // DRAFT
+  device_decision_exists: 'You already decided this request. Nothing changed.', // DRAFT
+  proposal_already_decided: 'This request was already decided. Nothing changed.', // DRAFT
+  mandate_revoked: 'The mandate behind this request was ended. Nothing can be approved under it.', // DRAFT
+  mandate_expired: 'The mandate behind this request has run out. Nothing can be approved under it.', // DRAFT
+  check_required: 'Your touch is needed first. Nothing was decided. Try again.', // DRAFT
 };
 
 export function errorText(code: string | undefined): string {

@@ -6,8 +6,8 @@
  * content with this phone's reading key. Everything the gateway page answers from the gateway's own local data (profiles,
  * connector manifests, receipts, previews, the shown-hash snapshot) the phone does not have, so those reads REJECT and the card
  * shows what it shows when a read fails: the arguments in full, never an invented value. The card context the gateway sealed
- * (display rules, the mapping to the execution context) is opened by content.ts; turning it into the card's richer layout, and
- * rebuilding the execution context from it, belong to the checks before a decision (stage D2).
+ * (display rules, the mapping to the execution context) is opened by content.ts; card-checks.ts rebuilds the execution context from it and
+ * turns the display hints into the card's layout (`toolDisplay`), and the card shows its buttons only after those checks passed (stage D2).
  *
  * The card never calls `fetch`. Nothing the AI wrote can reach the person through this seam.
  */
@@ -60,7 +60,8 @@ export const phoneHost: ApprovalHost = {
       if (!r.ok) throw new Error('The request could not be read.');
       return r.data;
     },
-    saveShownSnapshot: unavailable('the shown-hash store (decisions come in a later version)'),
+    // Never blocks a decision (the card ignores a failure here): the phone sends no `shown_hash`.
+    saveShownSnapshot: unavailable('the shown-hash store'),
     getProposalAttachmentPreview: unavailable('attachment previews'),
     getProposalPreview: unavailable('previews'),
     getProposalRequestContext: unavailable('the record behind this request'),

@@ -14,7 +14,9 @@ import { AdmitDriver } from './lib/admit-driver';
 import { deviceRows, type DeviceRow } from './lib/chain-view';
 import { identityCodeOf } from './lib/identity-code';
 import { bindPhoneHost } from './lib/app-host';
-import { openContext, type ContentWire } from './lib/content';
+import { checkCard, type CardCheck } from './lib/card-checks';
+import { DecideError } from './lib/decide';
+import type { DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
 import { P, errorText } from './texts';
@@ -200,7 +202,7 @@ function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
 function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [error, setError] = useState<string | undefined>();
-  const [open, setOpen] = useState<{ proposal: Proposal; contextMissing: boolean } | null>(null);
+  const [open, setOpen] = useState<{ proposal: Proposal; check: CardCheck | null } | null>(null);
 
   const load = useCallback(async (byPerson: boolean) => {
     const r = await rt.reader.list(byPerson);
@@ -218,17 +220,28 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   const openOne = useCallback(async (id: string) => {
     const r = await rt.reader.get(id, true);
     if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
-    const account = await rt.accounts.read();
-    let contextMissing = false;
-    if (account && r.data.content) {
-      const ctx = await openContext(r.data.content as unknown as ContentWire, account.key_id, rt.keys);
-      contextMissing = ctx !== null && 'contextError' in ctx;
-    }
-    setOpen({ proposal: r.data, contextMissing });
+    // The card is drawn at once WITHOUT buttons; they come only when every check before a decision passed (lib/card-checks.ts).
+    setOpen({ proposal: r.data, check: null });
+    const check = await checkCard(rt.checks, r.data);
+    if (!check.ok && check.reason === 'session_ended') { onEnded(); return; }
+    setOpen((cur) => (cur && cur.proposal.id === id ? { proposal: cur.proposal, check } : cur));
   }, [rt, onEnded]);
 
+  // The one place a button becomes a signed decision. The decider reads the request again and signs; a session over its limit asks for the touch first.
+  const decide = useCallback(async (args: DecideArgs) => {
+    const cur = open;
+    if (!cur || !cur.check || !cur.check.ok) throw new DecideError('generic');
+    if (args.kind === 'change') throw new DecideError('generic');
+    return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
+  }, [rt, open]);
+
   if (open) {
-    return <RequestDetail proposal={open.proposal} userId={rt.session.current()?.user.id ?? ''} contextMissing={open.contextMissing} onBack={() => setOpen(null)} />;
+    return (
+      <RequestDetail
+        proposal={open.proposal} userId={rt.session.current()?.user.id ?? ''} check={open.check} decide={decide}
+        onBack={() => { setOpen(null); void load(true); }} onDecided={() => void load(true)}
+      />
+    );
   }
   return <RequestsScreen proposals={proposals} error={error} nowMs={Date.now()} onOpen={(id) => void openOne(id)} onRefresh={() => void load(true)} />;
 }

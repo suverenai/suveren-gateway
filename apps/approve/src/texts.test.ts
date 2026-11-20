@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { P, errorText, ERROR_CODES, scanFailureText } from './texts';
+import { P, errorText, ERROR_CODES, scanFailureText, blockedText, BLOCKED_REASONS } from './texts';
 
 /** Every visible string of the module, with sample arguments for the functions. */
 function allTexts(): string[] {
@@ -9,6 +9,7 @@ function allTexts(): string[] {
     else if (typeof v === 'function') out.push((v as (...a: never[]) => string)(...(['Anna\'s iPhone', 'last week', 3, 'abcd1234'] as never[])));
   }
   for (const c of ERROR_CODES) out.push(errorText(c));
+  for (const r of BLOCKED_REASONS) out.push(blockedText(r));
   out.push(scanFailureText('camera_refused'), scanFailureText('camera_unavailable'), scanFailureText('timeout'));
   return out;
 }

@@ -2,7 +2,7 @@
 
 Stage D1 of the device-keys plan (`suveren-as/docs/device-keys-dev-plan.md`, section 8, step 11, part 1):
 register this phone with an enrolment code and a passkey, or join an existing account; add a computer;
-the device list; read requests. **Read-only: approve and reject are D2.**
+the device list; read requests (D1). **Stage D2: approve and reject, signed on the phone, after the checks before a decision** (`card-checks.ts`, `decide.ts`).
 
 Static files only: HTML, JavaScript, CSS, a web manifest, a service worker. No server code, no secrets
 (DEC-1). The only build-time values are the public address of the Authority Server and the build commit
@@ -26,6 +26,9 @@ wording); texts that already exist in the shared package (`S8`, `S13`) are impor
       register-driver.ts  genesis from a phone      join-driver.ts   this phone is admitted
       admit-driver.ts     this phone admits a computer       mailbox.ts   pairing mailbox, MACs
       content.ts          opening sealed content (own wrap, fingerprint check, card context)
+      card-checks.ts      the checks before a decision is offered (content, context, signed mandate, profile, owner, execution context)
+      mandate-check.ts    browser-safe mirrors of four hap-core rules (mandate signature, did:key, profile hash, wire context), tested against hap-core
+      decide.ts           the signed decision: the same object the gateway page signs (`@hap/core/decision-input`), sent after the session check
       proposals.ts        reading requests       app-host.ts  the host seam of the shared card
       transport.ts        THE one network module (no other file calls fetch)
       as-api.ts as-key.ts compat.ts chain-view.ts account-store.ts kv.ts idb.ts scan.ts qr-matrix.ts

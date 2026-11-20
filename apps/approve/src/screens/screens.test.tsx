@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { P, errorText } from '../texts';
+import { P, errorText, blockedText } from '../texts';
 import { configurePhoneHost } from '../lib/app-host';
 import { NeedsScreen, WelcomeScreen } from './Start';
 import { RegisterScreen, type RegisterScreenProps } from './Register';
 import { JoinScreen } from './Join';
 import { AdmitScreen } from './Admit';
 import { DevicesScreen, DeviceList } from './Devices';
-import { RequestsScreen } from './Requests';
+import { RequestsScreen, RequestDetail } from './Requests';
+import type { CardCheck, ReadyCard } from '../lib/card-checks';
 import { OpenSessionScreen } from './OpenSession';
 import { ScanView } from './ScanView';
 import { PHONE_FIRST_SETUP } from '../lib/config';
@@ -167,10 +168,10 @@ describe('the phone screens (both widths use the same markup and the same tokens
     });
   });
 
-  describe('requests (read-only)', () => {
+  describe('requests', () => {
     const prop = (id: string, tool: string) => ({ id, tool, profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending' }) as never;
 
-    it('says what is loading, what is empty, and that approving is on the computer', () => {
+    it('says what is loading, what is empty, and that the person decides here', () => {
       expect(text(html(<RequestsScreen proposals={null} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />))).toContain(P.listLoading);
       const empty = text(html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />));
       expect(empty).toContain(P.listEmpty);
@@ -184,6 +185,48 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(m).toContain('av3-row');
       expect(text(m)).toContain('Send message');
       expect(text(m)).toContain('Email'); // the gateway row's own area line, from the proposal's profile
+    });
+
+    describe('the open request (stage D2)', () => {
+      const proposal = { id: 'p1', tool: 'email__send_message', profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending', toolArgs: { to: 'anna@example.com' }, executionContext: {}, pendingDomains: ['owner'], committedBy: {}, rejectedBy: null, executionResult: null, path: 'x' } as never;
+      const readyCard: ReadyCard = { facts: { mandateId: 'm1', actionType: 'send' }, contentHash: 'sha256:' + '0'.repeat(64), args: {}, executionContext: {}, display: {}, route: { kind: 'domain', domain: 'owner' } };
+      const open = (check: CardCheck | null) => html(<RequestDetail proposal={proposal} userId="u1" check={check} decide={async () => ({})} onBack={noop} />);
+
+      it('with every check passed: the gateway page\'s own approve and reject buttons, and no "ask for changes" (a note cannot be sealed from here)', () => {
+        const m = open({ ok: true, ready: readyCard });
+        expect(m).toContain('data-testid="btn-approve"');
+        expect(m).toContain('data-testid="btn-reject"');
+        expect(m).not.toContain('data-testid="btn-change-needed"');
+        expect(m).toContain('av3-btns-two');
+        expect(text(m)).toContain(P.decideChangesElsewhere);
+        expect(m).not.toContain('data-testid="card-blocked"');
+      });
+
+      it('the server\'s plain toolArgs are never drawn: the card is given only what this phone checked (H1)', () => {
+        const lying = { ...(proposal as object), toolArgs: { to: 'anna@example.com', amount: '10 EUR to Anna' }, executionContext: { amount: 10 } } as never;
+        const m = html(<RequestDetail proposal={lying} userId="u1" check={{ ok: true, ready: { ...readyCard, executionContext: { amount: 9999 } } }} decide={async () => ({})} onBack={noop} />);
+        expect(m).not.toContain('10 EUR to Anna');
+        expect(m).not.toContain('anna@example.com');
+        const b = html(<RequestDetail proposal={lying} userId="u1" check={{ ok: false, reason: 'content_mismatch' }} decide={async () => ({})} onBack={noop} />);
+        expect(b).not.toContain('10 EUR to Anna');
+      });
+
+      it('while the checks run: no buttons, and it says it is checking', () => {
+        const m = open(null);
+        expect(m).not.toContain('data-testid="btn-approve"');
+        expect(m).not.toContain('data-testid="btn-reject"');
+        expect(text(m)).toContain(P.cardChecking);
+      });
+
+      it('a check that failed: no buttons at all, the reason in words, nothing about a code', () => {
+        const m = open({ ok: false, reason: 'content_mismatch' });
+        expect(m).not.toContain('data-testid="btn-approve"');
+        expect(m).not.toContain('data-testid="btn-reject"');
+        expect(m).toContain('data-testid="card-blocked"');
+        expect(text(m)).toContain(blockedText('content_mismatch'));
+        expect(text(m)).toContain(P.cardBlockedTitle);
+        expect(text(m)).not.toContain('content_mismatch');
+      });
     });
 
     it('a failed read is said, not hidden behind an empty list', () => {
