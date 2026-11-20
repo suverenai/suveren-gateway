@@ -184,6 +184,35 @@ describe('unlock (screen 4)', () => {
   };
   const status = (setUp: boolean, signedIn: boolean) => ({ body: { ok: true, setUp, setupPending: false, signedIn } });
 
+  it('DEC-95: a reload while the gateway runs says so, never "the computer restarted"', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: true } }, '/health': { body: { status: 'ok', vaultUnlocked: true } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBe(T.pageNeedsUnlock);
+    expect(u.get().touchAvailable).toBe(true);
+  });
+
+  it('DEC-95: a locked gateway (a restart) keeps the restart text', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: true } }, '/health': { body: { status: 'ok', vaultUnlocked: false } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBeUndefined();   // the screen then shows T.unlockWhy, the restart text
+  });
+
+  it('DEC-95: a session-end reason (idle, lock, sleep) stays, even with the gateway still running', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: false } }, '/health': { body: { status: 'ok', vaultUnlocked: true } } });
+    const u = new UnlockDriver(deps(client).d, T.sessionClosed);
+    await u.init();
+    expect(u.get().notice).toBe(T.sessionClosed);
+  });
+
+  it('DEC-95: no answer about the gateway keeps the restart text (never a guess)', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: false } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBeUndefined();
+  });
+
   it('password: session, device status, sign-in by device key, in', async () => {
     const { client } = fakeClient({ '/auth/unlock': { body: { ok: true, sessionToken: 'T' } }, '/auth/device/status': status(true, false), '/auth/device/signin': { body: { ok: true, expiresAt: 1 } } });
     const { d, log } = deps(client);

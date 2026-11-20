@@ -42,8 +42,12 @@ export class UnlockDriver extends Driver<UnlockState> {
   }
 
   async init(): Promise<void> {
-    const r = await this.d.client.platformStatus();
-    this.set({ ...this.state, touchAvailable: r.ok && r.data.unlockEnabled === true });
+    const [r, v] = await Promise.all([this.d.client.platformStatus(), this.d.client.vaultState()]);
+    // DEC-95: say the real reason. A session-end notice (idle, 12 h, lock, sleep, user switch) stays as it is. Without
+    // one, an OPEN vault means only this page lost its session (a reload, a new tab), never "the computer restarted";
+    // a locked vault (or no answer) keeps the restart text.
+    const pageOnly = !this.state.notice && v.ok && v.data?.vaultUnlocked === true;
+    this.set({ ...this.state, touchAvailable: r.ok && r.data.unlockEnabled === true, ...(pageOnly ? { notice: T.pageNeedsUnlock } : {}) });
   }
 
   async withPassword(password: string): Promise<void> {

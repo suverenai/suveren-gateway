@@ -109,6 +109,8 @@ export const T = {
   locked: 'The gateway is locked. Unlock it with your password.', // 88
   sessionIdle: 'You were away for an hour, so this page closed. Unlock it again to go on.', // 89
   sessionLong: 'This page has been open for 12 hours, so it closed. Unlock it again to go on.', // 90
+  /** DEC-95: the page lost its session (a reload, a new tab) while the gateway itself kept running. */
+  pageNeedsUnlock: 'The gateway is still running and your AI can keep working. Unlock to use this page again.', // DRAFT
   sessionClosed: 'This page was closed, for example after a restart, sleep or a locked screen. Unlock it again to go on.', // 91
   asUnreachable: 'Cannot reach suveren.ai. Check your internet connection and try again.', // 92
   asWrongServer: 'The server that answered is not the suveren.ai this gateway was set up with. Nothing was sent. Do not go on, and tell whoever runs your gateway.', // 93
