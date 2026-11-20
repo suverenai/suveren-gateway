@@ -41,6 +41,7 @@ import { DeviceReaders } from '../lib/device-readers';
 import { ProposalRewrap } from '../lib/proposal-rewrap';
 import { DeviceApprovals } from '../lib/device-approvals';
 import { TeamJoin } from '../lib/team-join';
+import { TeamListChanges } from '../lib/team-changes';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -121,13 +122,14 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   teamMembers?: () => Promise<ReadonlySet<string> | null>;
   /** The join screens' logic (DEC-73 step 4): only with device set-up. */
   teamJoin?: TeamJoin;
+  teamChanges?: TeamListChanges;
   /** Step 8: who can read a proposal (verified chains), and the re-wrap of open proposals for a later device. Only with device set-up. */
   readers?: DeviceReaders;
   rewrap?: ProposalRewrap;
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; readers: DeviceReaders; rewrap: ProposalRewrap } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -179,7 +181,8 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       vault: o.vault, store, grants, trust: grants.teamTrustPort(), now: o.device.now,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, readers, rewrap };
+    const teamChanges = new TeamListChanges({ join: teamJoin, now: o.device.now });
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, teamChanges, readers, rewrap };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -246,6 +249,6 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
-    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, readers: device.readers, rewrap: device.rewrap } : {}),
+    ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, approvals: device.approvals, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, teamChanges: device.teamChanges, readers: device.readers, rewrap: device.rewrap } : {}),
   };
 }

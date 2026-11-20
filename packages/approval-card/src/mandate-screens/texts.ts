@@ -182,6 +182,56 @@ export const S13 = {
   confirmedBy: (name: string): string => `confirmed by ${name}`, // 330
   confirmedByYou: 'confirmed by you', // 333
   colleaguesWhy: (admin: string): string => `You trust them because ${admin}, your admin, compared codes with each of them. You do not compare codes yourself.`, // 332
+
+  // Changes of the team's list after the join (DEC-73 step 5, design 20.21.5, 20.21.3, 20.21.8). ALL of these are DRAFT: the
+  // mockup has no sentence for them; wording is the maintainer's. Never a gendered pronoun for a named person.
+  /** DRAFT: title of the panel on the Team page. */
+  changesTitle: 'Changes to your team',
+  changesNone: 'Nothing to change.',
+  changesChecking: 'Checking...',
+  // someone left or was removed (admin)
+  changesLeftIntro: (name: string): string => `${name} left the team. Your members still trust them until you sign a new list.`,
+  changesRemovedIntro: (name: string): string => `${name} was removed from the team. Your members still trust them until you sign a new list.`,
+  changesGoneIntro: (name: string): string => `${name} is no longer in the team. Your members still trust them until you sign a new list.`,
+  changesRemoveButton: (name: string): string => `Remove ${name} with Touch ID`,
+  changesRemoveDone: (name: string): string => `${name} is removed. Your members no longer trust them.`,
+  // a new identity of a member (admin): a new join
+  changesNewIdentityIntro: (name: string): string => `${name} took a new identity. Compare identity codes with them again, as when they joined. Until you do, they are not trusted.`,
+  /** DRAFT: which identity is replaced by which (the ends of the two identities), so the admin sees WHAT is confirmed. */
+  changesNewIdentityFromTo: (oldTail: string, newTail: string | null): string => (newTail ? `Old identity ${oldTail}, new identity ${newTail}.` : `Old identity ${oldTail}.`),
+  changesNewIdentityNotYet: (name: string): string => `${name} has not set up the new identity yet.`,
+  changesNewIdentityType: (name: string): string => `Type ${name}'s new identity code`,
+  changesNewIdentityAnchorWaiting: (name: string): string => `${name} has not compared your identity code yet.`,
+  changesNewIdentityButton: (name: string): string => `Confirm ${name}'s new identity with Touch ID`,
+  changesNewIdentityDone: (name: string): string => `${name}'s new identity is confirmed. The old one no longer counts.`,
+  // re-sign (admin)
+  changesResignIntro: 'You removed the device that signed your team list. Your members need the list signed again by a device you still have.',
+  changesResignButton: 'Sign the list again with Touch ID',
+  changesResignDone: 'The list is signed again.',
+  // hand-over, both sides
+  changesHandoverTitle: 'Hand the team over',
+  changesHandoverIntro: 'Choose who becomes the admin. You and they both confirm with Touch ID. Your members do not need to do anything.',
+  changesHandoverChoose: 'New admin',
+  changesHandoverStart: (name: string): string => `Ask ${name} to take over`,
+  changesHandoverWaitingNew: 'Waiting for the new admin to confirm.',
+  changesHandoverSignedOld: (name: string): string => `${name} confirmed. Confirm too, and ${name} becomes the admin.`,
+  changesHandoverSignOld: 'Hand over with Touch ID',
+  changesHandoverIncoming: 'Your admin wants to hand the team over to you. You become the admin of the team.',
+  changesHandoverBuild: 'Take over with Touch ID',
+  changesHandoverWaitingOld: 'Waiting for the old admin to confirm.',
+  changesHandoverWithdraw: 'Cancel the hand-over',
+  changesHandoverDone: 'The team has a new admin.',
+  // the admin changed (member): compare again
+  changesAdminChanged: 'Your team has a new admin. Compare identity codes with them so you trust them.',
+  // the admin took a new identity (member)
+  /** DRAFT: the admin took a new identity; a take-over is deferred (DEC-82), so the member is only told what must happen. */
+  changesAdminGone: 'Your admin took a new identity and cannot sign for the team any more. The admin must set up the team again. Until then your team list does not change.',
+  // refusals
+  changesErrTrust: "This gateway could not check the team's list. Nothing changed.",
+  changesErrNoReplacement: 'There is nothing to confirm for this person any more. Nothing changed.',
+  changesErrNotCompared: 'Compare identity codes first. Nothing changed.',
+  changesErrAnchor: 'This person has not compared your identity code yet. Nothing changed.',
+  changesErrMismatch: 'What the new admin signed is not what you expected. Nothing was signed.',
 } as const;
 
 /** Never a gendered pronoun for a named person: "them", "their". */

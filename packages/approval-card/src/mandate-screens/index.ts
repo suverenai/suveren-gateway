@@ -8,3 +8,4 @@ export { ChangeMandate, isExtendOnly, changeErrorText, type ChangeMandateProps, 
 export { JoinCompare, ColleagueList, joinErrorText, type JoinState, type JoinFacts, type JoinCompareProps } from './JoinCompare';
 export * from './give-view';
 export { GiveApprovers, giveBlocked } from './GiveApprovers';
+export { TeamChangesPanel, type TeamChangesPanelProps, type TeamChangesActions } from './TeamChangesPanel';

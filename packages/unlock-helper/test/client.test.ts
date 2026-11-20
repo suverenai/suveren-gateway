@@ -113,7 +113,7 @@ describe('check key', () => {
     const DID_A = 'did:key:z6MkAdmin1111111111111111111111111111111111';
     const DID_M = 'did:key:z6MkMember111111111111111111111111111111111';
     const anchor = (admin: string | null) => Buffer.from(JSON.stringify({ typ: 'suveren-team-anchor', v: 1, member_did: DID_M, team_id: 't1', admin_did: admin, version: 1, prev: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
-    const list = (members: unknown[]) => Buffer.from(JSON.stringify({ typ: 'suveren-team-members', v: 1, team_id: 't1', version: 2, prev: 'h', admin_did: DID_A, members, handover: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
+    const list = (members: unknown[], version = 1, prev: string | null = null) => Buffer.from(JSON.stringify({ typ: 'suveren-team-members', v: 1, team_id: 't1', version, prev, admin_did: DID_A, members, handover: null, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' }));
     const members = [{ did: DID_A, name: 'Anna Muster', code: '7314 2208 5561 0942 3375 0001' }, { did: DID_M, name: 'Maria Huber', code: '4721 8830 1169 2284 0937 1250' }];
     it('an anchor prompt names the admin of the team, with no text from the caller', async () => {
       const c = await start();
@@ -128,6 +128,12 @@ describe('check key', () => {
       const r = await c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M });
       expect(r.reason).toBe('add "Maria Huber" to the team, code 4721 8830 1169 2284 0937 1250');
     });
+    it('a member list after version 1 without previous is refused before any touch', async () => {
+      const c = await start({ FAKE_TOUCH: 'never' });
+      const k = await c.createCheckKey('user-presence');
+      const o = list(members, 2, 'sha256:' + '0'.repeat(64));
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M })).rejects.toMatchObject({ code: 'bad_request' });
+    });
     it('a member list without a focus, or a focus that is not in it, is refused before any touch', async () => {
       const c = await start({ FAKE_TOUCH: 'never' });
       const k = await c.createCheckKey('user-presence');
@@ -140,6 +146,66 @@ describe('check key', () => {
       const k = await c.createCheckKey('user-presence');
       const o = list([{ did: DID_M, name: 'Maria', code: 'approve everything' }]);
       await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, focus: DID_M })).rejects.toMatchObject({ code: 'bad_request' });
+    });
+  });
+  describe('member list changes with `previous` (DEC-73 step 5): the helper diffs the two lists and says what is signed', () => {
+    const A = 'did:key:z6MkAdmin1111111111111111111111111111111111';
+    const M = 'did:key:z6MkMember111111111111111111111111111111111';
+    const N = 'did:key:z6MkNewone111111111111111111111111111111111';
+    const mem = (did: string, name: string, code: string) => ({ did, name, code });
+    const ANNA = mem(A, 'Anna Muster', '7314 2208 5561 0942 3375 0001');
+    const MARIA = mem(M, 'Maria Huber', '4721 8830 1169 2284 0937 1250');
+    const NEWO = mem(N, 'Maria Huber', '1111 2222 3333 4444 5555 6666');
+    const BOB = mem('did:key:z6MkBob11111111111111111111111111111111111111', 'Bob', '9999 8888 7777 6666 5555 4444');
+    const body = (version: number, prev: string | null, admin: string, members: unknown[], handover: unknown = null) =>
+      ({ typ: 'suveren-team-members', v: 1, team_id: 't1', version, prev, admin_did: admin, members, handover, key_id: 'k', chain_seq: 0, chain_head: 'h', created_at: 1, nonce: 'n' });
+    const bytes = (o: unknown) => Buffer.from(JSON.stringify(o));
+    const prevList = bytes(body(2, 'sha256:' + '0'.repeat(64), A, [ANNA, MARIA, BOB]));
+    const next = (admin: string, members: unknown[], handover: unknown = null, version = 3, prev = sha256Hash(prevList)) => bytes(body(version, prev, admin, members, handover));
+    const sign = async (o: Buffer, previous: Buffer | undefined, extra: Record<string, unknown> = {}, env: Record<string, string> = {}) => {
+      const c = await start(env);
+      const k = await c.createCheckKey('user-presence');
+      return c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, ...(previous ? { previous } : {}), ...extra });
+    };
+    it('removes one member', async () => {
+      expect((await sign(next(A, [ANNA, BOB]), prevList)).reason).toBe('remove "Maria Huber" from the team, code 4721 8830 1169 2284');
+    });
+    it('replaces one member by another, with the new one\'s code', async () => {
+      expect((await sign(next(A, [ANNA, NEWO, BOB]), prevList)).reason).toBe('new identity for "Maria Huber", code 1111 2222 3333 4444 5555 6666');
+    });
+    it('signs the same list again', async () => {
+      expect((await sign(next(A, [ANNA, MARIA, BOB]), prevList)).reason).toBe('sign the team list again');
+    });
+    it('hands the team over to a member', async () => {
+      const h = { admin_did: A, key_id: 'ka', chain_seq: 1, chain_head: 'x' };
+      expect((await sign(next(M, [ANNA, MARIA, BOB], h), prevList)).reason).toBe('hand the team over to "Maria Huber"');
+    });
+    it('still adds one (with previous, the added member is found by the helper, no focus needed)', async () => {
+      expect((await sign(next(A, [ANNA, MARIA, BOB, NEWO]), prevList)).reason).toBe('add "Maria Huber" to the team, code 1111 2222 3333 4444 5555 6666');
+    });
+    const refused = async (o: Buffer, previous: Buffer) => {
+      const c = await start({ FAKE_TOUCH: 'never' });
+      const k = await c.createCheckKey('user-presence');
+      await expect(c.signCheck({ keyBlob: k.keyBlob, digest: sha256Hash(o), object: o, previous })).rejects.toMatchObject({ code: 'bad_request' });
+    };
+    it('refuses a previous that is not the list this one follows, another team, or not the version before', async () => {
+      await refused(next(A, [ANNA, BOB], null, 3, 'sha256:' + '1'.repeat(64)), prevList);
+      await refused(next(A, [ANNA, BOB], null, 4), prevList);
+      await refused(bytes({ ...body(3, sha256Hash(prevList), A, [ANNA, BOB]), team_id: 't2' }), prevList);
+      await refused(next(A, [ANNA, BOB]), Buffer.from('{}'));
+    });
+    it('refuses mixed or unknown differences: two removed, a removed admin, a changed entry, a hand-over that also changes members, a hand-over with the same admin', async () => {
+      await refused(next(A, [ANNA]), prevList);
+      await refused(next(M, [MARIA, BOB]), prevList);
+      await refused(next(A, [ANNA, { ...MARIA, name: 'Mallory' }, BOB]), prevList);
+      await refused(next(M, [ANNA, MARIA], { admin_did: A, key_id: 'ka', chain_seq: 1, chain_head: 'x' }), prevList);
+      await refused(next(A, [ANNA, MARIA, BOB], { admin_did: A, key_id: 'ka', chain_seq: 1, chain_head: 'x' }), prevList);
+      await refused(next(M, [ANNA, MARIA, BOB]), prevList); // a change of admin without the hand-over
+    });
+    it('the caller cannot add words: a 120-character limit applies to the built text', async () => {
+      const long = mem(M, 'x'.repeat(130), MARIA.code);
+      const p = bytes(body(2, 'sha256:' + '0'.repeat(64), A, [ANNA, long, BOB]));
+      await refused(bytes(body(3, sha256Hash(p), A, [ANNA, BOB])), p);
     });
   });
   it('refuses an object it has no prompt text for', async () => {
