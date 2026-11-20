@@ -125,7 +125,8 @@ export class DeviceClient {
   signIn() { return this.go<SignedIn>('/auth/device/signin', json({})); }
 
   // Set-up
-  setupStart(label: string, checkKey?: boolean) { return this.go<SetupStarted>('/auth/device/setup/start', json({ label, ...(checkKey !== undefined ? { checkKey } : {}) })); }
+  /** No label: the gateway names the device after this computer (DEC-91). */
+  setupStart(label?: string, checkKey?: boolean) { return this.go<SetupStarted>('/auth/device/setup/start', json({ ...(label !== undefined ? { label } : {}), ...(checkKey !== undefined ? { checkKey } : {}) })); }
   setupCancel() { return this.go<Record<string, never>>('/auth/device/setup/cancel', json({})); }
   connectStart(setupId: string) { return this.go<ConnectStarted>('/auth/device/setup/connect', json({ setupId })); }
   connectStatus(setupId: string) { return this.go<ConnectStatus>(`/auth/device/setup/connect/status?setupId=${encodeURIComponent(setupId)}`); }

@@ -16,35 +16,27 @@ export interface SetupScreenProps {
   state: SetupState;
   /** The recovery code, for the one screen that shows it. */
   code: string | null;
-  onName: (label: string) => void;
+  /** Begin the set-up again (after a cancel or a failed start). */
+  onBegin: () => void;
   onConnect: () => void;
   onCancel: () => void;
-  onCodeSeen: () => void;
   onKept: (checked: boolean) => void;
-  onContinue: () => void;
-  onUnderstand: () => void;
+  onFinish: () => void;
   onRetrySignIn: () => void;
   onDone: () => void;
   onRecover?: () => void;
 }
 
-/** Screens 2 and 3: name this computer, Connect, the recovery code, did you keep it, the one condition, Connected. */
+/** DEC-91: Connect, the recovery code with its tick and the one condition on one screen, Connected. No name screen. */
 export function SetupScreen(p: SetupScreenProps) {
-  const [label, setLabel] = useState('');
   const st = p.state;
 
   switch (st.step) {
-    case 'name':
+    case 'start':
       return (
         <DeviceScreen title={T.nameTitle}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
-          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label className="form-label" htmlFor="device-name">{T.nameLabel}</label>
-            <input id="device-name" className="form-input" value={label} maxLength={64} onChange={e => setLabel(e.target.value)}
-              disabled={st.busy} style={{ padding: '0.75rem' }} onKeyDown={e => e.key === 'Enter' && label.trim() && p.onName(label)} />
-            <div className="form-hint">{T.nameHint}</div>
-          </div>
-          <button className="btn btn-primary btn-full btn-lg" onClick={() => p.onName(label)} disabled={st.busy || !label.trim()}>{T.nameButton}</button>
+          <button className="btn btn-primary btn-full btn-lg" onClick={p.onBegin} disabled={st.busy}>{T.nameTitle}</button>
           {p.onRecover && <button className="btn btn-ghost btn-full" onClick={p.onRecover}>{DRAFT.recoverLink}</button>}
         </DeviceScreen>
       );
@@ -84,27 +76,13 @@ export function SetupScreen(p: SetupScreenProps) {
           <p>{T.codePaper}</p>
           <p style={{ fontSize: '0.875rem' }}>{T.codeNever}</p>
           <button className="btn btn-secondary btn-full" onClick={() => window.print()}>{T.codePrint}</button>
-          <button className="btn btn-primary btn-full btn-lg" onClick={p.onCodeSeen}>{T.codeKeptButton}</button>
-          <button className="btn btn-ghost btn-full" onClick={p.onCancel}>{T.codeCancel}</button>
-        </DeviceScreen>
-      );
-    case 'kept':
-      return (
-        <DeviceScreen title={T.codeKeptTitle}>
-          {st.error && <Notice kind="error">{st.error}</Notice>}
+          <p>{T.conditionBody}</p>
           <label className="device-check">
-            <input type="checkbox" checked={st.checked} onChange={e => p.onKept(e.target.checked)} />
+            <input type="checkbox" checked={st.checked} disabled={st.busy} onChange={e => p.onKept(e.target.checked)} />
             <span>{T.codeKeptBox}</span>
           </label>
-          <button className="btn btn-primary btn-full btn-lg" onClick={p.onContinue} disabled={!st.checked}>{T.codeKeptButton}</button>
-        </DeviceScreen>
-      );
-    case 'condition':
-      return (
-        <DeviceScreen title={T.conditionTitle}>
-          <p>{T.conditionBody}</p>
-          {st.error && <Notice kind="error">{st.error}</Notice>}
-          <button className="btn btn-primary btn-full btn-lg" onClick={p.onUnderstand} disabled={st.busy}>{T.conditionButton}</button>
+          <button className="btn btn-primary btn-full btn-lg" onClick={p.onFinish} disabled={!st.checked || st.busy}>{T.codeKeptButton}</button>
+          <button className="btn btn-ghost btn-full" onClick={p.onCancel} disabled={st.busy}>{T.codeCancel}</button>
         </DeviceScreen>
       );
     case 'connected':
@@ -125,17 +103,30 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   const { adoptSessionUser, pageSessionOpen } = useAuth();
   const navigate = useNavigate();
   const [recover, setRecover] = useState(false);
-  // Read when Continue is pressed: the driver is built once, so a started set-up is never dropped when this resolves.
+  // Read when the set-up begins: the driver is built once, so a started set-up is never dropped when this resolves.
   const wantCheckKey = useRef(false);
   const driver = useMemo(() => new SetupDriver({ client, open: url => { window.open(url, '_blank', 'noopener'); }, wantCheckKey: () => wantCheckKey.current }), [client]);
   const state = useDriver(driver);
 
-  useEffect(() => { void driver.resume(); return () => driver.dispose(); }, [driver]);
-  // This computer makes a check key (one touch) only where it can: the gateway says so, we never guess.
+  // The set-up begins by itself (DEC-91), but only once the gateway has said whether this computer can make a
+  // check key (one touch): it is asked first, never guessed, so a Touch ID Mac is never set up without one.
   useEffect(() => {
-    if (!pageSessionOpen) return;
-    void client.platformCapabilities().then(r => { wantCheckKey.current = r.ok && (r.data as { available?: boolean }).available === true; });
-  }, [client, pageSessionOpen]);
+    let live = true;
+    void (async () => {
+      // Yield once first: React's development double mount runs this effect and its clean-up back to back, and
+      // only the second run may begin the set-up (the first one's clean-up would drop the code it was shown).
+      await Promise.resolve();
+      if (!live) return;
+      if (pageSessionOpen) {
+        const r = await client.platformCapabilities();
+        wantCheckKey.current = r.ok && (r.data as { available?: boolean }).available === true;
+      }
+      if (live) await driver.resume();
+    })();
+    return () => { live = false; driver.dispose(); };
+    // Once per page: re-running would see the set-up this effect just began as "unfinished" and drop its code.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driver, client]);
   // While the browser step is open, look at it every two seconds.
   useEffect(() => {
     if (state.step !== 'waiting') return;
@@ -148,13 +139,11 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
     <SetupScreen
       state={state}
       code={driver.recoveryCode()}
-      onName={l => void driver.continueWithName(l)}
+      onBegin={() => void driver.begin()}
       onConnect={() => void driver.connect()}
       onCancel={() => void driver.cancel()}
-      onCodeSeen={() => driver.codeSeen()}
       onKept={c => driver.toggleKept(c)}
-      onContinue={() => driver.kept()}
-      onUnderstand={() => void driver.understand()}
+      onFinish={() => void driver.finish()}
       onRetrySignIn={() => void driver.retrySignIn()}
       onDone={() => { void spClient.detectDeviceDecisions(); void adoptSessionUser(); navigate('/', { replace: true }); }}
       onRecover={() => setRecover(true)}

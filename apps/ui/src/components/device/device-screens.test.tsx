@@ -89,18 +89,19 @@ describe('screen 4: unlock', () => {
 
 describe('screens 2 and 3: set up this computer', () => {
   const props = (state: SetupState, extra: Partial<SetupScreenProps> = {}): SetupScreenProps => ({
-    state, code: null, onName: noop, onConnect: noop, onCancel: noop, onCodeSeen: noop, onKept: noop, onContinue: noop, onUnderstand: noop, onRetrySignIn: noop, onDone: noop, ...extra,
+    state, code: null, onBegin: noop, onConnect: noop, onCancel: noop, onKept: noop, onFinish: noop, onRetrySignIn: noop, onDone: noop, ...extra,
   });
   const render = (state: SetupState, extra?: Partial<SetupScreenProps>) => html(<SetupScreen {...props(state, extra)} />);
 
-  it('2a the name, with each refusal', () => {
-    const t = text(render({ step: 'name', busy: false }));
-    expect(t).toContain(T.nameTitle); expect(t).toContain(T.nameLabel); expect(t).toContain(T.nameHint); expect(t).toContain(T.nameButton);
-    for (const e of [T.nameInvalid, T.setupPasswordFirst, T.setupAlreadyDone, T.setupUnfinished, T.setupBusy, T.setupGone, T.setupNotFinished]) expect(text(render({ step: 'name', busy: false, error: e }))).toContain(e);
+  it('DEC-91: no name screen; the start (shown only after a cancel or a failed start) has one button and each refusal', () => {
+    const t = text(render({ step: 'start', busy: false }));
+    expect(t).toContain(T.nameTitle); expect(t).not.toContain(T.nameLabel); expect(t).not.toContain(T.nameHint);
+    expect(render({ step: 'start', busy: false })).not.toContain('<input');
+    for (const e of [T.nameInvalid, T.setupPasswordFirst, T.setupAlreadyDone, T.setupUnfinished, T.setupBusy, T.setupGone, T.setupNotFinished]) expect(text(render({ step: 'start', busy: false, error: e }))).toContain(e);
   });
-  it('2a offers the recovery code only where a handler exists', () => {
-    expect(text(render({ step: 'name', busy: false }))).not.toContain(DRAFT.recoverLink);
-    expect(text(render({ step: 'name', busy: false }, { onRecover: noop }))).toContain(DRAFT.recoverLink);
+  it('the start offers the recovery code only where a handler exists', () => {
+    expect(text(render({ step: 'start', busy: false }))).not.toContain(DRAFT.recoverLink);
+    expect(text(render({ step: 'start', busy: false }, { onRecover: noop }))).toContain(DRAFT.recoverLink);
   });
   it('2b Connect, and its refusals', () => {
     const t = text(render({ step: 'connect', busy: false, setupId: 's' }));
@@ -111,21 +112,17 @@ describe('screens 2 and 3: set up this computer', () => {
     const t = text(render({ step: 'waiting', setupId: 's' }));
     expect(t).toContain(T.connectWaiting); expect(t).toContain(T.connectCancel);
   });
-  it('3a the code, once', () => {
-    const h = render({ step: 'code', setupId: 's' }, { code: 'SV1-7QK2-M9XD' });
-    const t = text(h);
-    expect(h).toContain('SV1-7QK2-M9XD');
-    for (const s of [T.codeTitle, T.codeWhy, T.codeOnce, T.codePaper, T.codeNever, T.codePrint, T.codeCancel]) expect(t).toContain(s);
-  });
-  it('3b did you keep it: Continue stays off until ticked', () => {
-    const off = render({ step: 'kept', setupId: 's', checked: false });
-    expect(text(off)).toContain(T.codeKeptTitle); expect(text(off)).toContain(T.codeKeptBox);
+  it('3 DEC-91: the code, the tick and the one condition on one screen; Continue stays off until ticked, the code stays', () => {
+    const off = render({ step: 'code', setupId: 's', checked: false, busy: false }, { code: 'SV1-7QK2-M9XD' });
+    const t = text(off);
+    expect(off).toContain('SV1-7QK2-M9XD');
+    for (const s of [T.codeTitle, T.codeWhy, T.codeOnce, T.codePaper, T.codeNever, T.codePrint, T.codeCancel, T.codeKeptBox, T.conditionBody]) expect(t).toContain(s);
+    expect(t).not.toContain(T.codeKeptTitle); // no separate "Did you keep it?" screen
     expect(off).toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
-    expect(render({ step: 'kept', setupId: 's', checked: true })).not.toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
-  });
-  it('3c the one condition', () => {
-    const t = text(render({ step: 'condition', setupId: 's', busy: false }));
-    expect(t).toContain(T.conditionTitle); expect(t).toContain(T.conditionBody); expect(t).toContain(T.conditionButton);
+    const on = render({ step: 'code', setupId: 's', checked: true, busy: false }, { code: 'SV1-7QK2-M9XD' });
+    expect(on).toContain('SV1-7QK2-M9XD');
+    expect(on).not.toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
+    expect(render({ step: 'code', setupId: 's', checked: true, busy: true }, { code: 'X' })).toMatch(/<button[^>]*disabled=""[^>]*>Continue/);
   });
   it('2e connected, and 2f signed in did not work', () => {
     const ok = text(render({ step: 'connected', signedIn: true, busy: false, account: { name: 'Anna Muster', email: 'anna@example.com' } }));
@@ -138,8 +135,8 @@ describe('screens 2 and 3: set up this computer', () => {
     const t = text(render({ step: 'stuck', busy: false, error: T.setupUnfinished }));
     expect(t).toContain(T.setupUnfinished); expect(t).toContain(T.connectCancel);
   });
-  it('the code is in no screen but 3a', () => {
-    for (const st of [{ step: 'name', busy: false }, { step: 'connect', busy: false, setupId: 's' }, { step: 'waiting', setupId: 's' }, { step: 'kept', setupId: 's', checked: true }, { step: 'condition', setupId: 's', busy: false }] as SetupState[]) {
+  it('the code is in no screen but 3', () => {
+    for (const st of [{ step: 'start', busy: false }, { step: 'connect', busy: false, setupId: 's' }, { step: 'waiting', setupId: 's' }, { step: 'stuck', busy: false }] as SetupState[]) {
       expect(render(st, { code: null })).not.toContain('SV1-');
     }
   });

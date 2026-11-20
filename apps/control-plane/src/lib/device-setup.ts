@@ -24,6 +24,8 @@
  * before another can start (`setup_pending`).
  */
 
+import { execFileSync } from 'node:child_process';
+import { hostname } from 'node:os';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ChainEntry } from '@hap/core/device-keys';
 import { deviceKeys } from './device-keys-lazy';
@@ -37,6 +39,37 @@ import type { DeviceSignin, AsKeyCheck } from './device-signin';
 import { CheckKeyStore, CheckError, type PlatformChecks, type StoredCheckKey } from './platform-checks';
 
 export const DEFAULT_DEVICE_LABEL = 'This computer';
+
+/**
+ * The computer's own name as a device label (DEC-91: the person is not asked for a name at set-up; it can be
+ * changed later). The macOS ComputerName ("Anna's MacBook Air") where available, else the host name without its
+ * domain. Anything that is not a valid label (empty, too long, control or format characters) falls back.
+ */
+export function systemComputerName(read: { platform: string; computerName?: () => string | undefined; hostname: () => string } = defaultNameSources()): string {
+  let raw: string | undefined;
+  try { raw = read.platform === 'darwin' ? read.computerName?.() : undefined; } catch { raw = undefined; }
+  if (!raw || !raw.trim()) {
+    try { raw = read.hostname().split('.')[0]; } catch { raw = undefined; }
+  }
+  return sanitizeLabel(raw);
+}
+
+export function sanitizeLabel(raw: string | undefined): string {
+  if (typeof raw !== 'string') return DEFAULT_DEVICE_LABEL;
+  // Line breaks and tabs become spaces first; what is left of control and format characters goes.
+  let s = raw.normalize('NFC').replace(/\s+/g, ' ').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '').replace(/ {2,}/g, ' ').trim();
+  const chars = Array.from(s);
+  if (chars.length > 64) s = chars.slice(0, 64).join('').trim();
+  return s.length > 0 ? s : DEFAULT_DEVICE_LABEL;
+}
+
+function defaultNameSources(): { platform: string; computerName: () => string | undefined; hostname: () => string } {
+  return {
+    platform: process.platform,
+    computerName: () => execFileSync('/usr/sbin/scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(),
+    hostname: () => hostname(),
+  };
+}
 /** How long a started Connect waits. Proposed number. */
 export const CONNECT_TTL_MS = 10 * 60_000;
 
@@ -95,6 +128,8 @@ export interface DeviceSetupDeps {
   checkStore?: CheckKeyStore;
   /** Is a recovery with the recovery code started and not finished (lib/device-recovery.ts)? A set-up and a recovery never run together. */
   otherFlowPending?: () => boolean;
+  /** The label used when the page sends none (DEC-91). Default: the system's computer name. */
+  defaultLabel?: () => string;
 }
 
 function isStoredCheckKey(v: unknown): v is StoredCheckKey {
@@ -192,7 +227,7 @@ export class DeviceSetup {
     let rootSeed: Uint8Array | null = null;
     try {
       const dk = await deviceKeys();
-      const label = input.label === undefined ? DEFAULT_DEVICE_LABEL : input.label;
+      const label = input.label === undefined ? (this.d.defaultLabel ?? systemComputerName)() : input.label;
       if (!dk.isValidLabel(label)) throw new SetupRefusal(400, 'label_invalid');
       if (input.checkKey !== undefined && typeof input.checkKey !== 'boolean') throw new SetupRefusal(400, 'bad_request');
       // The computer's check key: only on request, never silently, and only where the helper can make one.

@@ -16,43 +16,44 @@ describe('set up this computer (screens 2 and 3)', () => {
     '/auth/device/setup/cancel': { body: { ok: true } },
   });
 
-  it('name, Connect, wait, the code (kept unseen until then), kept, condition, connected', async () => {
+  it('DEC-91: begin (no name asked), Connect, wait, the code with the tick on one screen, connected', async () => {
     const { client, calls } = happy();
     const open = vi.fn();
     const d = new SetupDriver({ client, open });
-    await d.continueWithName('  Office Mac ');
+    await d.begin();
     expect(d.get()).toMatchObject({ step: 'connect', setupId: 's1' });
     // The code exists but is in no state object: the Connect screen cannot show it.
     expect(JSON.stringify(d.get())).not.toContain('SV1-');
-    expect(JSON.parse(calls[0].init!.body as string)).toEqual({ label: 'Office Mac' });
+    // No label is sent: the gateway names the device after this computer.
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({});
     await d.connect();
     expect(open).toHaveBeenCalledWith('https://suveren.ai/connect?x=1');
     expect(d.get().step).toBe('waiting'); // DEC-68: the name is asked on suveren.ai; here only the waiting state
     await d.poll();
     expect(d.get().step).toBe('waiting');
     await d.poll();
-    expect(d.get()).toMatchObject({ step: 'code', account: { name: 'Anna Muster' } });
+    expect(d.get()).toMatchObject({ step: 'code', account: { name: 'Anna Muster' }, checked: false });
     expect(d.recoveryCode()).toBe('SV1-AAAA-BBBB');
-    d.codeSeen();
-    expect(d.get().step).toBe('kept');
-    d.kept(); // not ticked: no way on
-    expect(d.get().step).toBe('kept');
+    await d.finish(); // not ticked: no way on, and the code stays on screen
+    expect(d.get()).toMatchObject({ step: 'code', checked: false });
+    expect(d.recoveryCode()).toBe('SV1-AAAA-BBBB');
+    expect(calls.some(c => c.path.startsWith('/auth/device/setup/finish'))).toBe(false);
     d.toggleKept(true);
-    d.kept();
-    expect(d.get().step).toBe('condition');
-    await d.understand();
+    expect(d.get()).toMatchObject({ step: 'code', checked: true });
+    expect(d.recoveryCode()).toBe('SV1-AAAA-BBBB'); // still visible after the tick
+    await d.finish();
     expect(d.get()).toMatchObject({ step: 'connected', signedIn: true, account: { email: 'anna@example.com' } });
     expect(d.recoveryCode()).toBeNull(); // shown once, then gone
     // finish comes last: until then nothing is stored, so "Cancel set-up. This code stops working." is true
     expect(calls.map(c => c.path.split('?')[0]).slice(-1)[0]).toBe('/auth/device/setup/finish');
   });
 
-  it('every refusal of the name step has its text', async () => {
+  it('every refusal of the start step has its text', async () => {
     for (const [code, text] of [['label_invalid', T.nameInvalid], ['password_required', T.setupPasswordFirst], ['already_set_up', T.setupAlreadyDone], ['setup_pending', T.setupUnfinished], ['setup_busy', T.setupBusy]] as const) {
       const { client } = fakeClient({ '/auth/device/setup/start': refuse(409, code) });
       const d = new SetupDriver({ client, open: vi.fn() });
-      await d.continueWithName('x');
-      expect(d.get()).toMatchObject({ step: 'name', busy: false, error: text });
+      await d.begin();
+      expect(d.get()).toMatchObject({ step: 'start', busy: false, error: text });
     }
   });
 
@@ -64,34 +65,34 @@ describe('set up this computer (screens 2 and 3)', () => {
     });
     let { client } = mk({}, refuse(409, 'connect_port_unsupported'));
     let d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect();
+    await d.begin(); await d.connect();
     expect(d.get()).toMatchObject({ step: 'connect', error: T.connectBadStart });
 
     ({ client } = mk({ ok: true, state: 'expired', code: 'connect_timeout' }));
     d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.poll();
+    await d.begin(); await d.connect(); await d.poll();
     expect(d.get()).toMatchObject({ step: 'connect', error: T.connectTimeout });
 
     ({ client } = mk({ ok: true, state: 'failed', code: 'setup_refused' }));
     d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.poll();
+    await d.begin(); await d.connect(); await d.poll();
     expect(d.get()).toMatchObject({ step: 'connect', error: T.connectNotAccepted });
 
     ({ client } = mk({ ok: true, state: 'failed', code: 'connect_other_session' }));
     d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.poll();
+    await d.begin(); await d.connect(); await d.poll();
     expect(d.get()).toMatchObject({ error: T.connectOtherWindow });
   });
 
-  it('cancel drops the code and goes back to the name', async () => {
+  it('cancel drops the code and goes back to the start', async () => {
     const { client } = happy();
     const d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.cancel();
-    expect(d.get()).toMatchObject({ step: 'name' });
+    await d.begin(); await d.connect(); await d.cancel();
+    expect(d.get()).toMatchObject({ step: 'start' });
     expect(d.recoveryCode()).toBeNull();
   });
 
-  it('finish refused (head mismatch) keeps the person at the condition with the words', async () => {
+  it('finish refused (head mismatch) keeps the person at the code screen with the words', async () => {
     const { client } = fakeClient({
       '/auth/device/setup/start': { body: { setupId: 's1', recoveryCode: 'C' } },
       '/auth/device/setup/connect': { body: { authorizeUrl: 'u', expiresAt: 1 } },
@@ -99,8 +100,8 @@ describe('set up this computer (screens 2 and 3)', () => {
       '/auth/device/setup/finish': refuse(502, 'head_mismatch'),
     });
     const d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.poll(); d.codeSeen(); d.toggleKept(true); d.kept(); await d.understand();
-    expect(d.get()).toMatchObject({ step: 'condition', error: T.connectWrongList });
+    await d.begin(); await d.connect(); await d.poll(); d.toggleKept(true); await d.finish();
+    expect(d.get()).toMatchObject({ step: 'code', error: T.connectWrongList });
   });
 
   it('connected but the sign-in did not work: item 65, and Try again signs in', async () => {
@@ -112,7 +113,7 @@ describe('set up this computer (screens 2 and 3)', () => {
       '/auth/device/signin': [refuse(502, 'as_unreachable'), { body: { ok: true, expiresAt: 5 } }],
     });
     const d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect(); await d.poll(); d.codeSeen(); d.toggleKept(true); d.kept(); await d.understand();
+    await d.begin(); await d.connect(); await d.poll(); d.toggleKept(true); await d.finish();
     expect(d.get()).toMatchObject({ step: 'connected', signedIn: false, error: T.connectedSigninFailed });
     await d.retrySignIn();
     expect(d.get()).toMatchObject({ signedIn: false, error: T.asUnreachable });
@@ -126,7 +127,26 @@ describe('set up this computer (screens 2 and 3)', () => {
     await d.resume();
     expect(d.get()).toMatchObject({ step: 'stuck', error: T.setupUnfinished });
     await d.cancel();
-    expect(d.get().step).toBe('name');
+    expect(d.get().step).toBe('start');
+  });
+
+  it('DEC-91: on a computer not set up, resume begins the set-up by itself (Connect is the first screen)', async () => {
+    const { client, calls } = fakeClient({
+      '/auth/device/status': { body: { setUp: false, setupPending: false, signedIn: false } },
+      '/auth/device/setup/start': { body: { setupId: 's1', recoveryCode: 'C' } },
+    });
+    const d = new SetupDriver({ client, open: vi.fn() });
+    await d.resume();
+    expect(d.get()).toMatchObject({ step: 'connect', setupId: 's1' });
+    expect(calls.filter(c => c.path === '/auth/device/setup/start')).toHaveLength(1);
+  });
+
+  it('a computer already set up does not begin a set-up on resume', async () => {
+    const { client, calls } = fakeClient({ '/auth/device/status': { body: { setUp: true, setupPending: false, signedIn: true } } });
+    const d = new SetupDriver({ client, open: vi.fn() });
+    await d.resume();
+    expect(d.get().step).toBe('start');
+    expect(calls.some(c => c.path === '/auth/device/setup/start')).toBe(false);
   });
 });
 
@@ -499,7 +519,7 @@ describe('fix round: cancel, check key, unlock once', () => {
       '/auth/device/setup/cancel': refuse(502, 'as_unreachable'),
     });
     const d = new SetupDriver({ client, open: vi.fn() });
-    await d.continueWithName('x'); await d.connect();
+    await d.begin(); await d.connect();
     expect(d.get().step).toBe('waiting');
     await d.cancel();
     expect(d.get()).toMatchObject({ step: 'waiting', error: T.asUnreachable });
@@ -525,13 +545,13 @@ describe('fix round: cancel, check key, unlock once', () => {
     expect(d.get()).toMatchObject({ step: 'done', signedIn: true });
   });
 
-  it('the check key is asked at Continue, from a getter: it can change after the driver is built without dropping a started set-up', async () => {
+  it('the check key is asked when the set-up begins, from a getter: it can change after the driver is built without dropping a started set-up', async () => {
     let want = false;
     const { client, calls } = fakeClient({ '/auth/device/setup/start': { body: { setupId: 's', recoveryCode: 'C' } } });
     const d = new SetupDriver({ client, open: vi.fn(), wantCheckKey: () => want });
     want = true; // the capabilities answer arrives after the driver exists
-    await d.continueWithName('Mac');
-    expect(JSON.parse(calls[0].init!.body as string)).toEqual({ label: 'Mac', checkKey: true });
+    await d.begin();
+    expect(JSON.parse(calls[0].init!.body as string)).toEqual({ checkKey: true });
     expect(d.get().step).toBe('connect');
   });
 
