@@ -10,6 +10,7 @@ import { AdmitScreen } from './Admit';
 import { DevicesScreen, DeviceList, RemoveScreen } from './Devices';
 import { RequestsScreen, RequestDetail } from './Requests';
 import { RequestPanel } from './RequestPanel';
+import { RotateScreen } from './Rotate';
 import type { CardCheck, ReadyCard } from '../lib/card-checks';
 import { OpenSessionScreen } from './OpenSession';
 import { ScanView } from './ScanView';
@@ -342,6 +343,59 @@ describe('the phone screens (both widths use the same markup and the same tokens
       const m = html(<JoinScreen state={{ step: 'scan', busy: false }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} notice={errorText('device_removed')} />);
       expect(m).toContain('data-testid="join-notice"');
       expect(text(m)).toContain(errorText('device_removed'));
+    });
+  });
+
+  describe('replacing the recovery code (DEC-85, mockup D1–D5)', () => {
+    const rot = (state: Parameters<typeof RotateScreen>[0]['state']) => html(<RotateScreen state={state} onOld={noop} onNew={noop} onCancel={noop} onDone={noop} />);
+
+    it('the join\'s done screen offers it, with Later', () => {
+      const t = text(html(<JoinScreen state={{ step: 'done' }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} onRotate={noop} />));
+      expect(t).toContain(P.rotateOfferTitle);
+      expect(t).toContain(P.rotateStart);
+      expect(t).toContain(P.rotateLater);
+    });
+
+    it('the devices screen keeps offering it, naming where the code was made', () => {
+      const t = text(html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} rotateOffer="Office Mac" onRotate={noop} />));
+      expect(t).toContain(P.rotateOfferBody('Office Mac'));
+      expect(t).toContain(P.rotateStart);
+    });
+
+    it('the old code: scan or type, never shown back', () => {
+      const m = rot({ step: 'old', busy: false });
+      expect(text(m)).toContain(P.rotateOldScan);
+      expect(m).toContain('type="password"');
+    });
+
+    it('the new code once: "Write it on paper" only (no print), never give it to the AI, typed again, the touch button', () => {
+      const t = text(rot({ step: 'new', code: 'SV1-AAAA-BBBB' }));
+      expect(t).toContain('SV1-AAAA-BBBB');
+      expect(t).toContain(P.rotateNewPaper);
+      expect(P.rotateNewPaper.toLowerCase()).not.toContain('print');
+      expect(t).not.toContain(P.codePrint);
+      expect(t).toContain(P.codeNever);
+      expect(t).toContain(P.rotateButton);
+    });
+
+    it('the touch: only "Waiting for your touch…" with the spinner, no buttons, no code', () => {
+      const m = rot({ step: 'checking' });
+      expect(m).toContain('data-testid="touch-wait"');
+      expect(m).not.toContain('<button');
+    });
+
+    it('waiting for the email: where it went, the six digits to compare', () => {
+      const t = text(rot({ step: 'waiting', confirmCode: '123456', email: 'a•••@example.com', expiresAt: NOW + 600 }));
+      expect(t).toContain(P.rotateEmail('a•••@example.com'));
+      expect(t).toContain(P.rotateCompare);
+      expect(t).toContain('123456');
+      expect(t).toContain(P.rotateWaiting);
+    });
+
+    it('done: the old code no longer works; throw the paper away', () => {
+      const t = text(rot({ step: 'done' }));
+      expect(t).toContain(P.rotateDone);
+      expect(t).toContain(P.rotateThrowAway);
     });
   });
 

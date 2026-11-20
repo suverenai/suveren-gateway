@@ -176,8 +176,23 @@ export const P = {
   rotateOfferTitle: 'Replace your recovery code', // DRAFT
   rotateOfferBody: (label: string): string => `Your recovery code was made on ${label}. Replace it now on this phone, so only the new code works.`, // DRAFT new
   rotateNeedPaper: 'You need the paper with your old code.', // DRAFT new
+  rotateOfferJoined: 'Your recovery code was made on another of your devices. Replace it now on this phone, so only the new code works.', // DRAFT new (the join knows no label yet)
   rotateStart: 'Make a new code', // DRAFT
   rotateLater: 'Later', // DRAFT new
+  rotateTitle: 'Replace your recovery code', // DRAFT
+  rotateOldScan: 'Scan the code on your recovery paper.', // DRAFT new
+  rotateTypeInstead: 'Type it instead', // DRAFT new
+  rotateOldLabel: 'Old recovery code', // DRAFT new
+  rotateNewTitle: 'Your new recovery code', // DRAFT
+  rotateNewPaper: 'Write it on paper. Do not take a screenshot or save it in a file on this phone.', // DRAFT (DEC-85: paper only, no print)
+  rotateNewAgain: 'New recovery code, typed again', // DRAFT new
+  rotateButton: 'Replace code with your touch', // DRAFT new (DEC-85: "... with your touch")
+  rotateEmail: (to: string | null): string => (to ? `We sent an email to ${to}. Open the link in it on this phone.` : 'We sent an email to the address of your account. Open the link in it on this phone.'), // DRAFT new
+  rotateCompare: 'Check that the page from the email shows this number:', // DRAFT
+  rotateWaiting: 'Waiting for the email link...', // DRAFT
+  rotateDone: 'Done. Your new recovery code works. The old one does not.', // DRAFT
+  rotateThrowAway: 'Throw away the paper with the old code.', // DRAFT new
+  rotateGoDevices: 'Go to your devices', // DRAFT
 
   // ─── Notices from the other devices (mockup F1–F3, plan 20.17) ────────────────
   noticeAdded: (label: string, when: string, by: string): string => `${label} was added to your account ${when} on ${by}. If this was not you, remove it.`, // DRAFT new
@@ -295,6 +310,15 @@ const ERRORS: Record<string, string> = {
   last_granting: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new
   no_granting_device: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new (the AS code NO_GRANTING_DEVICE)
   bad_target: 'This device is no longer in your list. Nothing changed.', // DRAFT new (BAD_TARGET)
+  recovery_code_invalid: 'This is not a recovery code. Check each character and try again.', // DRAFT new
+  recovery_code_wrong: 'This is not the recovery code of your account. Nothing changed.', // DRAFT new
+  new_code_mismatch: 'What you typed is not the new code. Look at it again.', // DRAFT new
+  handoff_expired: 'The email link ran out. Nothing changed. Start again.', // DRAFT new
+  handoff_used: 'This replacement was already used. Nothing changed. Start again.', // DRAFT new
+  mail_failed: 'The email could not be sent. Nothing changed. Try again.', // DRAFT new
+  no_chain: 'suveren.ai did not accept the old code. Nothing changed. Check the code and try again.', // DRAFT new (NO_CHAIN: the same answer for every failure before the root signature)
+  bad_op: 'suveren.ai did not accept this change. Nothing changed. Try again; if it repeats, tell support.', // DRAFT new
+  rotate_chain_moved: 'Your list of devices changed meanwhile. Nothing changed. Start again.', // DRAFT new
   remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
 };
 

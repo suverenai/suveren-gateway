@@ -20,6 +20,8 @@ export interface JoinScreenProps {
   canGoBack?: boolean;
   /** Why the phone is back here (mockup C5: it was removed from the account). */
   notice?: string;
+  /** Replace the recovery code now (DEC-85, mockup D1: offered with "Later"). */
+  onRotate?: () => void;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {
@@ -104,7 +106,15 @@ export function JoinScreen(p: JoinScreenProps) {
       return (
         <Screen title={P.joinDoneTitle}>
           <Notice kind="success">{P.setupDoneBody}</Notice>
-          <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>
+          {p.onRotate ? (
+            <div data-testid="rotate-offer">
+              <h2 style={{ fontSize: 'var(--text-lead)' }}>{P.rotateOfferTitle}</h2>
+              <p>{P.rotateOfferJoined}</p>
+              <p>{P.rotateNeedPaper}</p>
+              <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onRotate}>{P.rotateStart}</button>
+              <button type="button" className="btn btn-ghost btn-full" onClick={p.onDone}>{P.rotateLater}</button>
+            </div>
+          ) : <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>}
         </Screen>
       );
   }

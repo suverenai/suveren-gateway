@@ -26,6 +26,8 @@ import { JoinScreen } from './screens/Join';
 import { AdmitScreen } from './screens/Admit';
 import { DevicesScreen, RemoveScreen } from './screens/Devices';
 import { RemoveDriver } from './lib/remove-driver';
+import { RotateDriver, codeMadeOn, rotateOffered } from './lib/rotate-driver';
+import { RotateScreen } from './screens/Rotate';
 import { chainNotices, type ChainNotice } from './lib/chain-notices';
 import { whenText } from './screens/Frame';
 import { RequestsScreen } from './screens/Requests';
@@ -51,7 +53,7 @@ type View =
   | { t: 'register' }
   | { t: 'join'; notice?: string }
   | { t: 'locked'; error: string | null; ended: boolean; canForget: boolean }
-  | { t: 'home'; tab: 'requests' | 'devices' | 'admit' };
+  | { t: 'home'; tab: 'requests' | 'devices' | 'admit'; rotate?: boolean };
 
 /** The theme switch is the gateway's (shared `ThemeToggle`, `useTheme`: `data-theme` on <html>, system default, remembered in localStorage). */
 export default function App() {
@@ -72,6 +74,7 @@ function Screens() {
   const [joinKey, setJoinKey] = useState(0);
   const viewRef = useRef(view);
   viewRef.current = view;
+  const rotateNext = useRef(false);
 
   // ─── start ────────────────────────────────────────────────────────────────────
   const locked = useCallback((error: string | null = null, ended = false, canForget = false) => {
@@ -140,6 +143,8 @@ function Screens() {
     const account = await rt.accounts.read();
     if (!account) { locked(errorText('not_paired')); return; }
     bindPhoneHost({ reader: rt.reader, keys: rt.keys, ownKeyId: account.key_id, userId: r.session.user.id });
+    // "Make a new code" on the join's done screen (mockup D1): straight to replacing the recovery code once the app is open.
+    if (rotateNext.current) { rotateNext.current = false; setView({ t: 'home', tab: 'devices', rotate: true }); return; }
     setView({ t: 'home', tab: 'requests' });
   }, [rt, locked]);
 
@@ -155,11 +160,11 @@ function Screens() {
     case 'register':
       return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
     case 'join':
-      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
+      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} onRotate={() => { rotateNext.current = true; locked(); }} />;
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
-      return <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} onRemovedSelf={() => void forgetTo(P.removedSelf)} />;
+      return <Home rt={rt} tab={view.tab} rotate={view.rotate} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} onRemovedSelf={() => void forgetTo(P.removedSelf)} />;
   }
 }
 
@@ -181,7 +186,7 @@ function RegisterFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDo
   );
 }
 
-function JoinFlow({ rt, notice, onBack, onDone }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void }) {
+function JoinFlow({ rt, notice, onBack, onDone, onRotate }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void; onRotate: () => void }) {
   const driver = useMemo(() => new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now }), [rt]);
   useEffect(() => () => driver.dispose(), [driver]);
   const state = useDriver(driver);
@@ -193,13 +198,13 @@ function JoinFlow({ rt, notice, onBack, onDone }: { rt: Rt; notice?: string; onB
     <JoinScreen
       state={state} nowSeconds={rt.now()}
       onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
-      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice} onRotate={onRotate}
     />
   );
 }
 
-function Home({ rt, tab, setTab, persistent, updated, onEnded, onRemovedSelf }: {
-  rt: Rt; tab: 'requests' | 'devices' | 'admit'; setTab: (t: 'requests' | 'devices' | 'admit') => void;
+function Home({ rt, tab, rotate, setTab, persistent, updated, onEnded, onRemovedSelf }: {
+  rt: Rt; tab: 'requests' | 'devices' | 'admit'; rotate?: boolean; setTab: (t: 'requests' | 'devices' | 'admit') => void;
   persistent: boolean | null; updated: boolean; onEnded: () => void; onRemovedSelf: () => void;
 }) {
   return (
@@ -207,7 +212,7 @@ function Home({ rt, tab, setTab, persistent, updated, onEnded, onRemovedSelf }: 
       <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => setTab(t)}
         items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
       {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
-      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} onRemovedSelf={onRemovedSelf} />}
+      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} onRemovedSelf={onRemovedSelf} startRotate={rotate} />}
       {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}
     </div>
   );
@@ -366,8 +371,8 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   );
 }
 
-function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
-  rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void; onRemovedSelf: () => void;
+function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, startRotate }: {
+  rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void; onRemovedSelf: () => void; startRotate?: boolean;
 }) {
   const [rows, setRows] = useState<DeviceRow[]>([]);
   const [code, setCode] = useState<string | null>(null);
@@ -376,6 +381,17 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
   const [busy, setBusy] = useState(false);
   const remover = useMemo(() => new RemoveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
   const removing = useDriver(remover);
+  const rotator = useMemo(() => new RotateDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const rotating = useDriver(rotator);
+  const [offer, setOffer] = useState<string | null>(null);
+  // While the email link is out, the chain is read again until the entry is in it.
+  useEffect(() => {
+    if (rotating.step !== 'waiting') return undefined;
+    const t = window.setInterval(() => void rotator.poll(), POLL_MS);
+    return () => window.clearInterval(t);
+  }, [rotator, rotating.step]);
+  // Started from the join's done screen ("Make a new code", mockup D1).
+  useEffect(() => { if (startRotate) rotator.start(); }, [rotator, startRotate]);
 
   const show = useCallback(async () => {
     const s = rt.session.current();
@@ -384,6 +400,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
     const now = rt.now();
     setRows(deviceRows(s.entries, s.chain, account.key_id, now));
     setNotices(chainNotices(s.entries, s.chain, account.key_id, now).map((n) => noticeText(n, now)));
+    setOffer(rotateOffered(s.entries, s.chain, account.key_id) ? (codeMadeOn(s.entries, s.chain) ?? P.devKindComputer) : null);
     setCode(await identityCodeOf(account.root_did));
   }, [rt, onEnded]);
 
@@ -399,6 +416,15 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
 
   useEffect(() => { void show(); void refresh(); }, [show, refresh]);
 
+  if (rotating.step !== 'idle') {
+    return (
+      <RotateScreen
+        state={rotating}
+        onOld={(c) => void rotator.submitOld(c)} onNew={(t) => void rotator.confirmNew(t)}
+        onCancel={() => rotator.cancel()} onDone={() => { rotator.cancel(); void show(); }}
+      />
+    );
+  }
   if (removing.step !== 'idle') {
     return (
       <RemoveScreen
@@ -417,6 +443,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
       rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
       version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
       onRemove={(keyId) => void remover.start(keyId)} notices={notices}
+      rotateOffer={offer} onRotate={() => rotator.start()}
     />
   );
 }

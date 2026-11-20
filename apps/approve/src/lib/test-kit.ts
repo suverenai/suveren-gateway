@@ -182,6 +182,7 @@ export class FakeAs implements Transport {
       return { status: 200, body: { root_did: this.rootDid, entries: this.entries, head: state.head } };
     }
     if (route === 'POST /api/devices/chain') return this.postChain(body, opts.bearer);
+    if (route === 'POST /api/devices/recovery/handoffs') return this.stageHandoff(body);
 
     if (route === 'POST /api/devices/pairings') {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'DEVICE_SESSION_REQUIRED');
@@ -260,6 +261,35 @@ export class FakeAs implements Transport {
     prop.status = kind === 'commit' ? 'committed' : 'rejected';
     this.decisions.push({ id, route, body, decision });
     return { status: 200, body: kind === 'commit' ? { receipt: { id: `tk-${this.decisions.length}` }, status: 'committed' } : { status: 'rejected' } };
+  }
+
+  /** Staged root-signed entries (the recovery hand-off, `return: "app"`), waiting for the person's email confirmation. */
+  staged: ChainEntry[] = [];
+  /** Refuse the next stage with this code. */
+  refuseStage: { status: number; code: string } | null = null;
+
+  /** Like the real stage: only a phone's rotate-root, verified against the head; nothing appended. */
+  private async stageHandoff(body: Json): Promise<Reply> {
+    if (this.refuseStage) { const r = this.refuseStage; this.refuseStage = null; return refusal(r.status, r.code); }
+    const entry = body.entry as ChainEntry;
+    if (body.return !== 'app' || entry?.op !== 'rotate-root' || entry.signer !== 'root') return refusal(400, 'BAD_OP');
+    if (entry.seq !== this.entries.length) return refusal(409, 'CHAIN_HEAD_MOVED');
+    try {
+      const state = await verifyChain({ expectedRootDid: this.rootDid, entries: [...this.entries, entry] });
+      const co = entry.sigs.find((x) => x.by !== 'root');
+      if (!co || state.devices[co.by]?.kind !== 'approve-app') return refusal(400, 'BAD_OP');
+    } catch {
+      return refusal(404, 'NO_CHAIN');
+    }
+    this.staged.push(entry);
+    return { status: 201, body: { handoff_id: 'h'.repeat(32), expires_at: this.clock + 600 } };
+  }
+
+  /** The person confirmed the mailed link: the last staged entry is appended. */
+  async confirmStaged(): Promise<void> {
+    const e = this.staged.pop();
+    if (!e) throw new Error('nothing staged');
+    await this.appendDirect(e);
   }
 
   private async postChain(body: Json, bearer?: string): Promise<Reply> {
