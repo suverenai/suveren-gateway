@@ -9,6 +9,7 @@ import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
 import { isNewReport } from '../lib/report-news';
+import { createLatestGuard } from '../lib/latest-guard';
 import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
 import { NavIcon, type NavIconName } from './NavIcon';
 
@@ -52,8 +53,13 @@ export const NAV_ITEMS: NavItem[] = [
 function useOtherNavStatus() {
   const { activeDomain } = useAuth();
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Every live event starts a poll; two events a moment apart (two blocked
+  // calls) overlap. An older poll may not write over a newer one; without that,
+  // one that finishes last puts an older count back (see latest-guard.ts).
+  const guardRef = useRef(createLatestGuard());
 
   const poll = useCallback(async () => {
+    const mayWrite = guardRef.current.begin();
     try {
       const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
@@ -102,6 +108,7 @@ function useOtherNavStatus() {
       // Tickets issued since the Tickets page was last opened.
       const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
       if (newTickets > 0) next.tickets = newTickets;
+      if (!mayWrite()) return;
       setCounts(next);
     } catch {
       // ignore

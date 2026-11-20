@@ -822,7 +822,11 @@ describe('through the gateway\'s own entry points', () => {
     it('on an empty gateway: short, with the one next step, the card, and no connector steps', async () => {
       const text = (await listAuthorizationsHandler(state([]), im({ running: [] }))()).content[0].text;
       console.log(`EMPTY GATEWAY ANSWER (${text.length} chars)\n${text}`);
-      expect(text.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
+      // The rules lead every short answer (fixed text, the same in every state); the limit is on the answer itself.
+      expect(text.startsWith('=== RULES ===\n')).toBe(true);
+      const answer = text.replace(/^=== RULES ===\n(?:- .*\n)+\n/, '');
+      expect(answer).not.toContain('=== RULES ===');
+      expect(answer.length).toBeLessThanOrEqual(SHORT_ANSWER_LIMIT);
       expect(text.match(/The one next step:/g)).toHaveLength(1);
       expect(text).toContain('**Setup**');
       expect(text).toContain('**Mandates → + New mandate**');
