@@ -15,7 +15,7 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Step 1 results: the service worker keeps the app's static files and fetches a new version behind them. Push is stage D4.
+// Step 1 results: the service worker keeps the app's static files and fetches a new version behind them; it also shows notifications (stage D4, public/sw.js).
 if ('serviceWorker' in navigator) {
   void navigator.serviceWorker.register('/sw.js').catch(() => { /* the app works without it */ });
 }

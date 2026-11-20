@@ -63,3 +63,22 @@ describe('the phone app\'s words (DEC-75, 78, 79; all DRAFT)', () => {
     expect(P.scanProgress(3)).toBe('Looking for the code... 3 s');
   });
 });
+
+describe('the notification words (stage D4)', () => {
+  it('public/sw.js carries exactly texts.ts\'s pushTitle, pushOne and pushMany (a service worker cannot import the module)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+    const block = /\/\/ BEGIN PUSH TEXTS\nconst PUSH_TEXT = (\{[\s\S]*?\});\n\/\/ END PUSH TEXTS/.exec(sw);
+    expect(block).not.toBeNull();
+    const t = new Function(`return ${block![1]}`)() as { title: string; one: string; many: string };
+    expect(t.title).toBe(P.pushTitle);
+    expect(t.one).toBe(P.pushOne);
+    for (const n of [2, 3, 17]) expect(t.many.replace('{n}', String(n))).toBe(P.pushMany(n));
+  });
+
+  it('the notification names nothing of the request: no amount, no name, no action word', () => {
+    for (const t of [P.pushTitle, P.pushOne, P.pushMany(3)]) {
+      expect(t).not.toMatch(/approve|reject|€|\$|\d+\s*(eur|usd)/i);
+    }
+  });
+});

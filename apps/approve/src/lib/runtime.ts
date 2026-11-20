@@ -14,6 +14,7 @@ import { DeviceSession } from './session';
 import { ProposalReader } from './proposals';
 import { PhoneDecider } from './decide';
 import type { CheckDeps } from './card-checks';
+import { PushControl, browserPushPlatform, type PushPlatform } from './push';
 
 export interface Runtime {
   kv: Kv;
@@ -27,6 +28,8 @@ export interface Runtime {
   /** What the checks before a decision read with, and the object that signs and sends a decision. */
   checks: CheckDeps;
   decider: PhoneDecider;
+  /** Notifications on this phone (stage D4). */
+  push: PushControl;
   asUrl: string;
   /** The passkey's relying-party id: this app's own host. */
   rpId: string;
@@ -40,6 +43,7 @@ export interface RuntimeParts {
   asUrl?: string;
   rpId?: string;
   now?: () => number;
+  pushPlatform?: PushPlatform;
 }
 
 export function createRuntime(p: RuntimeParts = {}): Runtime {
@@ -57,5 +61,6 @@ export function createRuntime(p: RuntimeParts = {}): Runtime {
   const reader = new ProposalReader(api, session, () => session.current()?.user.id ?? '');
   const checks: CheckDeps = { api, session, keys, accounts, now };
   const decider = new PhoneDecider({ api, session, keys, accounts, reader, now });
-  return { kv, keys, accounts, check, transport, api, session, reader, checks, decider, asUrl, rpId, now };
+  const push = new PushControl({ platform: p.pushPlatform ?? browserPushPlatform(), api, kv, now });
+  return { kv, keys, accounts, check, transport, api, session, reader, checks, decider, push, asUrl, rpId, now };
 }

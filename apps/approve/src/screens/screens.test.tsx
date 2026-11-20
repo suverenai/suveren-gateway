@@ -254,3 +254,32 @@ describe('the phone screens (both widths use the same markup and the same tokens
     expect(m).toContain('data-testid="scan-progress"');
   });
 });
+
+describe('notifications on the phone screens (stage D4)', () => {
+  it('the requests screen offers them with "Not now", and counts requests that came without a notice', () => {
+    const m = html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} pushOffer={{ onOn: noop, onNotNow: noop }} missed={2} />);
+    const t = text(m);
+    expect(m).toContain('data-testid="push-offer"');
+    expect(t).toContain(P.pushOfferTitle);
+    expect(t).toContain(P.pushTurnOn);
+    expect(t).toContain(P.pushNotNow);
+    expect(t).toContain(P.pushMissed(2));
+    const none = html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} missed={0} />);
+    expect(none).not.toContain('push-offer');
+    expect(none).not.toContain('push-missed');
+  });
+
+  it('the devices screen says the state in one sentence and offers the one button that changes it', () => {
+    const at = (state: 'on' | 'off' | 'denied' | 'unsupported') => text(html(
+      <DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent updated={false} version="0.1.0" build="abc" onAddComputer={noop} onRefresh={noop}
+        push={{ state, onOn: noop, onOff: noop }} />,
+    ));
+    expect(at('on')).toContain(P.pushStateOn);
+    expect(at('on')).toContain(P.pushTurnOff);
+    expect(at('on')).not.toContain(P.pushTurnOn);
+    expect(at('off')).toContain(P.pushTurnOn);
+    expect(at('denied')).toContain(P.pushStateDenied);
+    expect(at('denied')).not.toContain(P.pushTurnOn);
+    expect(at('unsupported')).toContain(P.pushStateUnsupported);
+  });
+});
