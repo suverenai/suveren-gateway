@@ -73,7 +73,10 @@ export function useCardMandateGive(proposal: { id: string; tool: string }, args:
   // Started: the card shows the give's footer until it is back at the offer (a refusal stays, with its words, never "Signed").
   const active = started;
   const errorLine = driver.error ? createElement('p', { className: 'msg-error av3-error', role: 'alert', 'data-testid': 'card-give-error' }, driver.error) : null;
-  const footer = onPhone
+  // One result screen after a give, however it was given (DEC-86/88): the gateway's stamp — check mark, "Signed", "Recorded", Close.
+  const footer = driver.givenId
+    ? createElement('div', null, errorLine, createElement(GiveTouchFooter, { view: { s: 'given' }, onGive: () => {}, onBack: () => {}, onClose: o.onClose }))
+    : onPhone
     ? createElement('div', null, errorLine, createElement(GivePhoneFooter, {
         view: driver.phoneGive.s === 'refused' ? { s: 'refused', message: driver.phoneGive.message } : { s: driver.phoneGive.s },
         disabled: !driver.prepared,
