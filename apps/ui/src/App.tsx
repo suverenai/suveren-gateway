@@ -35,11 +35,15 @@ import { offerSetUp } from './lib/access';
 import { spClient } from './lib/sp-client';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, mode, domain } = useAuth();
+  const { user, mode, domain, access, deviceKeysSwitch, passwordSet } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   // Personal mode: always has domain='owner', skip onboarding
-  // Team mode: show onboarding if no domain set (no group joined yet)
-  if (mode === 'team' && !domain) return <Navigate to="/onboarding" replace />;
+  // Team mode: show onboarding if no domain set (no group joined yet). With device keys on and no unlock password
+  // yet, the computer's own set-up comes first: the onboarding would otherwise push the one-time offer aside.
+  if (mode === 'team' && !domain) {
+    const offer = offerSetUp({ access: access ?? 'legacy', switchOn: deviceKeysSwitch, passwordSet }, Boolean(spClient.getApiKey()) && !spClient.hasPageSession());
+    return <Navigate to={offer ? '/device-password' : '/onboarding'} replace />;
+  }
   return <>{children}</>;
 }
 

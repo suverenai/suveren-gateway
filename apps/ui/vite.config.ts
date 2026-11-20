@@ -17,81 +17,81 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/auth/': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/gate-content': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       // Bare path; NOTE: must NOT be `/mandates` or `/authorizations` (UI page routes).
       '/active-authorizations': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       // Bare path; NOT `/proposals` (a UI page route).
       '/proposal-status': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/denials': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/vault': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/ai': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/ai-prompts': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/github': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/health': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/as-pairing': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/skipped-commitments': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/autostart': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/resync-gates': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/mcp': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/integrations/': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/agent-brief/': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/events': {
         target: 'http://localhost:3402',
-        changeOrigin: true,
+        changeOrigin: false,
         // SSE: disable proxy response buffering so event frames flush immediately.
         ws: false,
       },
