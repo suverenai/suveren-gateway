@@ -2,7 +2,7 @@ import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';
 import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
 import type { DeviceRow } from '../lib/chain-view';
 import { P } from '../texts';
-import { Notice, Screen, whenText } from './Frame';
+import { Notice, Screen, TouchWait, whenText } from './Frame';
 import type { RemoveState } from '../lib/remove-driver';
 
 /** The list of devices, from a chain this phone verified itself: the gateway's member rows (TileList), one per device. Labels are plain text. */
@@ -113,7 +113,7 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onAdd
               <button type="button" className="btn btn-ghost btn-full" onClick={onCancel}>{P.cancel}</button>
             </>
           )}
-          {st.step === 'checking' && <Notice kind="info">{P.removeChecking}</Notice>}
+          {st.step === 'checking' && <TouchWait text={P.touchWait} />}
         </Screen>
       );
     }

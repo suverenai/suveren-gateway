@@ -167,7 +167,7 @@ export const P = {
   removeSelfEffect: 'This phone can no longer sign in, read requests or decide. The app then clears its data on this phone.', // DRAFT new
   removeListAfter: SP.admitListTitle, // shared (approval-card pairing-texts): "Your devices after this:"
   removeButton: 'Remove with your touch', // DRAFT new (DEC-85: "... with your touch")
-  removeChecking: 'Your phone asks for your touch, to remove the device.', // DRAFT new
+  touchWait: 'Waiting for your touch…', // DRAFT (Andreas 2026-11-20: the only line while the system's touch window comes)
   removeDone: (label: string): string => `${label} was removed.`, // DRAFT new
   removeListNow: 'Your devices now:', // DRAFT new
   removedSelf: 'This phone was removed from your account.', // DRAFT new

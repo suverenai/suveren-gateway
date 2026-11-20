@@ -316,10 +316,14 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(text(m)).toContain(P.devAddComputer);
     });
 
-    it('while the touch is asked: no button to press twice', () => {
-      const t = text(rs({ step: 'checking', target: office, self: false }));
-      expect(t).toContain(P.removeChecking);
-      expect(t).not.toContain(P.removeButton);
+    it('while the touch is asked: only "Waiting for your touch…" with the gateway\'s spinner, in place of the buttons', () => {
+      const m = rs({ step: 'checking', target: office, self: false });
+      expect(m).toContain('data-testid="touch-wait"');
+      expect(m).toContain('av3-spin');
+      expect(text(m)).toContain(P.touchWait);
+      expect(text(m)).not.toContain(P.removeButton);
+      expect(text(m)).not.toContain(P.cancel);
+      expect(m).not.toContain('<button');
     });
 
     it('done: the new list', () => {
