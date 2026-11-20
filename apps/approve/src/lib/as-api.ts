@@ -153,6 +153,18 @@ export class AsApi {
     return this.go<unknown>('GET', `/api/profiles/${encodeURIComponent(profileId)}`);
   }
 
+  // ─── a computer's change to a connector login, confirmed here (plan 7 phone path, stage D3) ────────────────────────────
+
+  /** The open change requests this phone holds a wrap for, its own wrap only. */
+  confirmations(bearer: string) {
+    return this.go<{ requests?: unknown[] }>('GET', '/api/devices/confirmations', { bearer });
+  }
+
+  /** The phone's signed answer `{ confirmation, sig, check? }`. The first answer wins (409 after). */
+  answerConfirmation(requestId: string, body: { confirmation: unknown; sig: string; check?: unknown }, bearer: string) {
+    return this.go<{ status?: string }>('POST', `/api/devices/confirmations/${encodeURIComponent(requestId)}/answer`, { body, bearer });
+  }
+
   /** A signed decision (`POST /api/proposals/:id/(approve|reject|resolve|withdraw)`); a phone session is allowed to. */
   decide(proposalId: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw', body: unknown, bearer: string) {
     return this.go<Record<string, unknown>>('POST', `/api/proposals/${encodeURIComponent(proposalId)}/${route}`, { body, bearer });

@@ -14,6 +14,8 @@ import type { PageSessionDeps } from '../middleware/auth';
 import { createOsSignalHook } from '../lib/page-session';
 import { UnlockLimiter } from '../lib/unlock-limiter';
 import { type ChangeConfirmations, type LoginChangeGate, createLoginChangeGate, refusingGate } from '../lib/change-confirmation';
+import { PhoneConfirmations } from '../lib/phone-confirmation';
+import { createConfirmPhoneRouter } from './confirm-phone';
 import { createPasswordRouter } from './password';
 import { createInternalOsSignalRouter } from './internal-os-signal';
 import { createDeviceSetupRouter, createConnectCallbackRouter } from './device-setup';
@@ -230,6 +232,14 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin, alarm: device.alarm, recovery: device.recovery }));
     app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
     app.use('/auth', json, createDevicePairingRouter({ vault: o.vault, pageSession: o.pageSession, pairing: device.pairing }));
+    // A change to a connector login confirmed on the person's phone (plan 7 phone path): only where this computer has no check key.
+    app.use('/auth', json, createConfirmPhoneRouter({
+      vault: o.vault, pageSession: o.pageSession,
+      phone: new PhoneConfirmations({
+        vault: o.vault, store: device.store, client: device.client, readers: device.readers, confirmations: o.confirmations,
+        hasCheckKey: o.hasCheckKey, now: o.device?.now, log: (m) => console.log(m),
+      }),
+    }));
     app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.

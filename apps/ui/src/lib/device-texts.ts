@@ -94,6 +94,13 @@ export const T = {
   confirmTouchFailed: 'Touch ID did not work this time. Nothing changed. Try again.', // 82
   confirmTouchBroken: 'Touch ID no longer works for this computer. You can reset it with your password and your recovery code.', // 83
   confirmExpired: 'This confirmation has run out. Make the change again.', // 74
+  // The phone path (plan 7, stage D3): on a computer without Touch ID the phone is asked first. All DRAFT.
+  confirmOnPhone: 'Confirm this change on your phone.', // DRAFT new
+  confirmOpenPhone: 'Open Suveren on your phone. The change waits there.', // DRAFT new (plan 20.13: until notifications ship)
+  confirmPhoneWaiting: 'Waiting for your phone…', // DRAFT new
+  confirmUsePassword: 'Use the password instead', // DRAFT new
+  confirmPhoneDenied: 'Not allowed on your phone. Nothing changed.', // DRAFT new (mockup E3)
+  confirmPhoneInvalid: 'The answer from your phone could not be checked. Nothing changed. Try again; if it repeats, tell support.', // DRAFT new
 
   // Screen 6: errors
   wrongPassword: 'Wrong password.', // 86

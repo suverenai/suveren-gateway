@@ -285,6 +285,69 @@ describe('confirm a change to a login (screen 5)', () => {
     }
   });
 
+  it('no check key and a phone: the phone is asked first; its confirmation settles with the request', async () => {
+    const { client, calls } = fakeClient({
+      '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': { body: req },
+      '/auth/confirm/phone': { body: { ok: true, expiresAt: 999, phones: ['My iPhone'] } },
+      '/auth/confirm/phone/R1': [{ body: { ok: true, status: 'waiting' } }, { body: { ok: true, status: 'confirmed' } }],
+    });
+    const settle = vi.fn();
+    const d = new ConfirmDriver({ client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle });
+    await d.begin();
+    expect(d.get()).toMatchObject({ phase: 'asking', mode: 'phone', phoneUntil: 999 });
+    expect(d.get().error).toBeUndefined();
+    expect(JSON.parse(calls.find(c => c.path === '/auth/confirm/phone')!.init!.body as string)).toEqual({ request_id: 'R1' });
+    await d.poll();
+    expect(settle).not.toHaveBeenCalled();
+    await d.poll();
+    expect(settle).toHaveBeenCalledWith('R1');
+  });
+
+  it('no phone in the chain: the password, without a word', async () => {
+    for (const code of ['no_phone', 'not_set_up', 'change_not_describable', 'bad_request']) {
+      const { client } = fakeClient({ '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': { body: req }, '/auth/confirm/phone': refuse(409, code) });
+      const d = new ConfirmDriver({ client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle: vi.fn() });
+      await d.begin();
+      expect(d.get(), code).toMatchObject({ mode: 'password' });
+      expect(d.get().error, code).toBeUndefined();
+    }
+  });
+
+  it('denied, run out, or an answer that does not verify: said in words, nothing settles', async () => {
+    const cases: Array<[string, string]> = [['denied', T.confirmPhoneDenied], ['expired', T.confirmExpired], ['invalid', T.confirmPhoneInvalid]];
+    for (const [status, text] of cases) {
+      const { client } = fakeClient({
+        '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': { body: req },
+        '/auth/confirm/phone': { body: { ok: true, expiresAt: 999, phones: ['My iPhone'] } }, '/auth/confirm/phone/R1': { body: { ok: true, status } },
+      });
+      const settle = vi.fn();
+      const d = new ConfirmDriver({ client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle });
+      await d.begin(); await d.poll();
+      expect(d.get().error, status).toBe(text);
+      expect(settle).not.toHaveBeenCalled();
+    }
+  });
+
+  it('"Use the password instead" withdraws the phone request and asks for a fresh one; cancel withdraws it too', async () => {
+    const { client, calls } = fakeClient({
+      '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': [{ body: req }, { body: { ok: true, request: { ...req.request, request_id: 'R2' } } }],
+      '/auth/confirm/phone': { body: { ok: true, expiresAt: 999, phones: ['My iPhone'] } }, '/auth/confirm/phone/R1': { body: { ok: true } },
+      '/auth/confirm': { body: { ok: true, confirmation: 'R2' } },
+    });
+    const settle = vi.fn();
+    const d = new ConfirmDriver({ client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle });
+    await d.begin();
+    await d.usePassword();
+    expect(d.get()).toMatchObject({ mode: 'password' });
+    expect(calls.some(c => c.path === '/auth/confirm/phone/R1' && c.init?.method === 'DELETE')).toBe(true);
+    await d.withPassword('pw');
+    expect(settle).toHaveBeenCalledWith('R2');
+    const second = fakeClient({ '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': { body: req }, '/auth/confirm/phone': { body: { ok: true, expiresAt: 999, phones: [] } }, '/auth/confirm/phone/R1': { body: { ok: true } } });
+    const d2 = new ConfirmDriver({ client: second.client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle: vi.fn() });
+    await d2.begin(); d2.cancel();
+    expect(second.calls.some(c => c.path === '/auth/confirm/phone/R1' && c.init?.method === 'DELETE')).toBe(true);
+  });
+
   it('cancel settles with nothing', async () => {
     const { client } = fakeClient({ '/auth/platform/capabilities': { body: {} }, '/auth/confirm/request': { body: req } });
     const settle = vi.fn();

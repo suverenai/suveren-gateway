@@ -6,6 +6,9 @@ import type { Proposal } from '@suveren/approval-card/types';
 import { P, blockedText } from '../texts';
 import type { CardCheck } from '../lib/card-checks';
 import { Notice } from './Frame';
+import { ageLabel } from '@suveren/approval-card/lib/core-objects';
+import type { ChangeItem } from '../lib/change-requests';
+import { changeTitle } from './ChangeCard';
 
 const NO_MANIFESTS: never[] = [];
 const NO_TITLES: Record<string, string> = {};
@@ -13,6 +16,9 @@ const NO_TITLES: Record<string, string> = {};
 export interface RequestsScreenProps {
   /** Null while the first read is out. */
   proposals: Proposal[] | null;
+  /** A computer's change requests waiting for this phone (stage D3), shown above the requests. */
+  changes?: ChangeItem[];
+  onOpenChange?: (requestId: string) => void;
   error?: string;
   nowMs: number;
   onOpen: (id: string) => void;
@@ -26,13 +32,32 @@ export function RequestsScreen(p: RequestsScreenProps) {
       <p>{P.welcomeReadOnly}</p>
       {p.error && <Notice kind="error">{p.error}</Notice>}
       {p.proposals === null && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
-      {p.proposals !== null && p.proposals.length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
+      {p.proposals !== null && p.proposals.length === 0 && (p.changes ?? []).length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
       <div className="dash-rows" data-testid="request-list">
+        {(p.changes ?? []).map((c) => (
+          <ChangeRow key={c.requestId} item={c} nowMs={p.nowMs} onOpen={() => p.onOpenChange?.(c.requestId)} />
+        ))}
         {(p.proposals ?? []).map((pr) => (
           <ApprovalRow key={pr.id} proposal={pr} manifests={NO_MANIFESTS} titles={NO_TITLES} onOpen={() => p.onOpen(pr.id)} />
         ))}
       </div>
       <button type="button" className="btn btn-secondary btn-full" onClick={p.onRefresh}>{P.listRefresh}</button>
+    </div>
+  );
+}
+
+/** A change request in the list (mockup E1): the gateway's row, typed "Change", the connector as the area, its age. */
+export function ChangeRow({ item, nowMs, onOpen }: { item: ChangeItem; nowMs: number; onOpen: () => void }) {
+  return (
+    <div className="av3-row" data-testid="change-row-item" data-request-id={item.requestId}>
+      <button type="button" className="appr-item-head av3-row-head" onClick={onOpen}>
+        <span className="av3-type">
+          <b>{P.changeRowType}</b>
+          <span className="av3-area">{item.view.connector}</span>
+          <span>{ageLabel(item.createdAt * 1000, nowMs)}</span>
+        </span>
+        <span className="av3-row-title">{changeTitle(item)}</span>
+      </button>
     </div>
   );
 }

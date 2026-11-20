@@ -155,6 +155,10 @@ export class DeviceClient {
   confirmRequest(kind: 'replace' | 'remove', name: string, change: unknown) { return this.go<{ request: ChangeRequest }>('/auth/confirm/request', json({ kind, name, change })); }
   confirmWithPassword(requestId: string, password: string) { return this.go<{ confirmation: string }>('/auth/confirm', json({ request_id: requestId, password })); }
   confirmWithTouch(requestId: string) { return this.go<{ confirmation: string }>('/auth/confirm/check', json({ request_id: requestId })); }
+  /** The phone path (plan 7): send the request to the person's phones; then read what became of it; or withdraw it. */
+  confirmViaPhone(requestId: string) { return this.go<{ expiresAt: number; phones: string[] }>('/auth/confirm/phone', json({ request_id: requestId })); }
+  confirmPhoneStatus(requestId: string) { return this.go<{ status: 'waiting' | 'confirmed' | 'denied' | 'expired' | 'invalid' }>(`/auth/confirm/phone/${encodeURIComponent(requestId)}`); }
+  confirmPhoneCancel(requestId: string) { return this.go<Record<string, never>>(`/auth/confirm/phone/${encodeURIComponent(requestId)}`, { method: 'DELETE' }); }
 }
 
 export const deviceClient = new DeviceClient();

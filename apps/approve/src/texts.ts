@@ -168,6 +168,25 @@ export const P = {
   removeListAfter: SP.admitListTitle, // shared (approval-card pairing-texts): "Your devices after this:"
   removeButton: 'Remove with your touch', // DRAFT new (DEC-85: "... with your touch")
   touchWait: 'Waiting for your touch…', // DRAFT (Andreas 2026-11-20: the only line while the system's touch window comes)
+  // A computer's change to a connector login, confirmed here (stage D3, mockup E1–E3; plan 7 phone path)
+  changeRowType: 'Change', // DRAFT new (mockup E1)
+  changeRemoveTitle: (name: string) => `Remove the login of "${name}"`, // DRAFT new (mockup E1; gateway changeSentence)
+  changeReplaceTitle: (name: string) => `Replace the login of "${name}"`, // DRAFT new (gateway changeSentence)
+  changeConfirmTitle: 'Confirm this change', // = T.confirmTitle (70)
+  changeAskedBy: (computer: string) => `Asked by ${computer}.`, // DRAFT new (mockup E2)
+  changeRemoveEffect: (name: string) => `Your AI can no longer use ${name}.`, // DRAFT new (mockup E2)
+  changeReplaceEffect: 'Your AI then works with the new login.', // DRAFT new
+  changeFieldSecret: 'changes (the value is not shown)', // DRAFT new
+  changeScope: 'This confirms this one change only.', // = T.confirmScope (72)
+  changeRunsOut: (left: string) => `Runs out in ${left}.`, // DRAFT new (mockup E2)
+  changeConfirmButton: 'Confirm with your touch', // DRAFT new (DEC-85: "... with your touch")
+  changeDeny: 'Do not allow', // DRAFT new (mockup E2)
+  changeConfirming: 'Confirming…', // DRAFT (approved mockup v6: after the touch)
+  changeConfirmed: 'Confirmed', // DRAFT (approved mockup v6: the gateway's result stamp)
+  changeRecorded: 'Recorded', // DRAFT (approved mockup v6: no ticket line)
+  changeNext: (title: string) => `Next: ${title}`, // DRAFT (approved mockup v6: during the 1.5 s auto-advance)
+  changeNotAllowed: (computer: string, name: string) => `Not allowed. ${computer} keeps the login of "${name}".`, // DRAFT new (mockup E3)
+  changeExpired: 'This confirmation has run out. Make the change again.', // = T.confirmExpired (74)
   removeDone: (label: string): string => `${label} was removed.`, // DRAFT new
   removeListNow: SP.admitDoneList, // shared (approval-card pairing-texts): "Your devices now:"
   removedSelf: 'This phone was removed from your account.', // DRAFT new
@@ -321,6 +340,8 @@ const ERRORS: Record<string, string> = {
   rotate_chain_moved: 'Your list of devices changed meanwhile. Nothing changed. Start again.', // DRAFT new
   list_not_refreshed: 'The list could not be refreshed. Look at it again in a moment.', // DRAFT new
   remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
+  // Confirming a computer's change (stage D3)
+  change_answered: 'This change was already answered on another of your devices. Nothing changed here.', // DRAFT new
 };
 
 export function errorText(code: string | undefined): string {

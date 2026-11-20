@@ -10,7 +10,7 @@
 import {
   b64uDecode, b64uEncode, buildDeviceRecord, buildEntry, comparisonCode, concat, deriveRootKey, ecdsaRawToDer, ed25519PublicKey,
   encodeCoseEc2, encodePairingQr, entryHash, entrySignedBytes, generateRecoveryCode, hashBytes, jcs, keyIdOf, objectHash, pairingCommitment,
-  randomBytes, sha256, signEd25519, signEntry, utf8, verifyChain, verifyCheck, verifyDecision, verifySignin,
+  randomBytes, sha256, signEd25519, signEntry, signedBytes, utf8, verifyChain, verifyCheck, verifyDecision, verifyEd25519, verifySignin, b64uBytes,
   type ChainEntry, type ChainState, type Decision, type DeviceRecord, type PairingMessage, type PairingQr, type RootKey, type WebauthnProof,
 } from '@hap/core/device-keys';
 import type { CheckDevice, PasskeyRegistration } from './check';
@@ -76,6 +76,10 @@ export class FakeAs implements Transport {
   /** Decisions the server accepted. */
   decisions: Array<{ id: string; route: string; body: Json; decision: Decision }> = [];
   private seenNonces = new Set<string>();
+
+  // ─── stage D3: a computer's change requests, carried like the real server (suveren-as change-confirmations.ts) ───
+  /** Change requests by id: what the gateway sent and the phone's answer. */
+  confirmations = new Map<string, Json>();
   /** The next decision call finds the session over (the server's own limit): 401 SESSION_EXPIRED, session gone. */
   expireSessionOnDecision = false;
   /** Refuse the next decision call with this code. */
@@ -123,6 +127,73 @@ export class FakeAs implements Transport {
     return bearer ? this.sessions.get(bearer) ?? null : null;
   }
 
+  /** The change-request routes, with the real server's rules (only the session kinds, wraps for the person's phones, signatures). */
+  private async confirmationRoute(method: Method, id: string | undefined, answer: boolean, body: Json, bearer?: string): Promise<Reply> {
+    const keyId = this.bearerKey(bearer);
+    if (!keyId) return refusal(401, 'DEVICE_SESSION_REQUIRED');
+    const state = await this.state();
+    const me = state.devices[keyId];
+    if (!me || me.removed_seq !== null) return refusal(401, 'DEVICE_SESSION_REQUIRED');
+    const sigOk = async (signPub: string, obj: object, sig: unknown) => {
+      try { return typeof sig === 'string' && await verifyEd25519(b64uBytes(signPub, 32, 'sign_pub'), signedBytes(obj), b64uBytes(sig, 64, 'sig')); } catch { return false; }
+    };
+    for (const [rid, row] of this.confirmations) if (row.expires_at <= this.now()) this.confirmations.delete(rid);
+    if (method === 'POST' && !id) {
+      if (me.kind !== 'gateway') return refusal(403, 'DEVICE_KIND_NOT_ALLOWED');
+      const env = body.envelope as Json;
+      if (!env || env.gateway_key_id !== keyId || env.kind !== 'change-request') return refusal(403, 'NOT_THIS_GATEWAY');
+      if (!(await sigOk(me.sign_pub, env, body.sender_sig))) return refusal(400, 'BAD_SIGNATURE');
+      const wraps = body.device_keys as Record<string, Json>;
+      for (const k of Object.keys(wraps ?? {})) {
+        const d = state.devices[k];
+        if (!d || d.removed_seq !== null || d.kind !== 'approve-app') return refusal(403, 'NOT_YOUR_PHONE');
+      }
+      if (this.confirmations.has(body.request_id)) return refusal(409, 'REQUEST_EXISTS');
+      const row = { ...body, gateway_key_id: keyId, created_at: this.now(), expires_at: this.now() + 900, answer: null };
+      this.confirmations.set(body.request_id, row);
+      return { status: 201, body: { request_id: body.request_id, expires_at: row.expires_at } };
+    }
+    if (method === 'GET' && !id) {
+      if (me.kind !== 'approve-app') return refusal(403, 'DEVICE_KIND_NOT_ALLOWED');
+      const requests = [...this.confirmations.values()].filter((r) => !r.answer && r.device_keys[keyId]).map((r) => ({
+        request_id: r.request_id, gateway_key_id: r.gateway_key_id, envelope: r.envelope, sender_sig: r.sender_sig, ciphertext: r.ciphertext,
+        device_keys: { [keyId]: r.device_keys[keyId] }, created_at: r.created_at, expires_at: r.expires_at, status: 'waiting',
+      }));
+      return { status: 200, body: { requests } };
+    }
+    const row = id ? this.confirmations.get(id) : undefined;
+    if (method === 'GET' && id) {
+      if (!row) return refusal(404, 'NO_REQUEST');
+      if (me.kind === 'gateway') {
+        if (row.gateway_key_id !== keyId) return refusal(404, 'NO_REQUEST');
+        return { status: 200, body: { request_id: id, status: row.answer ? 'answered' : 'waiting', expires_at: row.expires_at, ...(row.answer ? { answer: row.answer } : {}) } };
+      }
+      if (!row.device_keys[keyId]) return refusal(404, 'NO_REQUEST');
+      return { status: 200, body: { ...row, device_keys: { [keyId]: row.device_keys[keyId] }, answer: undefined } };
+    }
+    if (method === 'DELETE' && id) {
+      if (me.kind !== 'gateway') return refusal(403, 'DEVICE_KIND_NOT_ALLOWED');
+      if (row && row.gateway_key_id === keyId) this.confirmations.delete(id);
+      return { status: 204, body: null };
+    }
+    if (method === 'POST' && id && answer) {
+      if (me.kind !== 'approve-app') return refusal(403, 'DEVICE_KIND_NOT_ALLOWED');
+      if (!row || !row.device_keys[keyId]) return refusal(404, 'NO_REQUEST');
+      const c = body.confirmation as Json;
+      if (!c || c.request_id !== id || c.gateway_key_id !== row.gateway_key_id) return refusal(400, 'WRONG_REQUEST');
+      if (c.key_id !== keyId) return refusal(403, 'NOT_THIS_DEVICE');
+      if (!(await sigOk(me.sign_pub, c, body.sig))) return refusal(400, 'BAD_SIGNATURE');
+      if (c.decision === 'allow') {
+        if (!me.check || body.check === undefined) return refusal(400, 'CHECK_REQUIRED');
+        if (!(await verifyCheck(me.check, await objectHash(c), body.check))) return refusal(400, 'BAD_CHECK');
+      }
+      if (row.answer) return refusal(409, 'ALREADY_ANSWERED');
+      row.answer = { confirmation: c, sig: body.sig, ...(body.check !== undefined ? { check: body.check } : {}) };
+      return { status: 201, body: { status: 'answered' } };
+    }
+    return refusal(404, 'NOT_FOUND');
+  }
+
   /** Like the network: what goes in and what comes out is JSON text, so no object is shared between the two sides. */
   /** While set, a chain append waits for it (the request is on its way). */
   appendGate: Promise<void> | null = null;
@@ -151,6 +222,8 @@ export class FakeAs implements Transport {
     const mb = p.match(/^\/api\/devices\/pairings\/([^/]+)(\/messages|\/passkey)?$/);
     const pr = p.match(/^\/api\/proposals\/([^/]+)$/);
 
+    const cf = p.match(/^\/api\/devices\/confirmations(?:\/([^/]+)(\/answer)?)?$/);
+    if (cf) return this.confirmationRoute(method, cf[1], Boolean(cf[2]), body, opts.bearer);
     if (route === 'GET /api/as/pubkey') return { status: 200, body: { publicKey: this.keyHex } };
     if (route === 'POST /api/as/challenge') {
       const out: Json = { typ: 'hap-as-challenge', nonce: body.nonce, issuedAt: this.now() };

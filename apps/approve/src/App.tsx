@@ -38,6 +38,8 @@ import {
 } from '@suveren/approval-card/lib/approval-panel';
 import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { OpenSessionScreen } from './screens/OpenSession';
+import { ChangeConfirmDriver, ChangeRequestReader, type ChangeItem } from './lib/change-requests';
+import { ChangeCard, changeTitle, useNowSeconds } from './screens/ChangeCard';
 import { useDriver } from './screens/Frame';
 
 /** How often an open list is read again (a timer; it never counts as use of the session). */
@@ -244,12 +246,19 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   const timers = useRef<number[]>([]);
   useEffect(() => () => { timers.current.forEach((t) => window.clearTimeout(t)); }, []);
 
+  // A computer's change requests waiting for this phone (stage D3): read and checked beside the proposals, in the same panel.
+  const changeReader = useMemo(() => new ChangeRequestReader({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const [changes, setChanges] = useState<ChangeItem[]>([]);
+  const changesRef = useRef<ChangeItem[]>([]);
+  changesRef.current = changes;
+
   const load = useCallback(async (byPerson: boolean) => {
-    const r = await rt.reader.list(byPerson);
+    const [r, c] = await Promise.all([rt.reader.list(byPerson), changeReader.list()]);
+    if (c.ok) setChanges(c.items);
     if (r.ok) { setProposals(r.data); setError(undefined); return; }
     if (r.code === 'session_ended') { onEnded(); return; }
     setError(r.code === 'as_unreachable' ? errorText('as_unreachable') : P.listFailed);
-  }, [rt, onEnded]);
+  }, [rt, onEnded, changeReader]);
 
   useEffect(() => {
     void load(true);
@@ -261,8 +270,11 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     void loadAutoOpen(rt.kv).then((v) => { setAutoOpenState(v); setSettingRead(true); });
   }, [rt]);
 
-  // The panel's order is the gateway's: oldest first. The list screen shows newest first.
-  const ids = useMemo(() => [...(proposals ?? [])].sort((a, b) => a.createdAt - b.createdAt).map((p) => p.id), [proposals]);
+  // The panel's order is the gateway's: oldest first. The list screen shows newest first. A change request is `chg:<request id>`.
+  const ids = useMemo(() => [
+    ...(proposals ?? []).map((p) => ({ id: p.id, at: p.createdAt })),
+    ...changes.map((c) => ({ id: `${CHG}${c.requestId}`, at: c.createdAt })),
+  ].sort((a, b) => a.at - b.at).map((x) => x.id), [proposals, changes]);
   const idsRef = useRef(ids);
   idsRef.current = ids;
   const hold = settling !== null;
@@ -287,9 +299,14 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     setCards((c) => (c[id] ? { ...c, [id]: { proposal: c[id].proposal, check } } : c));
   }, [rt, onEnded]);
 
-  const shownCard = shownId ? cards[shownId] : undefined;
+  const shownCard = shownId && !shownId.startsWith(CHG) ? cards[shownId] : undefined;
+  // A change request stays on screen while it settles, even after it left the list.
+  const [heldChange, setHeldChange] = useState<ChangeItem | null>(null);
+  const shownChange = shownId && shownId.startsWith(CHG)
+    ? changes.find((c) => `${CHG}${c.requestId}` === shownId) ?? (heldChange && `${CHG}${heldChange.requestId}` === shownId ? heldChange : null)
+    : null;
   useEffect(() => {
-    if (chrome.panel && shownId && !cards[shownId]) void openCard(shownId);
+    if (chrome.panel && shownId && !shownId.startsWith(CHG) && !cards[shownId]) void openCard(shownId);
   }, [chrome.panel, shownId, cards, openCard]);
 
   const later = useCallback(() => {
@@ -301,6 +318,7 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     const s = settlingRef.current;
     if (!s || s.id !== id) return;
     settlingRef.current = null;
+    setHeldChange(null);
     const { next } = afterDecision(s.before, id);
     setCards((c) => { const { [id]: _gone, ...rest } = c; return rest; });
     if (next) setCurrentId(next);
@@ -334,9 +352,19 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
   }, [rt, cards]);
 
+  // A change request settled: a confirmation shows the stamp for the gateway's time, then the next opens; "Not allowed", "Run out" or a
+  // failure stays until Next / Close (the gateway's rule for a refused approval).
+  const changeSettled = useCallback((id: string, item: ChangeItem, outcome: 'done' | 'stay') => {
+    setHeldChange(item);
+    handleDecided(id);
+    handleOutcome(id, outcome === 'done' ? 'done' : 'refused');
+  }, [handleDecided, handleOutcome]);
+
   if (chrome.panel) {
     const before = settling ? settling.before : ids;
     const pos = positionOf(before, shownId);
+    const nextId = shownId ? afterDecision(before, shownId).next : null;
+    const nextChange = nextId && nextId.startsWith(CHG) ? changesRef.current.find((c) => `${CHG}${c.requestId}` === nextId) : undefined;
     return (
       <RequestPanel
         position={pos}
@@ -349,6 +377,18 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
         onToggleAuto={toggleAuto}
         locked={busy}
         error={error}
+        other={shownId && shownChange ? {
+          key: shownId,
+          node: (
+            <ChangeSlot
+              key={shownId} rt={rt} item={shownChange} onBusyChange={setBusy}
+              onSettled={(outcome) => changeSettled(shownId, shownChange, outcome)}
+              dismissLabel={resultDismissLabel(afterDecision(settling?.before ?? ids, shownId).next !== null)}
+              onDismiss={() => finishSettling(shownId)}
+              nextTitle={nextChange ? changeTitle(nextChange) : null}
+            />
+          ),
+        } : null}
         shown={shownId && shownCard ? {
           proposal: shownCard.proposal,
           card: {
@@ -370,8 +410,40 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   return (
     <RequestsScreen
       proposals={proposals} error={error} nowMs={Date.now()}
+      changes={changes}
+      onOpenChange={(rid) => { setCurrentId(`${CHG}${rid}`); setPanel((p) => ({ ...p, open: true, owed: false })); }}
       onOpen={(id) => { setCurrentId(id); setPanel((p) => ({ ...p, open: true, owed: false })); }}
       onRefresh={() => void load(true)}
+    />
+  );
+}
+
+/** The panel's id of a change request: kept apart from proposal ids. */
+const CHG = 'chg:';
+
+/** One change request's card with its driver (stage D3). Locks the panel's head while the touch, the sending and the stamp are on. */
+function ChangeSlot({ rt, item, onBusyChange, onSettled, dismissLabel, onDismiss, nextTitle }: {
+  rt: Rt; item: ChangeItem; onBusyChange: (busy: boolean) => void; onSettled: (outcome: 'done' | 'stay') => void;
+  dismissLabel: string; onDismiss: () => void; nextTitle: string | null;
+}) {
+  // One driver per request: a list refresh hands over a new object for the same request, which must not reset a touch in progress.
+  const driver = useMemo(() => new ChangeConfirmDriver({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now, check: rt.check }, item), [rt, item.requestId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const state = useDriver(driver);
+  const now = useNowSeconds(rt.now);
+  const locked = state.step === 'touch' || state.step === 'sending' || state.step === 'confirmed';
+  useEffect(() => { onBusyChange(locked); }, [locked, onBusyChange]);
+  useEffect(() => () => onBusyChange(false), [onBusyChange]);
+  const settledRef = useRef(false);
+  useEffect(() => {
+    if (settledRef.current) return;
+    if (state.step === 'confirmed') { settledRef.current = true; onSettled('done'); }
+    else if (state.step === 'denied' || state.step === 'expired' || state.step === 'failed') { settledRef.current = true; onSettled('stay'); }
+  }, [state.step, onSettled]);
+  return (
+    <ChangeCard
+      item={item} state={state} nowSeconds={now}
+      onConfirm={() => void driver.confirm()} onDeny={() => void driver.deny()} onCancelTouch={() => driver.cancelTouch()}
+      dismissLabel={dismissLabel} onDismiss={onDismiss} nextTitle={nextTitle}
     />
   );
 }

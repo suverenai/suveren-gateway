@@ -13,10 +13,12 @@ export interface ConfirmChangeProps {
   onPassword: (password: string) => void;
   onTouch: () => void;
   onCancel: () => void;
+  /** Phone mode: switch to the unlock password (the phone's request is withdrawn). */
+  onUsePassword?: () => void;
 }
 
 /** Screen 5: confirm ONE change to a connector login, with Touch ID (computers that have a check key) or the password. */
-export function ConfirmChange({ state, displayName, onPassword, onTouch, onCancel }: ConfirmChangeProps) {
+export function ConfirmChange({ state, displayName, onPassword, onTouch, onCancel, onUsePassword }: ConfirmChangeProps) {
   const [password, setPassword] = useState('');
   const busy = state.phase === 'busy' || state.phase === 'starting';
   return (
@@ -29,7 +31,19 @@ export function ConfirmChange({ state, displayName, onPassword, onTouch, onCance
           <div style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>{T.confirmScope}</div>
         </div>
         {state.error && <Notice kind="error">{state.error}</Notice>}
-        {state.mode === 'touch' ? (
+        {state.mode === 'phone' ? (
+          <div data-testid="confirm-phone">
+            <p style={{ margin: '0 0 0.5rem' }}><strong>{T.confirmOnPhone}</strong></p>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', margin: '0 0 0.75rem' }}>{T.confirmOpenPhone}</p>
+            {state.phoneUntil !== undefined && (
+              <div className="av3-stamp av3-stamp-wait" role="status" data-testid="confirm-phone-waiting">
+                <span className="av3-spin" aria-hidden="true" />
+                {T.confirmPhoneWaiting}
+              </div>
+            )}
+            {onUsePassword && <button className="btn btn-secondary btn-full" onClick={onUsePassword} data-testid="confirm-use-password" style={{ marginTop: '0.75rem' }}>{T.confirmUsePassword}</button>}
+          </div>
+        ) : state.mode === 'touch' ? (
           <>
             <button className="btn btn-primary btn-full btn-lg" onClick={onTouch} disabled={busy}>{T.confirmWithTouch}</button>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-tertiary)', marginTop: '0.75rem' }}>{T.confirmReadTouch}</p>
@@ -57,7 +71,14 @@ function ConfirmRun({ ask, settle, client, names }: { ask: ConfirmAsk; settle: (
   const driver = useMemo(() => new ConfirmDriver({ client, ask, settle }), [client, ask, settle]);
   const state = useDriver(driver);
   useEffect(() => { void driver.begin(); }, [driver]);
-  return <ConfirmChange state={state} displayName={names[ask.name]} onPassword={p => void driver.withPassword(p)} onTouch={() => void driver.withTouch()} onCancel={() => driver.cancel()} />;
+  // Phone mode: ask what became of the request every two seconds while it waits.
+  const waitingOnPhone = state.mode === 'phone' && state.phoneUntil !== undefined && state.phase === 'asking';
+  useEffect(() => {
+    if (!waitingOnPhone) return undefined;
+    const t = window.setInterval(() => void driver.poll(), 2000);
+    return () => window.clearInterval(t);
+  }, [driver, waitingOnPhone]);
+  return <ConfirmChange state={state} displayName={names[ask.name]} onPassword={p => void driver.withPassword(p)} onTouch={() => void driver.withTouch()} onCancel={() => driver.cancel()} onUsePassword={() => void driver.usePassword()} />;
 }
 
 /**
