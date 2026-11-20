@@ -17,6 +17,7 @@ import { splitTool, systemDisplayName, type ToolDisplay } from '@suveren/approva
 import type { IntegrationManifest, Proposal } from '../lib/sp-client';
 import { outcomeAfterView, refusedAfterView, type OutcomeKindLabel } from '@suveren/approval-card/lib/reject-outcome';
 import { useProposalContent, useDecryptedNote } from '@suveren/approval-card/lib/use-proposal-content';
+import { useArchivedProposalArgs } from '../lib/use-archived-proposal-args';
 
 type CardStatus = 'pending' | 'committed' | 'executed' | 'rejected' | 'expired' | 'refused';
 
@@ -205,14 +206,19 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
   // wired through onContentState). A receipt (ticket) item never has this —
   // its "What was done" always reads the local archive (TicketWhatWasDone).
   const content = useProposalContent(isProposal ? item.proposal : { toolArgs: undefined, content: undefined });
-  const args = isProposal ? content.toolArgs : null;
+  // A decided proposal this gateway executed: its approved toolArgs from the
+  // local archive first — the AS deletes the content once the ticket is
+  // issued (DEC-22). No local copy → the AS copy as before (which may now be
+  // empty, and then no arguments show).
+  const archived = useArchivedProposalArgs(isProposal && status !== 'pending' ? item.proposal.id : null);
+  const args = isProposal ? (archived ?? content.toolArgs) : null;
   const executionContext = isProposal ? item.proposal.executionContext : item.receipt.executionContext;
   const cumulative = !isProposal ? item.receipt.cumulativeState : null;
 
   // Links the reviewer can open. This is the card review mode actually uses —
   // ApproverProposalCard is only for above-cap approvals — so a link wired only
   // there never reaches the person deciding.
-  const inspectLinks = isProposal && content.toolArgs ? resolveProposalLinks(proposalLinks, content.toolArgs) : [];
+  const inspectLinks = isProposal && args ? resolveProposalLinks(proposalLinks, args) : [];
   const ctxEntries = Object.entries(executionContext ?? {});
   // Test setup: the delegation profile, OR a setup__* tool.
   const testSetup = profileIdentity(item.profileId).testSetup || isTestSetupAction(toolFull);

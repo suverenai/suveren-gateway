@@ -489,12 +489,33 @@ export async function getTicketContent(ticketId: string): Promise<{
   }>;
 }
 
-/** UI spec §13.4 — automatic tickets' headline values, keyed by ticket id. */
-export async function getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+/**
+ * UI spec §13.4 — ticket headline values from this gateway's archive, keyed by
+ * ticket id: `headlines` for automatic tickets (what was sent), `approved` for
+ * review-path tickets (the approved toolArgs archived at execution).
+ */
+export async function getTicketHeadlines(): Promise<{
+  headlines: Record<string, Record<string, unknown>>;
+  approved: Record<string, Record<string, unknown>>;
+}> {
   const res = await fetch(`${MCP_BASE}/internal/evidence/headlines`, { headers: internalHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch ticket headlines: ${res.status}`);
-  const data = (await res.json()) as { headlines?: Record<string, Record<string, unknown>> };
-  return data.headlines ?? {};
+  const data = (await res.json()) as {
+    headlines?: Record<string, Record<string, unknown>>;
+    approved?: Record<string, Record<string, unknown>>;
+  };
+  return { headlines: data.headlines ?? {}, approved: data.approved ?? {} };
+}
+
+/** The approved toolArgs of a proposal this gateway executed, from its archive; `null` = no local copy. */
+export async function getArchivedProposalArgs(proposalId: string): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${MCP_BASE}/internal/evidence/proposal/${encodeURIComponent(proposalId)}`, {
+    headers: internalHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch archived proposal: ${res.status}`);
+  const data = (await res.json()) as { toolArgs?: Record<string, unknown> };
+  return data.toolArgs ?? null;
 }
 
 // ─── Report (evidence-backed reports) ────────────────────────────────────

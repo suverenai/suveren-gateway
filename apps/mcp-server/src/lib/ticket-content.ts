@@ -108,3 +108,41 @@ export function headlineArgs(entries: ArchivedReceipt[]): Record<string, Record<
   }
   return out;
 }
+
+/**
+ * The values an APPROVED (review-path) ticket's headline is built from: the
+ * toolArgs of the proposal this gateway executed, as archived at execution
+ * (the decrypted copy — commitments.ts archives `{ ...proposal, toolArgs }`).
+ * The Authority Server deletes a proposal's content once its ticket is issued
+ * (DEC-22 retention), so after that this archive is the only place on this
+ * device that still holds what the approver saw. Keyed by ticket id; trimmed
+ * like the automatic map. An entry without object toolArgs is left out, and
+ * the UI then shows the plain past-tense label.
+ */
+export function approvedHeadlineArgs(entries: ArchivedReceipt[]): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const e of entries) {
+    const id = (e.receipt as { id?: unknown })?.id;
+    if (typeof id !== 'string' || !e.proposal) continue;
+    const args = (e.proposal as { toolArgs?: unknown }).toolArgs;
+    if (args && typeof args === 'object' && !Array.isArray(args)) {
+      out[id] = trimForHeadline(args) as Record<string, unknown>;
+    }
+  }
+  return out;
+}
+
+/**
+ * The approved toolArgs of a proposal this gateway executed, as archived at
+ * execution (full, not trimmed) — for the decided-proposal card, whose AS
+ * copy loses its content once the ticket is issued (DEC-22). `null` when this
+ * device's archive has no execution of that proposal.
+ */
+export function archivedApprovedArgs(entries: ArchivedReceipt[], proposalId: string): Record<string, unknown> | null {
+  for (const e of entries) {
+    if (!e.proposal || (e.proposal as { id?: unknown }).id !== proposalId) continue;
+    const args = (e.proposal as { toolArgs?: unknown }).toolArgs;
+    if (args && typeof args === 'object' && !Array.isArray(args)) return args as Record<string, unknown>;
+  }
+  return null;
+}
