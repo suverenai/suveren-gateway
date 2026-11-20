@@ -120,7 +120,7 @@ interface Props {
  * A pending review-mode proposal: the approval card (UI spec §17). Decided
  * through the proposal's own workspace queue.
  */
-export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalLinks, currentUserId, mandateTitle, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: {
+export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalLinks, currentUserId, mandateTitle, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal }: {
   proposal: Proposal;
   manifests?: IntegrationManifest[];
   toolDisplay?: ToolDisplay;
@@ -133,6 +133,7 @@ export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalL
   onOutcome?: (outcome: ApprovalOutcome) => void;
   dismissLabel?: string;
   onDismissResult?: () => void;
+  nextProposal?: Proposal | null;
 }) {
   const { domain } = useAuth();
   return (
@@ -148,6 +149,7 @@ export function ReviewApprovalCard({ proposal, manifests, toolDisplay, proposalL
       onOutcome={onOutcome}
       dismissLabel={dismissLabel}
       onDismissResult={onDismissResult}
+      nextProposal={nextProposal}
       decide={(args) => decideInQueue(proposal, args, { activeDomain: domain, userId: currentUserId })}
       onDecided={(kind, result) => onDecided?.(proposal.id, kind, result)}
     />

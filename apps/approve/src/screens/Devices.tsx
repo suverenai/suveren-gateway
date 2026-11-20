@@ -1,35 +1,14 @@
 import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';
-import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
+import { DeviceRows } from '@suveren/approval-card/components/DeviceRows';
+import { WarnIcon } from '@suveren/approval-card/components/WarnIcon';
 import type { DeviceRow } from '../lib/chain-view';
 import { P } from '../texts';
 import { Notice, Screen, TouchWait, whenText } from './Frame';
 import type { RemoveState } from '../lib/remove-driver';
 
-/** The list of devices, from a chain this phone verified itself: the gateway's member rows (TileList), one per device. Labels are plain text. */
+/** The list of devices, from a chain this phone verified itself: the shared device rows (one implementation with the gateway page). */
 export function DeviceList({ rows, nowSeconds, onRemove }: { rows: Array<DeviceRow & { adding?: boolean }>; nowSeconds: number; onRemove?: (keyId: string) => void }) {
-  return (
-    <TileList testid="device-list">
-      {rows.map((r) => (
-        <TileRow
-          key={r.keyId}
-          testid="device-row"
-          mark={(r.label.trim()[0] ?? '?').toUpperCase()}
-          name={r.label}
-          detail={[
-            r.kind === 'gateway' ? P.devKindComputer : P.devKindPhone,
-            r.canGrant ? P.devCanConfirm : null,
-            r.adding ? null : P.devAdded(whenText(r.addedAt, nowSeconds)),
-            r.recent && !r.adding ? P.devRecent : null,
-          ].filter(Boolean).join(' · ')}
-          tag={r.adding ? P.admitNew : r.thisDevice ? P.devThisPhone : undefined}
-          strongTag
-          action={onRemove && !r.adding ? (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onRemove(r.keyId)} data-testid="device-remove">{P.devRemove}</button>
-          ) : undefined}
-        />
-      ))}
-    </TileList>
-  );
+  return <DeviceRows rows={rows} nowSeconds={nowSeconds} thisDeviceTag={P.devThisPhone} onRemove={onRemove} removeLabel={P.devRemove} />;
 }
 
 export interface DevicesScreenProps {
@@ -102,18 +81,30 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onCan
       const t = st.target;
       return (
         <Screen title={st.self ? P.removeSelfTitle : P.removeTitle(t.label)}>
-          {st.self ? <p>{P.removeSelfEffect}</p> : (
-            <>
-              <p>{t.kind === 'gateway' ? P.removeComputerEffect(t.label) : P.removePhoneEffect(t.label)}</p>
-              {t.kind === 'gateway' && <p>{P.removeLogins(t.label)}</p>}
-            </>
-          )}
+          {/* UI review (DEC-88): the device being removed at the top, what removing does in a warning box, the list after the
+              change, then the safe option above the destructive one, which names what it removes. */}
+          <div className="su-top" data-testid="removing">
+            <DeviceList rows={[t]} nowSeconds={nowSeconds} />
+          </div>
+          <div className="warn-box" data-testid="remove-warning">
+            <WarnIcon />
+            <div>
+              {st.self ? <p>{P.removeSelfEffect}</p> : (
+                <>
+                  <p>{t.kind === 'gateway' ? P.removeComputerEffect(t.label) : P.removePhoneEffect(t.label)}</p>
+                  {t.kind === 'gateway' && <p>{P.removeLogins(t.label)}</p>}
+                </>
+              )}
+            </div>
+          </div>
           {st.step === 'confirm' && (
             <>
               <p>{P.removeListAfter}</p>
               <DeviceList rows={st.after} nowSeconds={nowSeconds} />
-              <button type="button" className="btn btn-primary btn-full btn-lg" onClick={onConfirm} data-testid="remove-confirm">{P.removeButton}</button>
-              <button type="button" className="btn btn-ghost btn-full" onClick={onCancel}>{P.cancel}</button>
+              <div className="btns-stack">
+                <button type="button" className="btn btn-secondary" onClick={onCancel} data-testid="remove-cancel">{P.cancel}</button>
+                <button type="button" className="btn btn-outline-strong btn-lg" onClick={onConfirm} data-testid="remove-confirm">{P.removeButtonNamed(t.label, st.self)}</button>
+              </div>
             </>
           )}
           {st.step === 'checking' && (

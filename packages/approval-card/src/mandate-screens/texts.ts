@@ -66,6 +66,8 @@ export const S13 = {
   endNoTouch: 'You do not need Touch ID to end a mandate.', // 273
   endButton: 'End this mandate', // 274
   endKeep: 'Keep it', // 275
+  /** DRAFT (UI review, DEC-88): the destructive button names what ends. Replaces endButton on the screen. */
+  endButtonNamed: (profile: string): string => `End the mandate for ${profile}`,
   endActiveUntil: 'Active until', // (row label of 4a)
   endDone: (profile: string): string => `Ended. Your AI can no longer act under the mandate for ${profile}.`, // 276
   endAlready: 'This mandate was already ended.', // 277

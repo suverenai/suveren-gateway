@@ -27,16 +27,17 @@ describe('the Devices page', () => {
   const devices: DevicesAnswer = { rows: [row(), row({ keyId: 'k2', label: 'My iPhone', kind: 'approve-app', thisDevice: false, canGrant: true, addedAt: NOW - 86400 * 2, recent: true })], identityCode: '731422085561094233751234', origin: null, canGrant: true, hasRoom: true };
   const render = (d: DevicesAnswer | null, over: { error?: string } = {}) => html(<DevicesScreen devices={d} nowSeconds={NOW} onAddPhone={noop} onRefresh={noop} onBack={noop} {...over} />);
 
-  it('lists the devices with their kind, "confirms changes with a touch", when added, and this computer; the identity code in groups of four; Add a phone', () => {
+  it('lists the devices in two lines each (UI review, DEC-88): name with its tag ("This computer", "new"), then kind and when added; the identity code in groups of four; Add a phone', () => {
     const h = render(devices);
     const t = text(h);
     expect(t).toContain(PT.devicesTitle);
-    expect(t).toContain('Office Mac'); expect(t).toContain('My iPhone');
-    expect(t).toContain(PT.devKindComputer); expect(t).toContain(PT.devKindPhone);
-    expect(t).toContain(PT.devCanConfirm);
-    expect(t).toContain(PT.devThisComputer);
-    expect(t).toContain(PT.devRecent);
-    expect(t).toContain('2 days ago');
+    expect(t).toContain('Office Mac This computer Computer · added today');
+    expect(t).toContain('My iPhone new Phone · added 2 days ago');
+    expect(t).not.toContain(PT.devCanConfirm);
+    expect(t).not.toContain(PT.devRecent);
+    // The gateway page cannot remove a device: no Remove button and no "remove it" warning on the row.
+    expect(h).not.toContain('device-remove');
+    expect(h).not.toContain('row-warn');
     expect(t).toContain('7314 2208 5561 0942 3375 1234');
     expect(t).toContain(PT.devAddPhone);
     expect(h).not.toMatch(/<button[^>]*disabled[^>]*>Add a phone/);
@@ -46,7 +47,7 @@ describe('the Devices page', () => {
     const h = render(devices);
     expect(h).toContain('class="device-screen"');
     expect(h).toContain('class="ob-tile su-members"');
-    expect(h).toContain('class="su-m"');
+    expect(h).toContain('class="su-m su-dev"');
     expect(h).toContain('class="btn btn-primary btn-full btn-lg"');
   });
 

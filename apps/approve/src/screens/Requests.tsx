@@ -52,6 +52,8 @@ export interface RequestCardProps {
   onOutcome?: (outcome: ApprovalOutcome) => void;
   dismissLabel?: string;
   onDismissResult?: () => void;
+  /** What opens after this one (named on the result, as on the gateway). */
+  nextProposal?: Proposal | null;
 }
 
 /**
@@ -61,7 +63,7 @@ export interface RequestCardProps {
  * `alreadyDecided` is the card's own way to hide them. "Ask for changes" is left out: the phone has no key of anyone else's to seal the
  * note for.
  */
-export function RequestCard({ proposal, userId, check, decide, onDecided, onBusyChange, onOutcome, dismissLabel, onDismissResult }: RequestCardProps) {
+export function RequestCard({ proposal, userId, check, decide, onDecided, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal }: RequestCardProps) {
   const blocked = check !== null && !check.ok;
   // What the card draws is what this phone checked: the arguments only from the sealed content (the shared card never shows the server's plain
   // `toolArgs` beside sealed content, and here it is dropped as well), and the execution context only as REBUILT from them.
@@ -83,6 +85,7 @@ export function RequestCard({ proposal, userId, check, decide, onDecided, onBusy
       onOutcome={onOutcome}
       dismissLabel={dismissLabel}
       onDismissResult={onDismissResult}
+      nextProposal={nextProposal}
       topExtras={(
         <>
           {check === null && <Notice kind="info">{P.cardChecking}</Notice>}

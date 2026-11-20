@@ -12,6 +12,9 @@ export const SP = {
   devCanConfirm: 'confirms changes with a touch', // DRAFT
   devRecent: 'added in the last 14 days', // DRAFT
   devAdded: (when: string): string => `added ${when}`, // DRAFT
+  /** UI review (DEC-88): on the row of a device added in the last 14 days, where it can be removed. */
+  devAddedWarn: (when: string): string => `Added ${when}. If this was not you, remove it.`, // DRAFT
+  devRemove: 'Remove', // DRAFT
   devIdentity: 'Your identity code', // DRAFT
   devRefresh: 'Check the list again', // DRAFT
   whenToday: 'today', // DRAFT

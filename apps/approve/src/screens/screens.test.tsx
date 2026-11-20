@@ -146,13 +146,13 @@ describe('the phone screens (both widths use the same markup and the same tokens
   });
 
   describe('the device list', () => {
-    it('marks this phone, says what each device can do and how long ago it was added; labels are plain text', () => {
+    it('marks this phone, says each device\'s kind and when it was added, in two lines; labels are plain text', () => {
       const evil: DeviceRow = { ...rows[0], keyId: 'k9', label: '<img src=x onerror=alert(1)>' };
       const m = html(<DeviceList rows={[...rows, evil]} nowSeconds={NOW} />);
       expect(text(m)).toContain(P.devThisPhone);
       expect(text(m)).toContain(P.devKindComputer);
       expect(text(m)).toContain(P.devKindPhone);
-      expect(text(m)).toContain(P.devRecent);
+      expect(text(m)).not.toContain(P.devRecent);
       expect(m).not.toContain('<img');
       expect(m).toContain('&lt;img');
     });
@@ -296,6 +296,26 @@ describe('the phone screens (both widths use the same markup and the same tokens
     const me = rows[1];
     const rs = (state: Parameters<typeof RemoveScreen>[0]['state']) => html(<RemoveScreen state={state} nowSeconds={NOW} onConfirm={noop} onCancel={noop} onCancelTouch={noop} onAdd={noop} onDone={noop} />);
 
+    it('UI review (DEC-88): a device added in the last 14 days carries "new" and its own warning on its row, with Remove as its own button', () => {
+      const fresh: DeviceRow = { keyId: 'k3', label: 'Home Mac', kind: 'gateway', thisDevice: false, canGrant: false, addedAt: NOW - 3600, recent: true };
+      const m = html(<DeviceList rows={[...rows, fresh]} nowSeconds={NOW} onRemove={noop} />);
+      const homeRow = m.slice(m.indexOf('Home Mac') - 300);
+      expect(text(homeRow)).toContain(`Home Mac ${P.admitNew} Computer · added today`);
+      expect(homeRow).toMatch(/data-testid="row-warn">Added today\. If this was not you, remove it\.</);
+      expect(homeRow).toMatch(/class="btn btn-secondary btn-sm su-rm"[^>]*aria-label="Remove Home Mac"/);
+      // This phone (also recent) gets no warning about itself.
+      expect(m.match(/data-testid="row-warn"/g)).toHaveLength(1);
+    });
+
+    it('UI review (DEC-88): the remove screen shows the device being removed at the top, the effect in a warning box, and the safe option above the destructive one', () => {
+      const m = rs({ step: 'confirm', target: office, after: [me], self: false });
+      expect(m.indexOf('data-testid="removing"')).toBeLessThan(m.indexOf('data-testid="remove-warning"'));
+      expect(text(m.slice(m.indexOf('data-testid="removing"'), m.indexOf('data-testid="remove-warning"')))).toContain('Office Mac');
+      expect(m.indexOf('data-testid="remove-cancel"')).toBeLessThan(m.indexOf('data-testid="remove-confirm"'));
+      expect(m).toMatch(/class="btn btn-outline-strong btn-lg"[^>]*data-testid="remove-confirm">Remove Office Mac with your touch</);
+      expect(text(rs({ step: 'confirm', target: me, after: [office], self: true }))).toContain('Remove this phone with your touch');
+    });
+
     it('every row has Remove, this phone included (DEC-85)', () => {
       const m = html(<DeviceList rows={rows} nowSeconds={NOW} onRemove={noop} />);
       expect(m.match(/data-testid="device-remove"/g)).toHaveLength(2);
@@ -308,7 +328,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(t).toContain(P.removeComputerEffect('Office Mac'));
       expect(t).toContain(P.removeLogins('Office Mac'));
       expect(t).toContain(P.removeListAfter);
-      expect(t).toContain(P.removeButton);
+      expect(t).toContain(P.removeButtonNamed('Office Mac', false));
       expect(t).toContain('My iPhone');
     });
 
@@ -323,7 +343,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
       const m = rs({ step: 'refused', target: me, self: true, error: errorText('last_granting_self') });
       expect(m).toContain('data-testid="remove-refused"');
       expect(text(m)).toContain(errorText('last_granting_self'));
-      expect(text(m)).not.toContain(P.removeButton);
+      expect(text(m)).not.toMatch(/with your touch/);
       expect(text(m)).toContain(P.devAddComputer);
     });
 
@@ -332,7 +352,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(m).toContain('data-testid="touch-wait"');
       expect(m).toContain('av3-spin');
       expect(text(m)).toContain(P.touchWait);
-      expect(text(m)).not.toContain(P.removeButton);
+      expect(text(m)).not.toMatch(/with your touch/);
       expect(m).toContain('data-testid="touch-cancel"');
       expect(m.match(/<button/g)).toHaveLength(1);
     });

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ChangeRow, MandateDiff } from '@hap/core/mandate-change';
 import {
-  gatewayFacts, lastsUntilMeaning, modeMeaning, refusalLine, rowLabel, rowMeaning, rowValue, staysLines, tagClass, valueName, waitingWarning, whenText,
+  changeSummaryLine, dateText, gatewayFacts, lastsUntilMeaning, modeMeaning, modeWord, refusalLine, rowLabel, rowMeaning, rowValue, staysLines, tagClass, valueName, waitingWarning, whenText,
   type ChangeFacts,
 } from './mandate-change-view';
 import { applyChangeForEdit } from './mandate-change-edit';
@@ -156,5 +156,16 @@ describe('why: refusals the gateway recorded', () => {
     expect(lines[0]).toMatch(/^Your AI was refused attaching Saved files/);
     expect(gatewayFacts({ ...f, refused: [] }, diff, manifests, now)).toEqual([]);
     expect(gatewayFacts({ limitReached: [], today: [], waiting: 0 }, diff, manifests, now)).toEqual([]);
+  });
+});
+
+describe('the summary line under a change\'s title (UI review, DEC-88)', () => {
+  it('new values only, in the card\'s order: a value, "+ added" / "− removed", how it runs, the end date', () => {
+    const limit: ChangeRow = { section: 'limit', field: 'v', label: 'Value of one offer', unit: 'currency:EUR', before: 2000, after: 3000, tag: 'More' };
+    const line = changeSummaryLine({ rows: [limit, recipients({ before: 'a@x.example', after: 'a@x.example,b@x.example', added: ['b@x.example'], removed: ['c@x.example'] })], mode: { before: 'review', after: 'automatic', tag: 'More' }, lastsUntil: { before: 1_800_000_000, after: 1_801_000_000, tag: 'More' } }, manifests);
+    expect(line).toBe(`${rowValue(limit, 3000)} · + b@x.example · − c@x.example · ${modeWord('automatic')} · until ${dateText(1_801_000_000)}`);
+  });
+  it('nothing but the intent changed: no line', () => {
+    expect(changeSummaryLine(empty, manifests)).toBe('');
   });
 });

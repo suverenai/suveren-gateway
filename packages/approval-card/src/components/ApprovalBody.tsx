@@ -34,6 +34,7 @@ import { useMandateUsage } from '../lib/mandate-usage';
 import { limitWordsForTool } from '../lib/limit-words';
 import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
+import { giveSummaryLine, type SchemaLike } from '../mandate-screens/give-view';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
@@ -362,6 +363,14 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
   const sealedHeading = sealedTileHeading(previewView, isMandate);
+  // UI review (DEC-88): the numbers the person signs, in one line under the title, before the detail blocks.
+  const mandateSummary = isMandate && readable && mandateArgs ? giveSummaryLine({
+    limits: plainRecord(mandateArgs.limits) as Record<string, string | number>,
+    scope: plainRecord(mandateArgs.scope),
+    durationSeconds: typeof mandateArgs.duration_hours === 'number' ? Math.round(mandateArgs.duration_hours * 3600) : null,
+    boundsSchema: targetProfile?.boundsSchema as SchemaLike | undefined,
+    hidden: hiddenTarget,
+  }) : '';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {
@@ -392,6 +401,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
       <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      {mandateSummary && <p className="sum-line" style={{ order: 1 }} data-testid="mandate-summary">{mandateSummary}</p>}
       {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
@@ -677,4 +687,10 @@ function MandateIntent({ intent, loading, error, expanded, onToggle }: {
       )}
     </div>
   );
+}
+
+/** The object's own string/number/array entries, or {} (a proposal's limits and scope as the AI sent them). */
+function plainRecord(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === 'string' || typeof x === 'number' || Array.isArray(x)));
 }
