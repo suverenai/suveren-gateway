@@ -12,7 +12,8 @@ export function DeviceScreen({ title, children }: { title?: string; children: Re
     <>
       <TopNav />
       <UpdateBanner />
-      <DeviceFrame title={title}>{children}</DeviceFrame>
+      {/* The top bar is fixed: this column starts below it (and below the update banner when it shows). */}
+      <div className="device-page"><DeviceFrame title={title}>{children}</DeviceFrame></div>
     </>
   );
 }
