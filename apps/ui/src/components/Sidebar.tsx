@@ -54,12 +54,12 @@ function useOtherNavStatus() {
   const { activeDomain } = useAuth();
   const [counts, setCounts] = useState<Record<string, number>>({});
   // Every live event starts a poll; two events a moment apart (two blocked
-  // calls) overlap. Only the newest poll may write, or an older one that
-  // finishes last puts an older count back (see latest-guard.ts).
+  // calls) overlap. An older poll may not write over a newer one; without that,
+  // one that finishes last puts an older count back (see latest-guard.ts).
   const guardRef = useRef(createLatestGuard());
 
   const poll = useCallback(async () => {
-    const isLatest = guardRef.current.begin();
+    const mayWrite = guardRef.current.begin();
     try {
       const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
@@ -108,7 +108,7 @@ function useOtherNavStatus() {
       // Tickets issued since the Tickets page was last opened.
       const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
       if (newTickets > 0) next.tickets = newTickets;
-      if (!isLatest()) return;
+      if (!mayWrite()) return;
       setCounts(next);
     } catch {
       // ignore

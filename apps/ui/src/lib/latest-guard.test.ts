@@ -10,15 +10,15 @@ function deferred<T>() {
 
 /**
  * The shape of Sidebar's badge poll: start a load, await the server, then
- * write the count — but only if no newer load started meanwhile.
+ * write the count — unless a newer load has already written.
  */
 function makeBadge() {
   const guard = createLatestGuard();
   let shown: number | undefined;
   async function load(answer: Promise<number>): Promise<void> {
-    const isLatest = guard.begin();
+    const mayWrite = guard.begin();
     const count = await answer;
-    if (!isLatest()) return;
+    if (!mayWrite()) return;
     shown = count;
   }
   return { load, shown: () => shown };
@@ -49,6 +49,32 @@ describe('createLatestGuard: overlapping loads', () => {
     second.resolve(2);
     await b;
     expect(badge.shown()).toBe(2);
+  });
+
+  it('a load that finishes first is shown at once, while a newer one still runs (no starving)', async () => {
+    const badge = makeBadge();
+    const first = deferred<number>();
+    const second = deferred<number>();
+    const a = badge.load(first.promise);
+    const b = badge.load(second.promise);
+    first.resolve(1);
+    await a;
+    expect(badge.shown()).toBe(1);     // not held back by the newer, still running load
+    second.resolve(2);
+    await b;
+    expect(badge.shown()).toBe(2);
+  });
+
+  it('a stream of overlapping loads keeps writing; only a stale late answer is dropped', async () => {
+    const badge = makeBadge();
+    const d = [deferred<number>(), deferred<number>(), deferred<number>()];
+    const runs = d.map(x => badge.load(x.promise));
+    d[1].resolve(2); await runs[1];
+    expect(badge.shown()).toBe(2);
+    d[0].resolve(1); await runs[0];    // older than what is shown: dropped
+    expect(badge.shown()).toBe(2);
+    d[2].resolve(3); await runs[2];
+    expect(badge.shown()).toBe(3);
   });
 
   it('a single load writes its answer', async () => {

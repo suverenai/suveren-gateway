@@ -95,15 +95,15 @@ export function RecentBlocks() {
   const manifests = useLabelManifests();
 
   // Each live event starts a load; overlapping loads finish in any order.
-  // Only the newest may write (see latest-guard.ts).
+  // An older load may not write over a newer one (see latest-guard.ts).
   const guardRef = useRef(createLatestGuard());
   const load = useCallback(() => {
-    const isLatest = guardRef.current.begin();
+    const mayWrite = guardRef.current.begin();
     Promise.all([
       spClient.getDenials({ limit: 200 }).then(r => ({ ok: true as const, records: r.records }), () => ({ ok: false as const })),
       spClient.getLastSeenBlockedAt().catch(() => 0),
     ]).then(([denials, seen]) => {
-      if (!isLatest()) return;
+      if (!mayWrite()) return;
       if (denials.ok) { setRecords(denials.records); setFailed(false); } else setFailed(true);
       setLastSeen(seen);
     });
