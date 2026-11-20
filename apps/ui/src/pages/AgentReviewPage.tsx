@@ -28,6 +28,7 @@ import {
   GivePhoneFooter, givePhoneRefusalText, giveSummaryLine, GiveTouchFooter, afterProgress, type GiveTouchView,
 } from '@suveren/approval-card/mandate-screens';
 import { phoneGiveOffered, afterPoll, afterRefusal, phoneGiveBusy, waitExpired, GIVE_PHONE_POLL_MS, type GivePhoneState } from '../lib/give-on-phone-flow';
+import { useSpUrl, teamSettingsHref, ENABLE_IN_TEAM_SETTINGS } from '../lib/use-sp-url';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -68,7 +69,8 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, activeMembership } = useAuth();
+  const spUrl = useSpUrl();
   // Chain accounts only (device keys on, a set-up device): the review step gives the mandate with Touch ID (DEC-80). Everyone else sees today's page.
   const chain = useDeviceChain();
   const [adminName, setAdminName] = useState('');
@@ -457,7 +459,7 @@ export function AgentReviewPage() {
       if (chain) setTouchView({ s: 'offered' });
       if (chain && e instanceof MandateSignError) {
         if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(t => t + 1);   // look at the plan again
-        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason }));
+        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason, approverNames: (e.approverIds ?? []).map(id => approverNames[approverIds.indexOf(id)] ?? '').filter(Boolean) }));
         return;
       }
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');
@@ -558,6 +560,7 @@ export function AgentReviewPage() {
     userId: user?.id,
     profileName: profileDisplayName(authData.profileId),
     teamName: authData.groupName,
+    isAdmin: activeMembership?.role === 'admin',
   });
   const blockedByTeamGate = !right.can;
   const giveCaps = Object.entries(profileConfig?.caps ?? {}).map(([k, v]) => ({ label: profile?.boundsSchema?.fields?.[k]?.displayName ?? k, value: limitValueText(profile?.boundsSchema?.fields?.[k], v) }));
@@ -886,6 +889,11 @@ export function AgentReviewPage() {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
                       {right.reason} {right.fix}
                     </div>
+                    {right.adminCanEnable && teamSettingsHref(spUrl, authData.groupId) && (
+                      <a className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', textDecoration: 'none' }} href={teamSettingsHref(spUrl, authData.groupId)} target="_blank" rel="noopener noreferrer" data-testid="enable-in-team-settings">
+                        {ENABLE_IN_TEAM_SETTINGS}
+                      </a>
+                    )}
                   </>
                 ) : chain && approverIds.length > 0 ? (
                   <GiveApprovers

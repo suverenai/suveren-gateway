@@ -29,6 +29,20 @@ describe('mandateRight', () => {
     }
   });
 
+  it('team, not enabled, the person IS an admin → told to enable it themselves, never to ask an admin', () => {
+    for (const grantors of [undefined, []] as const) {
+      const r = mandateRight({ ...base, isPersonal: false, grantors, isAdmin: true });
+      expect(r).toMatchObject({ can: false, code: 'PROFILE_NOT_ENABLED_FOR_GROUP', adminCanEnable: true });
+      if (!r.can) {
+        expect(r.fix).not.toMatch(/Ask an admin/);
+        expect(r.fix).toMatch(/You are an admin of "Sales Vienna": enable .* in the team's settings/);
+      }
+    }
+    // a non-admin keeps today's text and no link
+    const n = mandateRight({ ...base, isPersonal: false, grantors: [], isAdmin: false });
+    expect(n).not.toHaveProperty('adminCanEnable');
+  });
+
   it('team, grantors configured but not me → refused like the AS (OWNER_NOT_APPROVER)', () => {
     const r = mandateRight({ ...base, isPersonal: false, grantors: ['u_bernd'] });
     expect(r).toMatchObject({ can: false, code: 'OWNER_NOT_APPROVER' });
