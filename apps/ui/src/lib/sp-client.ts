@@ -819,9 +819,7 @@ class SPClient {
       const personal = groups.find(g => g.isPersonal) ?? groups[0];
       if (!personal) return null;
       const detail = await this.getGroupById(personal.id);
-      const me = detail.members?.[0];
-      if (!me?.id) return null;
-      return { id: me.id, name: me.name ?? '', email: me.email ?? '', did: '' };
+      return sessionUserFromGroup(detail);
     } catch { return null; }
   }
 
@@ -2621,3 +2619,18 @@ class SPClient {
 }
 
 export const spClient = new SPClient();
+
+/**
+ * The signed-in person from their personal workspace's detail. The Authority Server answers `{ group, members, isAdmin }` with each
+ * member's `userId` (not `id`): reading `id` alone found nobody, so a gateway with device keys could never finish an unlock in the
+ * browser ("This did not work"). The owner of the personal workspace is the person; a single member is taken when no owner is named.
+ */
+export function sessionUserFromGroup(detail: unknown): SPUser | null {
+  const d = (detail ?? {}) as { group?: { ownerUserId?: unknown }; ownerUserId?: unknown; members?: Array<Record<string, unknown>> };
+  const members = Array.isArray(d.members) ? d.members : [];
+  const idOf = (m: Record<string, unknown>): string => (typeof m.userId === 'string' && m.userId) || (typeof m.id === 'string' && m.id) || '';
+  const owner = typeof d.group?.ownerUserId === 'string' ? d.group.ownerUserId : typeof d.ownerUserId === 'string' ? d.ownerUserId : null;
+  const me = owner ? members.find((m) => idOf(m) === owner) : members.length === 1 ? members[0] : undefined;
+  if (!me || !idOf(me)) return null;
+  return { id: idOf(me), name: typeof me.name === 'string' ? me.name : '', email: typeof me.email === 'string' ? me.email : '', did: '' };
+}
