@@ -11,6 +11,7 @@ import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
 import { AddThisComputer } from './PairingPages';
 import { PT } from '../../lib/pairing-texts';
+import { PageLoading } from './StartScreens';
 
 export interface SetupScreenProps {
   state: SetupState;
@@ -25,6 +26,8 @@ export interface SetupScreenProps {
   onRetrySignIn: () => void;
   onDone: () => void;
   onRecover?: () => void;
+  /** This computer makes its check key at the start (one touch): say what the touch is for before the Mac asks. */
+  touchForCheckKey?: boolean;
 }
 
 /** DEC-91: Connect, the recovery code with its tick and the one condition on one screen, Connected. No name screen. */
@@ -35,6 +38,7 @@ export function SetupScreen(p: SetupScreenProps) {
     case 'start':
       return (
         <DeviceScreen title={T.nameTitle}>
+          {st.busy && p.touchForCheckKey && <Notice kind="info">{DRAFT.touchCheckKeyWaiting}</Notice>}
           {st.error && <Notice kind="error">{st.error}</Notice>}
           <button className="btn btn-primary btn-full btn-lg" onClick={p.onBegin} disabled={st.busy}>{T.nameTitle}</button>
           {p.onRecover && <button className="btn btn-ghost btn-full" onClick={p.onRecover}>{DRAFT.recoverLink}</button>}
@@ -103,6 +107,8 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   const { adoptSessionUser, pageSessionOpen } = useAuth();
   const navigate = useNavigate();
   const [recover, setRecover] = useState(false);
+  /** After Continue on the done screen: the turning mark until the signed-in person is adopted, never a sign-in flash. */
+  const [leaving, setLeaving] = useState(false);
   // Read when the set-up begins: the driver is built once, so a started set-up is never dropped when this resolves.
   const wantCheckKey = useRef(false);
   const driver = useMemo(() => new SetupDriver({ client, open: url => { window.open(url, '_blank', 'noopener'); }, wantCheckKey: () => wantCheckKey.current }), [client]);
@@ -135,6 +141,7 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   }, [state.step, driver]);
 
   if (recover) return <RecoverPage kind="reset" onBack={() => setRecover(false)} />;
+  if (leaving) return <PageLoading />;
   return (
     <SetupScreen
       state={state}
@@ -145,8 +152,18 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
       onKept={c => driver.toggleKept(c)}
       onFinish={() => void driver.finish()}
       onRetrySignIn={() => void driver.retrySignIn()}
-      onDone={() => { void spClient.detectDeviceDecisions(); void adoptSessionUser(); navigate('/', { replace: true }); }}
+      onDone={() => {
+        // Wait for the person to be adopted BEFORE leaving: navigating first let the guard of '/' see nobody signed in
+        // and show the unlock screen for a moment (the flash after set-up).
+        setLeaving(true);
+        void (async () => {
+          await spClient.detectDeviceDecisions();
+          await adoptSessionUser();
+          navigate('/', { replace: true });
+        })();
+      }}
       onRecover={() => setRecover(true)}
+      touchForCheckKey={wantCheckKey.current}
     />
   );
 }

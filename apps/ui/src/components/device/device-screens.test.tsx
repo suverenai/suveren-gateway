@@ -93,6 +93,16 @@ describe('screens 2 and 3: set up this computer', () => {
   });
   const render = (state: SetupState, extra?: Partial<SetupScreenProps>) => html(<SetupScreen {...props(state, extra)} />);
 
+  it('the second Touch ID prompt of set-up says what it is for, before the Mac asks; nothing when no check key is made', () => {
+    expect(text(render({ step: 'start', busy: true }, { touchForCheckKey: true }))).toContain(DRAFT.touchCheckKeyWaiting);
+    expect(text(render({ step: 'start', busy: true }, { touchForCheckKey: false }))).not.toContain(DRAFT.touchCheckKeyWaiting);
+    expect(text(render({ step: 'start', busy: false }, { touchForCheckKey: true }))).not.toContain(DRAFT.touchCheckKeyWaiting);
+  });
+  it('the done screen names the connected account (DEC-93) before the dashboard', () => {
+    const h = render({ step: 'connected', account: { name: 'Anna Muster', email: 'anna@example.com' }, signedIn: true, busy: false });
+    expect(text(h)).toContain(T.connectedAs('Anna Muster', 'anna@example.com'));
+  });
+
   it('DEC-91: no name screen; the start (shown only after a cancel or a failed start) has one button and each refusal', () => {
     const t = text(render({ step: 'start', busy: false }));
     expect(t).toContain(T.nameTitle); expect(t).not.toContain(T.nameLabel); expect(t).not.toContain(T.nameHint);

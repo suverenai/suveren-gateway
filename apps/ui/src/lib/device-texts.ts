@@ -158,7 +158,8 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
 export const DRAFT = {
   loading: 'Loading…', // DRAFT
   // DEC-92: Touch ID opens the gateway page; turned on at set-up where this computer has Touch ID, or later in Settings.
-  touchSetupWaiting: 'Turning on Touch ID for this gateway. Touch the sensor when your Mac asks.', // DRAFT
+  touchSetupWaiting: 'Touch the sensor when your Mac asks. This touch lets you open the gateway with Touch ID.', // DRAFT (touch 1 of 2 at set-up)
+  touchCheckKeyWaiting: 'Touch the sensor once more when your Mac asks. This touch makes this computer\'s key for giving mandates and approving changes.', // DRAFT (touch 2 of 2 at set-up)
   // DEC-93: the first screen of a gateway nobody has used yet (no account key)
   startTitle: 'Connect to your Suveren account', // DRAFT
   startWhy: 'This gateway is new. Connect it to your Suveren account first; then you set an unlock password.', // DRAFT

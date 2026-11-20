@@ -132,6 +132,12 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,200}to="\/device-password"/);
     expect(card).toMatch(/if \(!setUp\)[\s\S]{0,200}to="\/device-setup"/);
   });
+  it('after set-up, the person is adopted BEFORE the page leaves for the dashboard (no unlock-screen flash), the turning mark meanwhile', () => {
+    const src = readFileSync(join(dir, 'SetupScreens.tsx'), 'utf8');
+    expect(src).toMatch(/setLeaving\(true\);[\s\S]{0,200}await adoptSessionUser\(\);\s*navigate\('\/', \{ replace: true \}\)/);
+    expect(src).toMatch(/if \(leaving\) return <PageLoading \/>;/);
+    expect(src).not.toMatch(/void adoptSessionUser\(\); navigate\('\/'/);
+  });
   it('DEC-93: a new gateway starts at /start; set-up opens with the page session alone; the start token stays out of the page session', () => {
     const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
     expect(app).toMatch(/path="\/start" element=\{user \? <Navigate to="\/" replace \/> : <StartPage \/>\}/);
