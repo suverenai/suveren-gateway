@@ -81,7 +81,7 @@ describe('screen 4: unlock', () => {
   it('error lines and the signing-in state', () => {
     for (const e of [T.wrongPassword, T.touchCancelled, T.touchNotRecognised, T.touchLocked, T.touchCannot, T.touchNoAsk, 'Too many tries. Try again in 10 minutes.']) expect(text(render({ error: e }))).toContain(e);
     const s = text(render({ phase: 'signing-in' }));
-    expect(s).toContain("brand-spin");
+    expect(s.trim()).toBe("");  // only the turning mark (no text) while signing in
     expect(s).not.toContain(T.unlockSigningIn);
     expect(s).not.toContain(T.passwordLabel);
     const f = text(render({ phase: 'sign-in-failed', error: T.deviceRemoved }));
