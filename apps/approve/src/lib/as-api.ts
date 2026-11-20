@@ -153,6 +153,11 @@ export class AsApi {
     return this.go<{ prepared?: unknown[] }>('GET', '/api/mandates/prepared', { bearer });
   }
 
+  /** This person's own authorizations (`GET /api/mandates/mine`; a phone session may since D3, device keys on): the gateway's list. */
+  mine(bearer: string) {
+    return this.go<{ mandates?: unknown[] }>('GET', '/api/mandates/mine', { bearer });
+  }
+
   /** The sealed bodies of a mandate's versions (`GET /api/mandates/:id/body`), each with this phone's own wrap. */
   mandateBodies(mandateId: string, bearer: string) {
     return this.go<{ bodies?: unknown[] }>('GET', `/api/mandates/${encodeURIComponent(mandateId)}/body`, { bearer });

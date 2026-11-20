@@ -38,6 +38,10 @@ import {
 } from '@suveren/approval-card/lib/approval-panel';
 import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import { OpenSessionScreen } from './screens/OpenSession';
+import { GiveDriver, readGives, type GiveItem } from './lib/mandate-give';
+import { EndDriver, readOwnMandates, type OwnMandate } from './lib/mandate-end';
+import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
+import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
 
 /** How often an open list is read again (a timer; it never counts as use of the session). */
@@ -242,9 +246,25 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   const [cards, setCards] = useState<Record<string, OpenCard>>({});
   const [busy, setBusy] = useState(false);
   const timers = useRef<number[]>([]);
+  // D3: mandates to give (prepared on a computer), this person's own mandates (End), and notices of gives made on other devices.
+  const [gives, setGives] = useState<GiveItem[]>([]);
+  const [own, setOwn] = useState<OwnMandate[]>([]);
+  const giver = useMemo(() => new GiveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const giving = useDriver(giver);
+  const ender = useMemo(() => new EndDriver({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const ending = useDriver(ender);
+  const giveBusy = giving.step === 'checking' || giving.step === 'sending';
   useEffect(() => () => { timers.current.forEach((t) => window.clearTimeout(t)); }, []);
 
+  const loadMandates = useCallback(async () => {
+    const g = await readGives(rt);
+    if (g.ok) setGives(g.items); else if (g.code === 'session_ended') { onEnded(); return; }
+    const m = await readOwnMandates(rt);
+    if (m.ok) setOwn(m.items);
+  }, [rt, onEnded]);
+
   const load = useCallback(async (byPerson: boolean) => {
+    void loadMandates();
     const r = await rt.reader.list(byPerson);
     if (r.ok) { setProposals(r.data); setError(undefined); return; }
     if (r.code === 'session_ended') { onEnded(); return; }
@@ -262,7 +282,10 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   }, [rt]);
 
   // The panel's order is the gateway's: oldest first. The list screen shows newest first.
-  const ids = useMemo(() => [...(proposals ?? [])].sort((a, b) => a.createdAt - b.createdAt).map((p) => p.id), [proposals]);
+  const ids = useMemo(() => [
+    ...gives.map((g) => g.key),
+    ...[...(proposals ?? [])].sort((a, b) => a.createdAt - b.createdAt).map((p) => p.id),
+  ], [proposals, gives]);
   const idsRef = useRef(ids);
   idsRef.current = ids;
   const hold = settling !== null;
@@ -289,8 +312,28 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
 
   const shownCard = shownId ? cards[shownId] : undefined;
   useEffect(() => {
-    if (chrome.panel && shownId && !cards[shownId]) void openCard(shownId);
+    if (chrome.panel && shownId && !shownId.startsWith('give:') && !cards[shownId]) void openCard(shownId);
   }, [chrome.panel, shownId, cards, openCard]);
+
+  const shownGive = shownId && shownId.startsWith('give:') ? gives.find((g) => g.key === shownId) ?? null : null;
+  useEffect(() => {
+    const cur = giving.step !== 'idle' ? giving.item : null;
+    if (shownGive && (!cur || cur.key !== shownGive.key) && !settling) giver.open(shownGive);
+  }, [shownGive, giving, giver, settling]);
+  // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
+  useEffect(() => {
+    if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
+      settlingRef.current = { id: giving.item.key, before: idsRef.current };
+      setSettling({ id: giving.item.key, before: idsRef.current, stay: false });
+      const key = giving.item.key;
+      timers.current.push(window.setTimeout(() => { finishSettlingRef.current(key); void loadMandates(); }, RESULT_SHOW_MS));
+    }
+    if (giving.step === 'not_received' && settlingRef.current?.id !== giving.item.key) {
+      settlingRef.current = { id: giving.item.key, before: idsRef.current };
+      setSettling({ id: giving.item.key, before: idsRef.current, stay: true });
+    }
+  }, [giving, loadMandates]);
+  useEffect(() => { setBusy(giveBusy); }, [giveBusy]);
 
   const later = useCallback(() => {
     setPanel((p) => ({ ...p, open: false }));
@@ -307,6 +350,9 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     else setPanel((p) => ({ ...p, open: false }));
     setSettling(null);
   }, []);
+
+  const finishSettlingRef = useRef(finishSettling);
+  finishSettlingRef.current = finishSettling;
 
   const handleDecided = useCallback((id: string) => {
     settlingRef.current = { id, before: idsRef.current };
@@ -354,6 +400,18 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
         onToggleAuto={toggleAuto}
         locked={busy}
         error={error}
+        other={shownId && shownId.startsWith('give:') && giving.step !== 'idle' && giving.item?.key === shownId ? {
+          key: shownId,
+          node: (
+            <GiveCard
+              state={giving} nowSeconds={rt.now()}
+              onGive={() => void giver.give()} onLater={later} onCancelTouch={() => giver.cancelTouch()}
+              onCheckAgain={() => void giver.checkAgain()}
+              onDone={() => { const k = shownId; giver.close(); finishSettling(k); void loadMandates(); }}
+              dismissLabel={resultDismissLabel(afterDecision(settling ? settling.before : ids, shownId).next !== null)}
+            />
+          ),
+        } : null}
         shown={shownId && shownCard ? {
           proposal: shownCard.proposal,
           card: {
@@ -373,8 +431,29 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
       />
     );
   }
+  if (ending.step !== 'idle') {
+    return (
+      <EndScreen
+        state={ending} onEnd={() => void ender.end()} onKeep={() => ender.close()}
+        onDone={() => { ender.close(); void loadMandates(); }}
+      />
+    );
+  }
+  const now = rt.now();
+  const notices = own.filter((m) => m.givenOn && m.givenAt !== null && now - (m.givenAt ?? 0) < 14 * 86400).map((m) => P.noticeGiven(m.title, m.givenOn!));
   return (
     <RequestsScreen
+      extra={(
+        <>
+          {notices.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
+          {gives.length > 0 && (
+            <div className="dash-rows" data-testid="give-list">
+              {gives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
+            </div>
+          )}
+          <OwnMandates items={own} nowSeconds={now} onEnd={(m) => ender.open(m)} />
+        </>
+      )}
       proposals={proposals} error={error} nowMs={Date.now()}
       onOpen={(id) => { setCurrentId(id); setPanel((p) => ({ ...p, open: true, owed: false })); }}
       onRefresh={() => void load(true)}

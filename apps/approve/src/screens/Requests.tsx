@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ApprovalCard, type DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
@@ -13,6 +14,8 @@ const NO_TITLES: Record<string, string> = {};
 export interface RequestsScreenProps {
   /** Null while the first read is out. */
   proposals: Proposal[] | null;
+  /** Mandates to give, the person's own mandates and notices (D3); drawn above the requests. */
+  extra?: ReactNode;
   error?: string;
   nowMs: number;
   onOpen: (id: string) => void;
@@ -26,6 +29,7 @@ export function RequestsScreen(p: RequestsScreenProps) {
       <p>{P.welcomeReadOnly}</p>
       {p.error && <Notice kind="error">{p.error}</Notice>}
       {p.proposals === null && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
+      {p.extra}
       {p.proposals !== null && p.proposals.length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
       <div className="dash-rows" data-testid="request-list">
         {(p.proposals ?? []).map((pr) => (

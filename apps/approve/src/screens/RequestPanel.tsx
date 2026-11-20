@@ -5,6 +5,7 @@
  * bottom. The rules (what opens, when, what comes next) are the shared ones (`@suveren/approval-card/lib/approval-panel`); App.tsx
  * feeds them. On a phone the head is always the compact one.
  */
+import type { ReactNode } from 'react';
 import { ApprovalPanelHead } from '@suveren/approval-card/components/ApprovalPanelHead';
 import type { Proposal } from '@suveren/approval-card/types';
 import { RequestCard, type RequestCardProps } from './Requests';
@@ -25,6 +26,8 @@ export interface RequestPanelProps {
   locked?: boolean;
   /** The approval on screen; null while it is read. */
   shown: { proposal: Proposal; card: Omit<RequestCardProps, 'proposal'> } | null;
+  /** Something other than a request in the same place (a mandate to give, D3): drawn instead of `shown`. */
+  other?: { key: string; node: ReactNode } | null;
   error?: string;
 }
 
@@ -45,8 +48,9 @@ export function RequestPanel(p: RequestPanelProps) {
       />
       <div className="apr-body">
         {p.error && <Notice kind="error">{p.error}</Notice>}
-        {!p.shown && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
-        {p.shown && (
+        {!p.shown && !p.other && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
+        {p.other && <div className="apr-stage" key={p.other.key} data-give-key={p.other.key}>{p.other.node}</div>}
+        {!p.other && p.shown && (
           <div className="apr-stage" key={p.shown.proposal.id} data-proposal-id={p.shown.proposal.id}>
             <RequestCard proposal={p.shown.proposal} {...p.shown.card} />
           </div>

@@ -1,0 +1,124 @@
+/**
+ * Ending a mandate on the phone (device-keys plan 4.4 "Who signs": a `revoke` may be signed by any active device, without a check;
+ * mockup B2, DEC-88). Final: a revoked mandate stays revoked.
+ *
+ * The list is this person's own authorizations (`GET /api/mandates/mine`), each checked the way a card is: the signed mandate under the
+ * pinned Authority Server key, the owner is this person, and the newest grant of exactly that mandate verifies against THIS phone's
+ * chain (grant-check.ts). Only those are offered. The revoke names the members of that verified grant (what the owner granted, not what
+ * the Authority Server says) and is signed with the phone's device key; no touch (S13 screen 4: "You do not need your touch").
+ */
+import {
+  b64uEncode, buildGrant, randomBytes, signedBytes, verifyGrant, type MandateGrant,
+} from '@hap/core/device-keys';
+import { GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
+import type { MandatePayload } from '@hap/core/browser';
+import { Driver } from './driver';
+import { verifyMandateBlob } from './mandate-check';
+import { checkGrant, grantRowsOf } from './grant-check';
+import type { DeviceKeyStore } from './key-store';
+import type { AsApi } from './as-api';
+import type { AccountStore } from './account-store';
+import type { DeviceSession } from './session';
+import { errorText } from '../texts';
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export interface OwnMandate {
+  authorizationId: string;
+  mandateId: string;
+  version: number;
+  title: string;
+  expiresAt: number;
+  /** The members of the newest verified grant: what the revoke names. */
+  fields: Record<string, unknown>;
+  /** The device of this chain that gave that grant, when it is not this phone (the notice "given on …", mockup F2); else null. */
+  givenOn: string | null;
+  givenAt: number | null;
+}
+
+export interface EndDeps { keys: DeviceKeyStore; api: AsApi; accounts: AccountStore; session: DeviceSession; now: () => number }
+
+/** This person's mandates the phone can end: each one checked (the file header). */
+export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: OwnMandate[] } | { ok: false; code: string }> {
+  const s = d.session.current();
+  const bearer = d.session.bearer();
+  const account = await d.accounts.read();
+  if (!s || !bearer || !account) return { ok: false, code: 'session_ended' };
+  const mine = await d.api.mine(bearer);
+  if (!mine.ok) return { ok: false, code: mine.status === 401 ? 'session_ended' : mine.code };
+  const items: OwnMandate[] = [];
+  for (const row of Array.isArray(mine.data.mandates) ? mine.data.mandates : []) {
+    if (!isObj(row) || typeof row.authorization_id !== 'string' || row.status === 'revoked' || row.status === 'expired') continue;
+    const authorizationId = row.authorization_id;
+    const m = await d.api.mandates(authorizationId, bearer);
+    if (!m.ok || m.data.revoked) continue;
+    let full: MandatePayload | null = null;
+    for (const e of Array.isArray(m.data.mandates) ? m.data.mandates : []) {
+      if (!isObj(e) || typeof e.blob !== 'string') continue;
+      const v = await verifyMandateBlob(e.blob, account.as_key, d.now());
+      if (v.ok && (!full || v.full.issued_at > full.issued_at)) full = v.full;
+    }
+    if (!full || full.mandate_owners?.[0]?.did !== account.root_did) continue;
+    const g = await d.api.grants(full.mandate_id, bearer);
+    const rows = g.ok ? grantRowsOf(g.data) : null;
+    if (!rows) continue;
+    const verdict = await checkGrant({ payload: full, authorizationId, chain: s.chain, rows }).catch(() => null);
+    if (!verdict || !verdict.ok) continue;
+    const granted = rows.find((r) => r.mandate_version === verdict.version && (r.op === 'grant' || r.op === 'change') && isObj(r.grant));
+    if (!granted) continue;
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(granted.grant as Record<string, unknown>)) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
+    const title = typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? row.profileId.replace(/@.*$/, '').split('/').pop() ?? row.profileId : 'a mandate');
+    const g0 = granted.grant as Record<string, unknown>;
+    const by = typeof g0.key_id === 'string' && g0.key_id !== account.key_id ? s.chain.devices[g0.key_id] ?? null : null;
+    items.push({
+      authorizationId, mandateId: full.mandate_id, version: verdict.version, title, expiresAt: full.expires_at, fields,
+      givenOn: by ? by.label : null, givenAt: by && typeof g0.granted_at === 'number' ? g0.granted_at : null,
+    });
+  }
+  items.sort((a, b) => a.expiresAt - b.expiresAt);
+  return { ok: true, items };
+}
+
+export type EndState =
+  | { step: 'idle' }
+  | { step: 'confirm'; item: OwnMandate }
+  | { step: 'sending'; item: OwnMandate }
+  | { step: 'done'; item: OwnMandate }
+  | { step: 'failed'; item: OwnMandate; error: string };
+
+export class EndDriver extends Driver<EndState> {
+  constructor(private readonly d: EndDeps) {
+    super({ step: 'idle' });
+  }
+
+  open(item: OwnMandate): void { this.set({ step: 'confirm', item }); }
+  close(): void { this.set({ step: 'idle' }); }
+
+  /** Sign the revoke of the newest verified grant and store it. No touch. */
+  async end(): Promise<void> {
+    const st = this.get();
+    if (st.step !== 'confirm' && st.step !== 'failed') return;
+    const item = st.item;
+    this.set({ step: 'sending', item });
+    const d = this.d;
+    try {
+      const s = d.session.current();
+      const bearer = d.session.bearer();
+      const account = await d.accounts.read();
+      if (!s || !bearer || !account) { this.set({ step: 'failed', item, error: errorText('session_ended') }); return; }
+      const grant = buildGrant({
+        op: 'revoke', owner_did: account.root_did, key_id: account.key_id, chain_seq: s.chain.head.seq, chain_head: s.chain.head.hash,
+        mandate_id: item.mandateId, mandate_version: item.version, granted_at: d.now(), nonce: b64uEncode(randomBytes(16)),
+      }, item.fields) as MandateGrant;
+      const sig = b64uEncode(await d.keys.sign(signedBytes(grant)));
+      await verifyGrant({ grant, sig }, { chain: s.chain, mandateFields: item.fields, expect: { ops: ['revoke'], mandate_id: item.mandateId, mandate_version: item.version } });
+      const res = await d.api.postGrant(item.mandateId, { grant, sig }, bearer);
+      d.session.noteUse();
+      if (!res.ok) { this.set({ step: 'failed', item, error: errorText(res.status === 0 ? 'as_unreachable' : 'end_failed') }); return; }
+      this.set({ step: 'done', item });
+    } catch {
+      this.set({ step: 'failed', item, error: errorText('end_failed') });
+    }
+  }
+}

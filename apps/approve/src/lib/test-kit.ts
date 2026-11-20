@@ -76,6 +76,8 @@ export class FakeAs implements Transport {
   prepared: Json[] = [];
   /** The gateways' receipts by mandate id (`GET /api/mandates/:id/receipts`). */
   receipts = new Map<string, Json[]>();
+  /** This person's authorizations (`GET /api/mandates/mine`), rows as the real server serves them. */
+  mine: Json[] = [];
   /** Grants a device posted (`POST /api/mandates/:id/grants`), after the same hap-core check the real server makes. */
   postedGrants: Json[] = [];
   /** Profiles by id (`GET /api/profiles/:id`, public). */
@@ -242,6 +244,10 @@ export class FakeAs implements Transport {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       return { status: 200, body: { grants: this.grants.get(decodeURIComponent(gr[1])) ?? [] } };
     }
+    if (route === 'GET /api/mandates/mine') {
+      if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
+      return { status: 200, body: { mandates: this.mine } };
+    }
     if (route === 'GET /api/mandates/prepared') {
       if (!this.bearerKey(opts.bearer)) return refusal(401, 'UNAUTHENTICATED');
       return { status: 200, body: { prepared: this.prepared } };
@@ -256,7 +262,10 @@ export class FakeAs implements Transport {
       const id = decodeURIComponent(gr[1]);
       const raw = body.grant as Json;
       const fields: Json = {};
-      for (const [k, v] of Object.entries(raw ?? {})) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
+      // A revoke names the members of the newest grant on file (the real server's rule); a grant or change, its own.
+      const newest = raw?.op === 'revoke' ? [...(this.grants.get(id) ?? [])].filter((r) => r.op !== 'revoke').sort((a, b) => b.mandate_version - a.mandate_version)[0] : null;
+      if (raw?.op === 'revoke' && !newest) return refusal(404, 'MANDATE_UNKNOWN');
+      for (const [k, v] of Object.entries((newest ? newest.grant : raw) ?? {})) if (!(GRANT_FIXED_MEMBERS as readonly string[]).includes(k)) fields[k] = v;
       try {
         await verifyGrant({ grant: raw, sig: body.sig, check: body.check ?? undefined }, { chain: await this.state(), mandateFields: fields, expect: { ops: [raw.op], mandate_id: id, mandate_version: raw.mandate_version } });
       } catch (e) {
