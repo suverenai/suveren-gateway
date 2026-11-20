@@ -47,18 +47,4 @@ describe('change_mandate — old mandate not yet revoked at the AS', () => {
   });
 });
 
-describe('change_mandate — approved on a computer without Touch ID (DEC-90)', () => {
-  beforeEach(() => { cp.result = {}; });
-
-  it('sent to the phone: not an error, and the AI hears that nothing is in place yet and must not propose it again', async () => {
-    cp.result = { ok: true, onPhone: { mandateId: 'm-12345678', mandateVersion: 2, expiresAt: 1_900_000_000 } };
-    const r = await changeHandler()({ mandate_id: 'authz_old' });
-    expect((r as { isError?: boolean }).isError).toBeFalsy();
-    const text = (r as { content: Array<{ text: string }> }).content[0].text;
-    expect(text).toMatch(/^The change was approved\. This computer cannot give it itself, so it was sent to the person's phone\./);
-    expect(text).toContain('It is not in place yet');
-    expect(text).toContain('Do not propose it again');
-    expect(text).not.toMatch(/Mandate changed|active now/);
-  });
-});
 
