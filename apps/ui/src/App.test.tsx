@@ -58,7 +58,7 @@ describe('AppRoutes wiring: which page /login shows (fix 1)', () => {
   it('switch on without a password: nothing until the gateway says whether it is new (no flash of the sign-in before /start)', () => {
     const h = at('/login', <AppRoutes />, { access: 'legacy', deviceKeysSwitch: true, passwordSet: false });
     expect(h).not.toContain('Enter your API key');
-    expect(h).not.toContain('device-screen');
+    expect(h).toContain('brand-spin');
   });
   it('a password: the unlock screen, not the account-key form', () => {
     const h = at('/login', <AppRoutes />, { access: 'password', deviceKeysSwitch: true, passwordSet: true });

@@ -156,6 +156,7 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  * changed" only where it is true). Every one is listed in the hand-over report for the maintainer to confirm.
  */
 export const DRAFT = {
+  loading: 'Loading…', // DRAFT
   // DEC-92: Touch ID opens the gateway page; turned on at set-up where this computer has Touch ID, or later in Settings.
   touchSetupWaiting: 'Turning on Touch ID for this gateway. Touch the sensor when your Mac asks.', // DRAFT
   // DEC-93: the first screen of a gateway nobody has used yet (no account key)

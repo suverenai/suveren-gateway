@@ -27,7 +27,7 @@ import { AgentBriefPage } from './pages/AgentBriefPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { UnlockPage } from './components/device/UnlockScreen';
 import { SetupPage } from './components/device/SetupScreens';
-import { StartPage, LoginOrStart } from './components/device/StartScreens';
+import { StartPage, LoginOrStart, PageLoading } from './components/device/StartScreens';
 import { SetPasswordPage } from './components/device/PasswordScreen';
 import { RecoverPage } from './components/device/RecoverScreens';
 import { ConfirmationHost } from './components/device/ConfirmChange';
@@ -95,7 +95,7 @@ export function AppRoutes() {
     <>
     <Routes>
       {/* A gateway with an unlock password is opened by the password or Touch ID; every other gateway keeps the account-key sign-in. */}
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : access === 'password' ? <UnlockPage /> : access === null ? null : <LoginOrStart switchOn={deviceKeysSwitch}><LoginPage /></LoginOrStart>} />
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : access === 'password' ? <UnlockPage /> : access === null ? <PageLoading /> : <LoginOrStart switchOn={deviceKeysSwitch}><LoginPage /></LoginOrStart>} />
       {/* DEC-93: a gateway nobody has used yet starts here, at Connect, without an account key. */}
       <Route path="/start" element={user ? <Navigate to="/" replace /> : <StartPage />} />
       <Route path="/device-password" element={user ? <SetPasswordPage /> : <Navigate to="/login" replace />} />

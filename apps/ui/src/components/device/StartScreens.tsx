@@ -7,6 +7,7 @@ import { turnOnTouchUnlock } from '../../lib/touch-unlock';
 import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice } from './DeviceScreen';
 import { PasswordScreen } from './PasswordScreen';
+import { BrandMark } from '../BrandMark';
 
 type Step =
   | { step: 'connect'; busy: boolean; error?: string }
@@ -120,5 +121,16 @@ export function LoginOrStart({ switchOn, children }: { switchOn: boolean; childr
     }, () => { if (live) setDecided(true); });
     return () => { live = false; };
   }, [switchOn, navigate]);
-  return decided ? <>{children}</> : null;
+  return decided ? <>{children}</> : <PageLoading />;
+}
+
+/** While the gateway is asked which page to show: the top bar and the turning Suveren mark, never an empty page. */
+export function PageLoading() {
+  return (
+    <DeviceScreen>
+      <div role="status" aria-label={DRAFT.loading} style={{ display: 'flex', justifyContent: 'center', padding: '3rem 0' }}>
+        <span className="brand-spin" aria-hidden="true"><BrandMark size={40} /></span>
+      </div>
+    </DeviceScreen>
+  );
 }
