@@ -22,6 +22,7 @@ import {
   pairingCommitment, randomBytes, verifyChain, b64uDecode, b64uEncode,
   type ChainEntry, type ChainState, type PairingQr,
 } from '@hap/core/device-keys';
+import { entryInChain } from '@suveren/pairing';
 import { Driver } from './driver';
 import type { DeviceKeyStore } from './key-store';
 import type { CheckDevice } from './check';
@@ -252,7 +253,8 @@ export class JoinDriver extends Driver<JoinState> {
     if (m.done) {
       const body = m.done.body;
       if (typeof body.refused === 'string') { await this.abort(body.refused === 'CODE_MISMATCH' ? 'wrong_code' : body.refused); return; }
-      await this.finish(body.entry_hash as string);
+      // A `done` that names an entry counts only after this phone sent `open` (the person is at the comparison); earlier it is not the answer to anything.
+      if (st.step === 'compare') await this.finish(body.entry_hash as string, r.chain);
       return;
     }
     // `challenge` only counts after our `commit`; the admitter creates it only then.
@@ -265,13 +267,16 @@ export class JoinDriver extends Driver<JoinState> {
     }
   }
 
-  private async finish(entryHashAnswered: string): Promise<void> {
+  private async finish(entryHashAnswered: string, chain: { root_did: string; entries: unknown[] } | undefined): Promise<void> {
     const h = this.h;
     const d = this.d;
     if (!h?.entry || !h.keyId || !h.label || !h.rpId || !h.credId) return;
     const mine = await entryHash(h.entry);
     // The admitter must have stored the entry this phone built, no other.
     if (entryHashAnswered !== mine) { await this.abort('head_mismatch'); return; }
+    // The `done` message is the admitter's word. Nothing is kept until the chain the server shows holds this phone's entry (verified from
+    // the genesis on): the shared check of @suveren/pairing, the same one the gateway page makes.
+    if (!(await entryInChain(chain, { rootDid: h.qr.root_did as string, seq: h.entry.seq, hash: mine, keyId: h.keyId }))) { await this.abort('head_mismatch'); return; }
     try {
       const as = await proveAsKey(d.transport, h.qr.as_key, d.now);
       if (!as.ok) { await this.abort(as.code); return; }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { b64uEncode, buildPairingMessage, identityCode, randomBytes } from '@hap/core/device-keys';
+import { b64uEncode, buildPairingMessage, entryHash, identityCode, randomBytes } from '@hap/core/device-keys';
 import { JoinDriver } from './join-driver';
 import { errorText } from '../texts';
 import { FakeAs, FakePasskeys, PeerAdmitter, PeerComputer, PeerJoiner, addWithRoot, seedAccount, testRuntime, type TestRuntime } from './test-kit';
@@ -286,5 +286,32 @@ describe('this phone joins an account that exists (pairing 4.3, phone as joiner)
     await join.submitName('My iPhone');
     expect(join.get()).toEqual({ step: 'failed', error: errorText('cancelled') });
     expect(rt.kv.keys()).toEqual([]);
+  });
+
+  it('a done that names the right entry is not enough: nothing is kept until the server\'s chain holds it (the admitter\'s word is not the proof)', async () => {
+    const { as, rt, admitter } = await world();
+    const join = driverOf(rt);
+    await toWaiting(join, admitter);
+    await admitter.step(); await join.poll(); await admitter.step();
+    expect(join.get().step).toBe('compare');
+    // the admitter says "stored" but never appended
+    const sent = as.mailboxes.get(admitter.pairing.pairingId)!.messages.find((m) => m.kind === 'open')!.body.entry;
+    const box = new Mailbox(new AsApi(as), admitter.pairing);
+    await box.send('done', { entry_hash: await entryHash(sent) });
+    await join.poll();
+    expect(join.get()).toEqual({ step: 'failed', error: errorText('head_mismatch') });
+    expect(await rt.accounts.read()).toBeNull();
+    expect(await rt.keys.exists()).toBe(false);
+  });
+
+  it('a done before the phone sent open is not the answer to anything', async () => {
+    const { rt, admitter, as } = await world();
+    const join = driverOf(rt);
+    await toWaiting(join, admitter);
+    const box = new Mailbox(new AsApi(as), admitter.pairing);
+    await box.send('done', { entry_hash: 'sha256:' + 'a'.repeat(64) });
+    await join.poll();
+    expect(join.get().step).toBe('waiting');
+    expect(await rt.accounts.read()).toBeNull();
   });
 });

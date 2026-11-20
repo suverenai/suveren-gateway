@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { PrintScope, RecoveryCodeBox, CodeInput } from '@suveren/approval-card/components/DeviceFrame';
+import { QrCode } from '@suveren/approval-card/components/QrCode';
 import type { RegisterState } from '../lib/register-driver';
-import { qrMatrix } from '../lib/qr-matrix';
 import { P } from '../texts';
 import { Notice, Screen } from './Frame';
 import { ScanView } from './ScanView';
@@ -21,16 +21,9 @@ export interface RegisterScreenProps {
   scanning?: boolean;
 }
 
-/** The recovery code as a QR code: SVG rects, so no image and no inline style. */
+/** The recovery code as a QR code (the shared component; a phone-specific test id and label). */
 export function RecoveryQr({ text }: { text: string }) {
-  const rows = useMemo(() => qrMatrix(text), [text]);
-  const quiet = 4;
-  const size = rows.length + quiet * 2;
-  return (
-    <svg className="ap-qr" viewBox={`0 0 ${size} ${size}`} role="img" aria-label={P.codeTitle} data-testid="recovery-qr" shapeRendering="crispEdges">
-      {rows.flatMap((row, r) => row.map((dark, c) => (dark ? <rect key={`${r}-${c}`} x={c + quiet} y={r + quiet} width={1} height={1} /> : null)))}
-    </svg>
-  );
+  return <QrCode text={text} label={P.codeTitle} testid="recovery-qr" />;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {

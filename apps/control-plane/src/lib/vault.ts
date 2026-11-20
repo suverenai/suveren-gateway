@@ -1060,6 +1060,21 @@ export class Vault {
   /** The signed-in person, set at login from the AS session response; cleared with the session. */
   setSessionUser(user: { id: string; did: string } | null): void {
     this.sessionUser = user;
+    // The account this computer was signed in to is remembered in the sealed vault (plan 20.2): a restart, a lock or a sign-out does
+    // not make a legacy gateway forget which account it belongs to. Written only while the vault is open; never cleared here.
+    // Only with the device-keys switch on: a gateway without it writes nothing new.
+    if (user && this.deviceKeys && this.isUnlocked()) {
+      try { if (this.getSecretSlot<string>('accountDid') !== user.did) this.setSecretSlot('accountDid', user.did); } catch { /* the in-memory user still counts */ }
+    }
+  }
+
+  /** The DID of the account this computer is signed in to, or was last signed in to (sealed in the vault). Null when it never was or the vault is closed. */
+  getKnownAccountDid(): string | null {
+    if (this.sessionUser) return this.sessionUser.did;
+    try {
+      const d = this.getSecretSlot<unknown>('accountDid');
+      return typeof d === 'string' && d.startsWith('did:key:') ? d : null;
+    } catch { return null; }
   }
 
   getSessionUser(): { id: string; did: string } | null {

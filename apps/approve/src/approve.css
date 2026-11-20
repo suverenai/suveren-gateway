@@ -8,20 +8,11 @@
 /* The theme switch sits top right, inside the safe area. */
 .ap-top { display: flex; justify-content: flex-end; padding: calc(env(safe-area-inset-top) + var(--space-2)) calc(env(safe-area-inset-right) + var(--space-3)) 0 var(--space-3); }
 
-/* The recovery code's QR (the gateway's sheet has none): SVG rects, no image, no inline style.
-   A QR is dark on light whatever the theme: `color-scheme: light` makes the system colours Canvas and CanvasText light and dark. */
-.ap-qr { display: block; width: 100%; max-width: 14rem; height: auto; margin: var(--space-4) auto; color-scheme: light; background: Canvas; }
-.ap-qr rect { fill: CanvasText; }
-
 /* Scanning. On an iPhone the preview can stay black: the frame and the line under it carry the screen. */
 .ap-scan { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 22rem; margin: var(--space-4) auto; border: 2px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-sunken); overflow: hidden; }
 .ap-scan video { width: 100%; height: 100%; object-fit: cover; }
 .ap-scan-frame { position: absolute; inset: var(--space-8); border: 3px dashed var(--text-primary); border-radius: var(--radius-md); pointer-events: none; }
 .ap-scan-line { text-align: center; margin: 0 0 var(--space-3); }
-
-/* Three codes to tap on one row. */
-.ap-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin: var(--space-4) 0; }
-.ap-choices .btn { font-family: var(--font-mono); font-size: var(--text-lead); padding: var(--space-4) var(--space-2); }
 
 /* When the app goes to the background its content is hidden (plan 8, DEC-24; iOS 18.7 shows the content in the switcher anyway: 12.2 line 14). */
 body.ap-blank #root { visibility: hidden; }

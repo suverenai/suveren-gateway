@@ -15,8 +15,8 @@
     "@hap/core": "workspace:*",
     "@hpke/core": "^1.9.0",
     "@suveren/approval-card": "workspace:*",
+    "@suveren/pairing": "workspace:*",
     "jsqr": "^1.4.0",
-    "qrcode-generator": "^1.4.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
