@@ -7,6 +7,7 @@ import { turnOnTouchUnlock } from '../../lib/touch-unlock';
 import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice } from './DeviceScreen';
 import { PasswordScreen } from './PasswordScreen';
+import { BrandMark } from '../BrandMark';
 
 type Step =
   | { step: 'connect'; busy: boolean; error?: string }
@@ -103,15 +104,33 @@ export function StartPage() {
 
 /**
  * The ordinary sign-in, unless this gateway may still start without an account key (DEC-93): then the start page.
- * The sign-in renders at once (the page never waits on the answer); a new gateway moves on to /start when it comes.
+ * With the switch on, nothing is shown until the gateway answered: a new gateway goes straight to /start, every other
+ * shows the sign-in. (Rendering the sign-in first made it flash for a second before /start on a new gateway.)
+ * An unreadable answer shows the sign-in, never a blank page.
  */
 export function LoginOrStart({ switchOn, children }: { switchOn: boolean; children: ReactNode }) {
   const navigate = useNavigate();
+  const [decided, setDecided] = useState(!switchOn);
   useEffect(() => {
-    if (!switchOn) return;
+    if (!switchOn) { setDecided(true); return; }
     let live = true;
-    void deviceClient.startStatus().then(r => { if (live && r.ok && r.data.available) navigate('/start', { replace: true }); });
+    void deviceClient.startStatus().then(r => {
+      if (!live) return;
+      if (r.ok && r.data.available) navigate('/start', { replace: true });
+      else setDecided(true);
+    }, () => { if (live) setDecided(true); });
     return () => { live = false; };
   }, [switchOn, navigate]);
-  return <>{children}</>;
+  return decided ? <>{children}</> : <PageLoading />;
+}
+
+/** While the gateway is asked which page to show: the top bar and the turning Suveren mark, never an empty page. */
+export function PageLoading() {
+  return (
+    <DeviceScreen>
+      <div role="status" aria-label={DRAFT.loading} style={{ display: 'flex', justifyContent: 'center', padding: '3rem 0' }}>
+        <span className="brand-spin" aria-hidden="true"><BrandMark size={40} /></span>
+      </div>
+    </DeviceScreen>
+  );
 }
