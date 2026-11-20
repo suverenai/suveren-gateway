@@ -12,6 +12,14 @@ export const S13 = {
   giveButton: 'Give this mandate with Touch ID', // 211
   /** DRAFT: while the touch is asked for. */
   giveBusy: 'Waiting for your touch...',
+  /** DRAFT: after the touch, while the give runs (never a silent wait). */
+  giveWorkingSigning: 'Signing…',
+  giveWorkingSending: 'Sending to suveren.ai…',
+  giveWorkingDelivering: 'Getting it ready on this computer…',
+  /** DRAFT: the gateway's result stamp after a give with Touch ID. */
+  giveSigned: 'Signed',
+  giveRecorded: 'Recorded',
+  giveResultClose: 'Close',
   giveCardButton: 'Give this mandate', // DRAFT: the AI-proposal card's "Sign mandate"; the touch follows
   giveCardApprove: 'Approve', // DRAFT: the card's "Approve and sign"
   giveTouchNote: 'Your device asks for your touch. It names only the area ({area}). The details are on this page.', // 212 (device, not Mac)

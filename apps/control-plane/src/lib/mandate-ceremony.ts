@@ -117,6 +117,11 @@ export interface CeremonyDeps {
    * the steps below are exactly the ones of every earlier release.
    */
   grants?: MandateGrants;
+  /**
+   * Where a give on this computer is (device-chain ceremony only), so the page never waits in silence: `touched` once the person's touch
+   * was given, `requesting` while the Authority Server is asked, `delivering` while the gate content reaches this gateway. No content.
+   */
+  progress?: (stage: 'touched' | 'requesting' | 'delivering') => void;
   /** Told the moment the Authority Server ACCEPTED a mandate request of a device-chain ceremony: from here a retry would make a second live mandate. */
   onIssued?: (info: { mandateId: string }) => void;
   /** The mandate id a NEW mandate must get (chosen when the approval was claimed); undefined: the grant picks one. */
@@ -557,7 +562,7 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
   const ctx = await grantedContext(req, plan, deps);
   let issued: Issued;
   try {
-    issued = await deps.grants!.issue(ctx.issueInput);
+    issued = await deps.grants!.issue(ctx.issueInput, { onTouched: () => deps.progress?.('touched') });
   } catch (err) { return grantRefused(err); }
   return requestGranted(ctx, issued, deps);
 }
@@ -683,6 +688,7 @@ async function requestGranted(ctx: StoredContext, issued: Issued, deps: Ceremony
   const { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, enc } = ctx;
   const user = deps.user!;
   const grants = deps.grants!;
+  deps.progress?.('requesting');
   const res = await deps.as('POST', '/api/as/mandate', {
     authorization_id: authorizationId,
     profile_id: plan.profile.id,
@@ -710,6 +716,7 @@ async function requestGranted(ctx: StoredContext, issued: Issued, deps: Ceremony
     refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
   }
   deps.onIssued?.({ mandateId: issued.mandateId });
+  deps.progress?.('delivering');
   try {
     await deps.deliverGateContent({
       authorizationId, boundsHash, contextHash: scopeHash, context: plan.context,

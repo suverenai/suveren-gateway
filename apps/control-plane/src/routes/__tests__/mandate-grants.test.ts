@@ -9,6 +9,7 @@
  *   - the native helper: packages/unlock-helper/test/fake-helper.mjs, software P-256 keys and no touch at all. No test
  *     shows a real Touch ID prompt. The prompt text it would show is read from the helper's own return value.
  */
+import { eventBus } from '../../lib/event-bus';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -216,6 +217,21 @@ describe('before the touch: everything that can be refused is refused without as
     expect(w.touches).not.toHaveBeenCalled();
     expect(w.mandates.posts).toEqual([]);
     expect(w.mandates.issued).toEqual([]);
+  });
+
+  it('the page is told each step of the give, in order, with the stage word only (never a silent wait); a cancelled touch tells nothing', async () => {
+    const w = await world();
+    const seen: unknown[] = [];
+    const off = eventBus.subscribe(e => { if (e.type === 'give-progress') seen.push(e.payload); });
+    try {
+      const r = await w.sign();
+      expect(r.status, r.text).toBe(200);
+      expect(seen).toEqual([{ stage: 'touched' }, { stage: 'requesting' }, { stage: 'delivering' }]);
+      seen.length = 0;
+      w.helperNow({ FAKE_TOUCH: 'cancel' });
+      expect((await w.sign()).status).toBe(422);
+      expect(seen).toEqual([]);
+    } finally { off(); }
   });
 
   it('a touch that is not given (cancelled): no grant, no body, no mandate', async () => {

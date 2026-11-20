@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useSSEEvent } from '../contexts/EventSourceContext';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -24,7 +25,7 @@ import { effectiveGrantors, MandateSignError, type ProfileConfig, type PreparedM
 import { useDeviceChain } from '../lib/use-device-chain';
 import {
   S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, scopeLabel, durationText, endDateText, giveErrorText,
-  GivePhoneFooter, givePhoneRefusalText, giveSummaryLine,
+  GivePhoneFooter, givePhoneRefusalText, giveSummaryLine, GiveTouchFooter, afterProgress, type GiveTouchView,
 } from '@suveren/approval-card/mandate-screens';
 import { phoneGiveOffered, afterPoll, afterRefusal, phoneGiveBusy, waitExpired, GIVE_PHONE_POLL_MS, type GivePhoneState } from '../lib/give-on-phone-flow';
 
@@ -78,6 +79,12 @@ export function AgentReviewPage() {
   const [prepareTick, setPrepareTick] = useState(0);
   const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
   const [given, setGiven] = useState<{ authorizationId: string; text: string } | null>(null);
+  // A give with Touch ID on this computer (chain gateways): never a silent wait — the touch, then each step the gateway reports.
+  const [touchView, setTouchView] = useState<GiveTouchView>({ s: 'offered' });
+  const onGiveProgress = useCallback((payload: unknown) => {
+    setTouchView(v => afterProgress(v, (payload as { stage?: unknown } | null)?.stage));
+  }, []);
+  useSSEEvent('give-progress', onGiveProgress);
   // "Give on your phone" (DEC-90): this computer has no check key, a phone of the chain can grant it.
   const [phoneGive, setPhoneGive] = useState<GivePhoneState>({ s: 'offered' });
   const [authData, setAuthData] = useState<AuthData | null>(null);
@@ -358,6 +365,7 @@ export function AgentReviewPage() {
     }
     setSubmitting(true);
     setError('');
+    if (chain) setTouchView({ s: 'touch' });
     try {
       // Edit flow: this ceremony supersedes an existing grant. Grants are
       // content-immutable (the attestation signature freezes bounds/scope/
@@ -428,19 +436,22 @@ export function AgentReviewPage() {
       sessionStorage.removeItem('agentReplacesProposal');
       sessionStorage.removeItem('agentChangeAiIntent');
       if (revokeProblem) {
+        if (chain) setTouchView({ s: 'offered' });
         // Stay on the page: a mandate the person believes is replaced is still live.
         setError(revokeProblem);
         return;
       }
       if (withdrawProblem) {
+        if (chain) setTouchView({ s: 'offered' });
         // The mandate is live; only the AI's proposal is still open. Stay on
         // the page and say what to do instead of hiding it.
         setError(`Your mandate is signed and active. The AI's proposal could not be withdrawn (${withdrawProblem}) — reject it under Approvals.`);
         return;
       }
-      if (chain) { setGiven({ authorizationId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) }); return; }
+      if (chain) { setTouchView({ s: 'given' }); setGiven({ authorizationId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) }); return; }
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
+      if (chain) setTouchView({ s: 'offered' });
       if (chain && e instanceof MandateSignError) {
         if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(t => t + 1);   // look at the plan again
         if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason }));
@@ -501,10 +512,10 @@ export function AgentReviewPage() {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
   }
   if (given) {
+    // The gateway's own result stamp (DEC-86/88), then back to the mandate list, where the new mandate is marked.
     return (
-      <div style={{ maxWidth: 560 }}>
-        <p role="status" data-testid="give-done" className="msg-success">{given.text}</p>
-        <button className="btn btn-primary" onClick={() => navigate(`/mandates?highlight=${encodeURIComponent(given.authorizationId)}`)}>Go to my mandates</button>
+      <div className="card av3-card" style={{ maxWidth: 560 }} data-testid="give-done">
+        <GiveTouchFooter view={{ s: 'given' }} onGive={() => {}} onBack={() => {}} onClose={() => navigate(`/mandates?highlight=${encodeURIComponent(given.authorizationId)}`)} />
       </div>
     );
   }
@@ -968,6 +979,16 @@ export function AgentReviewPage() {
                 <button type="button" className="av3-btn av3-btn-primary" style={{ width: '100%' }} onClick={() => navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`)} data-testid="give-phone-done">Go to my mandates</button>
               </div>
             )}
+          </div>
+        ) : chain ? (
+          <div className="card av3-card" style={{ position: 'relative' }}>
+            <GiveTouchFooter
+              view={touchView}
+              disabled={submitting || approverBlocked || !prepared || !!prepared.blocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+              onGive={() => { void handleCommit(); }}
+              onBack={() => navigate('/mandates/new/intent')}
+              onClose={() => {}}
+            />
           </div>
         ) : (
         <div style={{ display: 'flex', gap: '0.5rem' }}>

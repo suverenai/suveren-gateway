@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
+import { eventBus } from '../lib/event-bus';
 
 function answerRefusal(res: Response, err: unknown): void {
   if (err instanceof MandateRefused) {
@@ -145,7 +146,8 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
   router.post('/sign', async (req, res) => {
     const request = (req.body ?? {}) as MandateRequest;
     try {
-      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      // The page shows each step of a give with Touch ID (never a silent wait): the stage only, no content.
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}`, progress: (stage) => eventBus.emit('give-progress', { stage }) };
       // A chain gateway gives only what was prepared for this page: the request is prepared again here and must hash to what the page echoed.
       if (d.grants?.active()) {
         const echoed = (req.body as { planHash?: unknown } | undefined)?.planHash;

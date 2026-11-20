@@ -46,6 +46,8 @@ class FakeAs {
   /** Sealed bodies as `GET /api/mandates/:id/body` serves them (PR #141): this gateway's own wrap only, `device_key` null when it has none. */
   bodies = new Map<string, Array<{ mandate_version: number; ciphertext: string; device_key: { ct: string; enc: string } | null }>>();
   failBody = false;
+  /** Holds every receipt answer until released (the Authority Server is slow for receipts). */
+  holdReceipts: Promise<void> | null = null;
   /** A grant listing that fails (the Authority Server is down for it). */
   failGrants = false;
   /** `GET /api/authorizations/:id` answers 404 (the group is not known) */
@@ -96,6 +98,7 @@ class FakeAs {
       return json(200, { bodies: (this.bodies.get(id) ?? []).map(b => ({ mandate_id: id, ...b, submitted_by_key_id: 'k', granted: true, stored_at: now(), expires_at: now() + 3600 })) });
     }
     if (req.method === 'POST' && (m = /^\/api\/mandates\/([^/]+)\/receipts$/.exec(url.pathname))) {
+      if (this.holdReceipts) await this.holdReceipts;
       const body = JSON.parse(raw) as { receipt: dk.MandateReceipt; sig: string };
       const id = decodeURIComponent(m[1]);
       const rows = this.grants.get(id) ?? [];
@@ -261,13 +264,26 @@ const refusedWith = async (w: World, code: RegExp | string) => {
 };
 
 describe('a mandate with its owner\'s grant is honoured', () => {
+  it('the mandate is honoured without waiting for the receipt (a slow Authority Server for receipts never holds up the give)', async () => {
+    const w = await world();
+    let release!: () => void;
+    w.as.holdReceipts = new Promise<void>(r => { release = r; });
+    const auth = await w.cache.syncAuthorization(AUTHZ);
+    expect(auth?.authorizationId).toBe(AUTHZ);
+    expect(w.cache.withheldReason(AUTHZ)).toBeUndefined();
+    expect(w.as.receipts).toHaveLength(0);   // still held at the Authority Server: the check did not wait for it
+    release();
+    await vi.waitFor(() => expect(w.as.receipts).toHaveLength(1));
+  });
+
   it('the cache holds it, and the owner\'s own gateway answers the grant with its receipt, once', async () => {
     const w = await world();
     const auth = await w.cache.syncAuthorization(AUTHZ);
     expect(auth?.authorizationId).toBe(AUTHZ);
     expect(w.cache.getAllAuthorizations()).toHaveLength(1);
     expect(w.cache.withheldReason(AUTHZ)).toBeUndefined();
-    expect(w.as.receipts).toHaveLength(1);
+    // the receipt is sent, not awaited (it decides nothing here): it arrives right after
+    await vi.waitFor(() => expect(w.as.receipts).toHaveLength(1));
     expect(w.as.receipts[0].receipt).toMatchObject({ mandate_id: MANDATE_ID, mandate_version: 1, key_id: w.owner.dev.keyId });
     expect(w.as.receipts[0].receipt.grant_hash).toBe(await dk.grantHash(w.as.grants.get(MANDATE_ID)![0].grant as never));
     // checked again: honoured again, no second receipt
@@ -401,7 +417,7 @@ describe('the sealed body on a computer that did not create the mandate: opened,
     await seal(good);
     expect((await w.cache.syncAuthorization(AUTHZ))?.authorizationId).toBe(AUTHZ);
     expect(store.get(AUTHZ)).toMatchObject({ authorizationId: AUTHZ, profileId: 'test-pay@1', context: SCOPE, gateContent: { intent: INTENT }, contextHash: w.payload.scope_hash, boundsHash: w.payload.bounds_hash });
-    expect(w.as.receipts).toHaveLength(1);
+    await vi.waitFor(() => expect(w.as.receipts).toHaveLength(1));
     // asked again: what is held matches, so nothing is fetched a second time
     const before = w.as.requests.filter(r => r.path.endsWith('/body')).length;
     await w.cache.syncAuthorization(AUTHZ);

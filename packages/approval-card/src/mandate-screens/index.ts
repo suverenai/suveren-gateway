@@ -10,3 +10,4 @@ export * from './give-view';
 export { GiveApprovers, giveBlocked } from './GiveApprovers';
 export { TeamChangesPanel, type TeamChangesPanelProps, type TeamChangesActions } from './TeamChangesPanel';
 export { GivePhoneFooter, givePhoneRefusalText, type GivePhoneView } from './GivePhone';
+export { GiveTouchFooter, afterProgress, giveStageText, type GiveTouchView, type GiveStage } from './GiveTouch';
