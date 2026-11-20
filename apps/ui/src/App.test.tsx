@@ -47,16 +47,18 @@ const at = (path: string, el: ReactElement, over?: Partial<AuthContextValue>) =>
   renderToStaticMarkup(<MemoryRouter initialEntries={[path]}><AuthContext.Provider value={auth(over)}>{el}</AuthContext.Provider></MemoryRouter>);
 
 describe('AppRoutes wiring: which page /login shows (fix 1)', () => {
-  it('legacy (switch off, or switch on with no password): the account-key sign-in', () => {
-    for (const over of [{ access: 'legacy' as const, deviceKeysSwitch: false }, { access: 'legacy' as const, deviceKeysSwitch: true, passwordSet: false }]) {
+  it('legacy, switch off: the account-key sign-in at once', () => {
+    for (const over of [{ access: 'legacy' as const, deviceKeysSwitch: false }]) {
       const h = at('/login', <AppRoutes />, over);
       expect(h).toContain('Enter your API key to manage mandates.');
       expect(h).not.toContain(T.unlockTitle);
       expect(h).not.toContain('device-screen');
     }
   });
-  it('the switch off and the switch on without a password render the very same login page', () => {
-    expect(at('/login', <AppRoutes />, { deviceKeysSwitch: true })).toBe(at('/login', <AppRoutes />, { deviceKeysSwitch: false }));
+  it('switch on without a password: nothing until the gateway says whether it is new (no flash of the sign-in before /start)', () => {
+    const h = at('/login', <AppRoutes />, { access: 'legacy', deviceKeysSwitch: true, passwordSet: false });
+    expect(h).not.toContain('Enter your API key');
+    expect(h).not.toContain('device-screen');
   });
   it('a password: the unlock screen, not the account-key form', () => {
     const h = at('/login', <AppRoutes />, { access: 'password', deviceKeysSwitch: true, passwordSet: true });
