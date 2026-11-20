@@ -156,6 +156,7 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  * changed" only where it is true). Every one is listed in the hand-over report for the maintainer to confirm.
  */
 export const DRAFT = {
+  connectChainExists: 'This account already has a device. Add this computer from a device you already have. Nothing changed.', // DRAFT (plan 20.18 point 6)
   loading: 'Loading…', // DRAFT
   connectWaitingWhat: 'Still missing: press Connect on the suveren.ai page in that tab.', // DRAFT
   connectStuck: 'Nothing has arrived yet. If you closed that tab, or it says Done without a Connect button, start again.', // DRAFT
@@ -266,6 +267,8 @@ export interface TextContext {
   /** Where the code was met. Some codes read differently there (a cancelled Touch ID on unlock vs on confirm). */
   screen?: 'password' | 'setup' | 'connect' | 'unlock' | 'confirm' | 'signin' | 'recover' | 'general';
   retryAfterSeconds?: number;
+  /** The Authority Server's own refusal code, where the control plane passed it on (Connect: `asCode`). */
+  asCode?: string;
 }
 
 /** "10 minutes" for the wait the control plane named; at least one minute. */
@@ -280,6 +283,9 @@ export function minutesText(retryAfterSeconds: number | undefined): string {
  */
 export function textForCode(code: string | undefined, ctx: TextContext = {}): string {
   const screen = ctx.screen ?? 'general';
+  // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code. Trying again never helps,
+  // so the generic "refused … Try again" would send the person round in circles.
+  if (ctx.asCode === 'CHAIN_EXISTS') return DRAFT.connectChainExists;
   switch (code) {
     // The page session (DEC-47)
     case 'session_idle': return T.sessionIdle;

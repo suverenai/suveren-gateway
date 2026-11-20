@@ -113,7 +113,7 @@ export class SetupDriver extends Driver<SetupState> {
         return;
       }
       const code = r.data.state === 'expired' ? 'connect_timeout' : (r.data.code ?? 'connect_failed');
-      this.set({ step: 'connect', busy: false, setupId: st.setupId, error: textForCode(code, { screen: 'connect' }) });
+      this.set({ step: 'connect', busy: false, setupId: st.setupId, error: textForCode(code, { screen: 'connect', asCode: r.data.asCode }) });
     } finally {
       this.polling = false;
     }

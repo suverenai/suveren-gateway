@@ -105,6 +105,12 @@ describe('the final texts, exactly (wording-recommendation.md, DEC-70)', () => {
     expect(textForCode('cancelled', { screen: 'confirm' })).toBe(T.confirmCancelled);
     expect(textForCode('key_invalid', { screen: 'confirm' })).toBe(T.confirmTouchBroken);
   });
+  it('a refused Connect for an account that already has a device chain says to add the computer from a device (plan 20.18 point 6)', () => {
+    expect(textForCode('connect_refused', { screen: 'connect', asCode: 'CHAIN_EXISTS' })).toBe(DRAFT.connectChainExists);
+    expect(textForCode('connect_refused', { screen: 'connect' })).toBe(T.connectRefused);
+    expect(textForCode('connect_refused', { screen: 'connect', asCode: 'SOMETHING_ELSE' })).toBe(T.connectRefused);
+  });
+
   it('decision codes are recognised', () => {
     expect(isDecisionCode('content_mismatch')).toBe(true);
     expect(isDecisionCode('wrong_password')).toBe(false);
