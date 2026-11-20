@@ -73,10 +73,6 @@ export class PhoneGiveStore {
   }
 
   /** The give waiting for an approved proposal, or null. */
-  byProposal(proposalId: string): { mandateId: string; startedAt: number } | null {
-    if (typeof proposalId !== 'string' || proposalId.length === 0) return null;
-    return this.list().find(g => g.proposalId === proposalId) ?? null;
-  }
 
   /** Stop waiting for it. True when one was waiting. */
   drop(mandateId: string): boolean {

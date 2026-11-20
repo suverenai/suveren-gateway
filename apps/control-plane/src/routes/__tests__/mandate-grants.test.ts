@@ -523,50 +523,22 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(await known(w.rootDid)).toBe(true);
   });
 
-  it('the AI path (the internal secret alone) cannot raise Touch ID: a mandate is created only for what the person approved, once, from the approved arguments', async () => {
+  it('one mechanism (Andreas 2026-11-20): with a chain, the AI path never creates a mandate; the person gives it on the page. A dry run still answers, with no touch', async () => {
     const w = await world();
-    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.', mode: 'review', duration_hours: 1, title: 'Quotes' };
-    const hash = computeProposalContentHash(args);
-    const request = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: args.intent, mode: 'review', durationHours: 1, title: 'Quotes', team: 'personal' };
-    // the AI calls directly: no approval, a made-up fingerprint, the right fingerprint of something nobody approved
-    for (const approvalHash of [undefined, `sha256:${'a'.repeat(64)}`, hash]) {
-      const r = await w.internal('/internal/mandate', { request: { ...request, ...(approvalHash ? { approvalHash } : {}) } });
-      expect([r.status, r.body.code], String(approvalHash)).toEqual([403, 'approval_required']);
+    const request = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.', mode: 'review', durationHours: 1, title: 'Quotes', team: 'personal' };
+    const dry = await w.internal('/internal/mandate', { dryRun: true, request });
+    expect(dry.status, dry.text).toBe(200);
+    for (const extra of [{}, { approvalHash: `sha256:${'a'.repeat(64)}` }]) {
+      const r = await w.internal('/internal/mandate', { request: { ...request, ...extra } });
+      expect([r.status, r.body.code], r.text).toEqual([403, 'give_on_page']);
     }
     expect(w.touches).not.toHaveBeenCalled();
     expect(w.mandates.rows).toEqual([]);
-    // the person approves the proposal on the page
-    w.props.add({ id: 'p1', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
-    const approved = await w.post('/device-decision/p1/approve', { content_hash: hash, proposalContentHash: hash });
-    expect(approved.status, approved.text).toBe(200);
-    // another tool's approval, or a different fingerprint, is still nothing
-    const other = await w.internal('/internal/mandate', { request: { ...request, approvalHash: `sha256:${'b'.repeat(64)}` } });
-    expect(other.body.code).toBe('approval_required');
-    // the call names only the fingerprint: what is created is what was approved, whatever else the caller put in the request
-    const r = await w.internal('/internal/mandate', { request: { profile: 'sales', limits: { ...LIMITS, value_max: 999999 }, scope: { currency: 'USD' }, intent: 'something else', mode: 'automatic', durationHours: 5, approvalHash: hash, confirmedApproverDids: ['did:key:z6MkEvil'] } });
-    expect(r.status, r.text).toBe(200);
+    // the give page (what the card's "Give this mandate" opens) creates it: the same request, with the touch
+    const given = await w.sign();
     expect(w.touches).toHaveBeenCalledTimes(1);
-    const grant = w.mandates.rows[0].grant as Record<string, unknown>;
-    expect(grant).toMatchObject({ commitment_mode: 'review', bounds_hash: computeBoundsHash({ ...LIMITS, profile: SALES.id } as never, SALES) });
-    // used once
-    const again = await w.internal('/internal/mandate', { request: { ...request, approvalHash: hash } });
-    expect(again.body.code).toBe('approval_already_used');
-    expect(w.touches).toHaveBeenCalledTimes(1);
-  });
-
-  it('a touch that was not given leaves the approval unspent (try again), and a dry run needs no approval and raises no touch', async () => {
-    const w = await world();
-    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why', mode: 'review', duration_hours: 1, title: 'Q' };
-    const hash = computeProposalContentHash(args);
-    w.props.add({ id: 'p2', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
-    expect((await w.post('/device-decision/p2/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
-    const dry = await w.internal('/internal/mandate', { dryRun: true, request: { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why', mode: 'review', durationHours: 1, team: 'personal' } });
-    expect(dry.status, dry.text).toBe(200);
-    expect(w.touches).not.toHaveBeenCalled();
-    w.helperNow({ FAKE_TOUCH: 'cancel' });
-    expect((await w.internal('/internal/mandate', { request: { approvalHash: hash } })).body).toMatchObject({ grantCode: 'check_failed' });
-    w.helperNow({ FAKE_TOUCH: 'ok' });
-    expect((await w.internal('/internal/mandate', { request: { approvalHash: hash } })).status).toBe(200);
+    expect(w.mandates.rows).toHaveLength(1);
+    void given;
   });
 
   it('answers a grant with this computer\'s signed receipt, once; the Authority Server verifies it', async () => {
@@ -829,35 +801,6 @@ describe('review round 3', () => {
     expect(new MandateGrantStore(gw.vault).chainSeen()).toBe(false);
   });
 
-  it('a change runs only for the mandate it was approved for: a swapped `old` is refused and the approval stays; after the AS accepted a mandate the approval is spent even if the intent cannot be delivered', async () => {
-    const w = await world();
-    const first = await w.sign();
-    // the person approves a change of THIS mandate
-    const args = { mandate_id: authzOf(first), limits: { ...LIMITS, value_max: 900 }, intent: 'Why: changed.', change: {} };
-    const hash = computeProposalContentHash(args);
-    w.props.add({ id: 'pc', tool: 'setup__change_mandate', toolArgs: args, contentHash: hash });
-    expect((await w.post('/device-decision/pc/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
-    const old = (id: string) => ({ authorizationId: id, profileId: SALES.id, groupId: 'g_personal', ownerDid: w.rootDid, bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', expiresAt: Math.floor(Date.now() / 1000) + 3000, title: 'Quotes' });
-    const swapped = await w.internal('/internal/mandate', { request: { change: { old: old('authz_00000000-0000-0000-0000-000000000000') }, approvalHash: hash } });
-    expect([swapped.status, swapped.body.code]).toEqual([403, 'approval_other_mandate']);
-    expect(w.touches).toHaveBeenCalledTimes(1);               // only the first mandate's touch
-  });
-
-  it('after the Authority Server accepted the mandate the approval is spent, even when the intent cannot be delivered: a retry cannot make a second live mandate', async () => {
-    const w = await world();
-    const args = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: once.', mode: 'review', duration_hours: 1, title: 'Q' };
-    const hash = computeProposalContentHash(args);
-    w.props.add({ id: 'pf', tool: 'setup__create_mandate', toolArgs: args, contentHash: hash });
-    expect((await w.post('/device-decision/pf/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
-    w.flags.failDelivery = true;
-    const first = await w.internal('/internal/mandate', { request: { approvalHash: hash } });
-    expect(first.status).toBe(422);
-    expect(String(first.body.message)).toMatch(/revoked/);
-    expect(w.mandates.issued).toHaveLength(1);
-    const retry = await w.internal('/internal/mandate', { request: { approvalHash: hash } });
-    expect(retry.body.code).toBe('approval_already_used');
-    expect(w.mandates.issued).toHaveLength(1);
-  });
 });
 
 describe('step 13 screens: held back list, change preview, Touch ID change', () => {
@@ -1022,219 +965,5 @@ describe('nothing secret is logged, and the unchanged paths stay unchanged', () 
     open.push(gw);
     expect((await call(gw.port, 'POST', '/internal/mandate-grant/observe', { headers: { 'x-internal-secret': 'sekret' }, body: {}, origin: null })).status).toBe(404);
     expect(gw.grants).toBeUndefined();
-  });
-});
-
-
-describe('approval from any own device (plan 20.21.6, step 6): the stored commit decision, verified here', () => {
-  const ARGS = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait.', mode: 'review', duration_hours: 1, title: 'Q' };
-  const CREATE = 'setup__create_mandate';
-  const nowSec = () => Math.floor(Date.now() / 1000);
-  const userIdOf = (w: W) => [...w.as.accounts.values()][0].id;
-  type Signer = { keyId: string; priv: Uint8Array };
-
-  /** The person's root key adds another device (their phone or second computer). */
-  async function addDevice(w: W, label: string): Promise<Signer> {
-    const entries = w.as.chainEntries() as dk.ChainEntry[];
-    const root = await dk.rootKeyFromRecoveryCode(w.recoveryCode);
-    const priv = new Uint8Array((await import('node:crypto')).randomBytes(32));
-    const pub = await dk.ed25519PublicKey(priv);
-    const device = await dk.buildDeviceRecord({ sign_pub: dk.b64uEncode(pub), read_pub: dk.b64uEncode(new Uint8Array((await import('node:crypto')).randomBytes(32))), kind: 'gateway', label, keystore: 'software' }, pub);
-    const e = dk.buildEntry({ root_did: w.rootDid, seq: entries.length, prev: await dk.entryHash(entries[entries.length - 1]), op: 'add', created_at: nowSec(), signer: 'root', device });
-    e.sigs.push(await dk.signEntry(e, 'root', root.privateSeed), await dk.signEntry(e, device.key_id, priv));
-    await w.as.appendEntry(e);
-    return { keyId: device.key_id, priv };
-  }
-  async function removeDevice(w: W, keyId: string): Promise<void> {
-    const entries = w.as.chainEntries() as dk.ChainEntry[];
-    const root = await dk.rootKeyFromRecoveryCode(w.recoveryCode);
-    const e = dk.buildEntry({ root_did: w.rootDid, seq: entries.length, prev: await dk.entryHash(entries[entries.length - 1]), op: 'remove', created_at: nowSec(), signer: 'root', target: keyId });
-    e.sigs.push(await dk.signEntry(e, 'root', root.privateSeed));
-    await w.as.appendEntry(e);
-  }
-
-  /** What another device of the person would have signed and the Authority Server stored: a committed proposal and its decision. */
-  async function committedOn(w: W, signer: Signer, id: string, o: { args?: Record<string, unknown>; hash?: string; signedHash?: string; tool?: string; did?: string; decidedAt?: number; status?: 'committed' | 'pending'; storedAt?: number } = {}) {
-    const args = o.args ?? ARGS;
-    const tool = o.tool ?? CREATE;
-    const hash = o.hash ?? computeProposalContentHash(args);
-    const state = await dk.verifyChain({ expectedRootDid: w.rootDid, entries: w.as.chainEntries() });
-    const decision = dk.buildDecision({
-      approver_did: o.did ?? w.rootDid, key_id: signer.keyId, chain_seq: state.head.seq, chain_head: state.head.hash, proposal_id: id,
-      mandate_id: 'mandate-1', action: tool, action_type: 'manage', decision: 'commit', content_hash: o.signedHash ?? hash, proposal_content_hash: o.signedHash ?? hash,
-      decided_at: o.decidedAt ?? nowSec(), nonce: (await import('node:crypto')).randomBytes(16).toString('base64url'),
-    });
-    const sig = await dk.signObject(decision, signer.priv);
-    w.props.add({ id, tool, toolArgs: args, contentHash: hash, status: o.status ?? 'committed' });
-    w.props.decisions.push({ proposalId: id, userId: userIdOf(w), keyId: signer.keyId, deviceLabel: 'Phone', decision, sig, asChainSeq: state.head.seq, storedAt: o.storedAt ?? nowSec() });
-    return { hash, decision, sig };
-  }
-  const create = (w: W, hash: string, extra: Record<string, unknown> = {}) => w.internal('/internal/mandate', { request: { ...extra, approvalHash: hash } });
-
-  it('approved on another device of the person, created here: the mandate is made from the approved content, once, with the claim spent on the AS', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const { hash } = await committedOn(w, phone, 'pa');
-    // the caller's content is ignored
-    const r = await create(w, hash, { profile: 'sales', limits: { ...LIMITS, value_max: 999999 }, scope: { currency: 'USD' }, intent: 'other', mode: 'automatic', durationHours: 5 });
-    expect(r.status, r.text).toBe(200);
-    expect(w.touches).toHaveBeenCalledTimes(1);
-    expect(w.mandates.rows[0].grant).toMatchObject({ commitment_mode: 'review', bounds_hash: computeBoundsHash({ ...LIMITS, profile: SALES.id } as never, SALES) });
-    expect(w.props.spendCalls.map(c => c.action)).toEqual(['claim', 'done']);
-    expect(w.props.spends.get('pa')!.spentAt).not.toBeNull();
-    // the claim named the mandate that was then created (chosen before the touch), and `done` named the same
-    expect(decodeMandateBlob(w.mandates.issued[0].blob).payload.mandate_id).toBe(w.props.spends.get('pa')!.mandateId);
-    // used once: the second use is refused by the spend, no second touch
-    const again = await create(w, hash);
-    expect([again.status, again.body.code]).toEqual([403, 'approval_already_used']);
-    expect(w.touches).toHaveBeenCalledTimes(1);
-    expect(w.mandates.issued).toHaveLength(1);
-  });
-
-  it('a `done` the Authority Server never received cannot let the approval run twice: once the claimed mandate is issued, a lapsed claim is not taken over', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const { hash } = await committedOn(w, phone, 'pd');
-    w.props.failDone = true;
-    expect((await create(w, hash)).status).toBe(200);
-    expect(w.props.spends.get('pd')!.spentAt).toBeNull();
-    // ten minutes later the claim has lapsed and was never marked spent
-    w.props.spends.get('pd')!.claimedAt -= 700;
-    w.props.failDone = false;
-    const again = await create(w, hash);
-    expect([again.status, again.body.code]).toEqual([403, 'approval_already_used']);
-    expect(w.touches).toHaveBeenCalledTimes(1);
-    expect(w.mandates.issued).toHaveLength(1);
-  });
-
-  it('a claim already made (by another computer of the person) or a spend already done: refused before any touch', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const { hash } = await committedOn(w, phone, 'pb');
-    w.props.spends.set('pb', { claimedAt: nowSec(), spentAt: null, keyId: 'other-computer' });
-    expect((await create(w, hash)).body.code).toBe('approval_already_used');
-    expect(w.touches).not.toHaveBeenCalled();
-    expect(w.mandates.issued).toEqual([]);
-    // a claim that lapsed (10 minutes) is free again
-    w.props.spends.set('pb', { claimedAt: nowSec() - 601, spentAt: null, keyId: 'other-computer' });
-    expect((await create(w, hash)).status).toBe(200);
-  });
-
-  it('a touch that was not given gives the claim back (release) and the person can try again; a mandate that was issued is never released', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const { hash } = await committedOn(w, phone, 'pc2');
-    w.helperNow({ FAKE_TOUCH: 'cancel' });
-    expect((await create(w, hash)).body).toMatchObject({ grantCode: 'check_failed' });
-    expect(w.props.spendCalls.map(c => c.action)).toEqual(['claim', 'release']);
-    expect(w.props.spends.has('pc2')).toBe(false);
-    w.helperNow({ FAKE_TOUCH: 'ok' });
-    expect((await create(w, hash)).status).toBe(200);
-    expect(w.props.spendCalls.map(c => c.action)).toEqual(['claim', 'release', 'claim', 'done']);
-  });
-
-  it('a decision nobody of this person signed is refused: a wrong signature, another person\'s device, a removed device', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    // 1. signed by a key that is not the named device's
-    const stranger: Signer = { keyId: phone.keyId, priv: new Uint8Array((await import('node:crypto')).randomBytes(32)) };
-    const a = await committedOn(w, stranger, 'f1');
-    expect((await create(w, a.hash)).body.code).toBe('approval_not_signed_by_this_person');
-    // 2. another person's decision (their own chain, their DID), served as if it were this person's
-    const other = await person();
-    const otherKey = new Uint8Array((await import('node:crypto')).randomBytes(32));
-    const b = await committedOn(w, { keyId: phone.keyId, priv: otherKey }, 'f2', { args: { ...ARGS, title: 'B' }, did: other.did });
-    expect((await create(w, b.hash)).body.code).toBe('approval_not_signed_by_this_person');
-    // 3. a device that was removed from the chain afterwards: revoke is final
-    const gone = await addDevice(w, 'Lost phone');
-    const c = await committedOn(w, gone, 'f3', { args: { ...ARGS, title: 'C' } });
-    await removeDevice(w, gone.keyId);
-    expect((await create(w, c.hash)).body.code).toBe('approval_not_signed_by_this_person');
-    expect(w.touches).not.toHaveBeenCalled();
-    expect(w.props.spendCalls).toEqual([]);
-    expect(w.mandates.issued).toEqual([]);
-  });
-
-  it('a decision for other content is refused: another hash signed, another action, content the Authority Server altered', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    // the decision signed over hash A is served under a proposal of hash B
-    const A = computeProposalContentHash({ ...ARGS, title: 'A' });
-    const B = computeProposalContentHash({ ...ARGS, title: 'B' });
-    const x = await committedOn(w, phone, 'c1', { args: { ...ARGS, title: 'B' }, hash: B, signedHash: A });
-    expect((await create(w, x.hash)).body.code).toBe('approval_required');
-    // the decision was for the change tool, the call is a create
-    const y = await committedOn(w, phone, 'c2', { args: { ...ARGS, title: 'Y' }, tool: 'setup__change_mandate' });
-    expect((await create(w, y.hash)).body.code).toBe('approval_required');
-    // right decision, but the content the AS serves is not what was signed
-    const z = await committedOn(w, phone, 'c3', { args: { ...ARGS, title: 'Z' } });
-    w.props.proposals.get('c3')!.toolArgs = { ...ARGS, title: 'Z', limits: { ...LIMITS, value_max: 999999 } };
-    expect((await create(w, z.hash)).body.code).toBe('approval_content_mismatch');
-    expect(w.touches).not.toHaveBeenCalled();
-    expect(w.props.spendCalls).toEqual([]);
-  });
-
-  it('an old approval is refused: the decision\'s own time and the Authority Server\'s are both held to 7 days', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const old = nowSec() - 8 * 24 * 3600;
-    const a = await committedOn(w, phone, 'o1', { args: { ...ARGS, title: 'O1' }, decidedAt: old });
-    expect((await create(w, a.hash)).body.code).toBe('approval_expired');
-    const b = await committedOn(w, phone, 'o2', { args: { ...ARGS, title: 'O2' }, storedAt: old });
-    expect((await create(w, b.hash)).body.code).toBe('approval_expired');
-    expect(w.touches).not.toHaveBeenCalled();
-  });
-
-  it('the AI calling directly, with nothing approved, a pending proposal, a made-up fingerprint or no fingerprint: refused, no touch', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const p = await committedOn(w, phone, 'd1', { status: 'pending' });
-    for (const h of [undefined, `sha256:${'a'.repeat(64)}`, p.hash, 'nonsense']) {
-      const r = await create(w, h as string);
-      expect([r.status, r.body.code], String(h)).toEqual([403, 'approval_required']);
-    }
-    expect(w.touches).not.toHaveBeenCalled();
-    expect(w.mandates.issued).toEqual([]);
-  });
-
-  it('an approval signed on THIS computer through the page works the same way (the stored decision, not memory)', async () => {
-    const w = await world();
-    const hash = computeProposalContentHash(ARGS);
-    w.props.add({ id: 'own1', tool: CREATE, toolArgs: ARGS, contentHash: hash });
-    expect((await w.post('/device-decision/own1/approve', { content_hash: hash, proposalContentHash: hash })).status).toBe(200);
-    expect((await create(w, hash)).status).toBe(200);
-  });
-
-  it('a change runs only for the mandate named in the approved content, from any device', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const first = await w.sign();
-    const args = { mandate_id: authzOf(first), limits: { ...LIMITS, value_max: 900 }, intent: 'Why: changed.', change: {} };
-    const { hash } = await committedOn(w, phone, 'ch1', { args, tool: 'setup__change_mandate' });
-    const old = (id: string) => ({ authorizationId: id, profileId: SALES.id, groupId: 'g_personal', ownerDid: w.rootDid, bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'review', expiresAt: nowSec() + 3000, title: 'Quotes' });
-    const swapped = await create(w, hash, { change: { old: old('authz_00000000-0000-0000-0000-000000000000') } });
-    expect([swapped.status, swapped.body.code]).toEqual([403, 'approval_other_mandate']);
-    expect(w.props.spendCalls.map(c => c.action)).toEqual(['claim', 'release']);
-  });
-
-  it('the Authority Server unreachable or lying about the list: refused with a code, nothing run', async () => {
-    const w = await world();
-    const phone = await addDevice(w, 'Phone');
-    const { hash } = await committedOn(w, phone, 'u1x');
-    w.as.failChainGets = 5;
-    const r = await create(w, hash);
-    expect(r.status).toBeGreaterThanOrEqual(400);
-    expect(r.body.code).not.toBe(undefined);
-    expect(w.touches).not.toHaveBeenCalled();
-  });
-
-  it('flag off, or no chain: unchanged (no approval is asked; there is nothing to check it against)', async () => {
-    const as = await new StubAs().listen();
-    open.push(as);
-    const off = await bootGateway({ as, enabled: false });
-    open.push(off);
-    expect(off.approvals).toBeUndefined();
-    expect(off.grants).toBeUndefined();
   });
 });

@@ -262,7 +262,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, approvals: deviceApprovals, teamJoin: deviceTeamJoin, teamChanges: deviceTeamChanges, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, teamJoin: deviceTeamJoin, teamChanges: deviceTeamChanges, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -586,7 +586,7 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   ...(deviceGrants ? { grants: deviceGrants } : {}),
   replaced: { record: recordReplacedMandate, noteAttempt: noteReplacedRevokeAttempt, clear: clearReplacedMandate },
 });
-app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps, deviceApprovals));
+app.use('/internal', jsonParser, createInternalMandateRouter(() => internalSecret, mandateCeremonyDeps));
 
 // A replaced mandate whose revoke at the AS failed stays recorded on the MCP
 // server (not honoured here) and is retried until the AS confirms it.
@@ -600,8 +600,8 @@ const replacedRetryDeps = (): RetryDeps => ({
 });
 startReplacedRevokeRetry(replacedRetryDeps());
 
-// Gives waiting on the person's phone (DEC-86/DEC-90) are finished here too, not only by a page that polls: an approved AI proposal sent
-// to the phone has no page waiting for it. Every 5 seconds, only while signed in with a device chain; one check per give at a time.
+// Gives waiting on the person's phone (DEC-86/DEC-90) are finished here too, not only by the give page that polls: the person may
+// have left that page before the phone gave it. Every 5 seconds, only while signed in with a device chain; one check per give at a time.
 const PHONE_GIVE_COMPLETE_MS = 5_000;
 setInterval(() => {
   if (!vault.isUnlocked() || !vault.getSpCookie()) return;

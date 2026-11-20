@@ -51,7 +51,6 @@ export const S13 = {
   givePhoneMismatch: 'The answer from your phone does not match what is shown here. Nothing was given.', // DRAFT
   givePhoneClose: 'Close', // DRAFT
   givePhoneCancel: 'Cancel', // DRAFT
-  givePhoneApproved: 'Approved. This computer has no Touch ID, so the mandate went to your phone.', // DRAFT new (DEC-90, an approved AI proposal)
 
   // Screen 3: a mandate this gateway holds back
   heldTitle: 'On hold: Your AI cannot use these yet', // 250

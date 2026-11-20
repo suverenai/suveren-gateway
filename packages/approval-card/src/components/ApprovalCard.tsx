@@ -14,7 +14,7 @@
  * buttons come back with the error and nothing shows a ✓ (backend truth).
  */
 import { S13 } from '../mandate-screens/texts';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ProposalLink } from '../lib/proposal-links';
 import type { IntegrationManifest, Proposal, ShownSnapshotPayload } from '../types';
 import { approvalHost, hostData } from '../host';
@@ -30,7 +30,7 @@ import {
   decisionAwaitsOutcome, decisionErrorWords, mandateEndedHead, outcomeOfProposal, type ApprovalOutcome,
 } from '../lib/approval-outcome';
 import { useVisiblePolling } from '../hooks/useVisiblePolling';
-import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
+import { approveRoute, workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 const CHANGE_MANDATE_TOOL = 'setup__change_mandate';
@@ -97,6 +97,9 @@ export function ApprovalCard({
   const isChange = proposal.tool === CHANGE_MANDATE_TOOL;
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL || isChange;
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
+  // A device-key gateway: "Give this mandate" runs the give page's own flow from this proposal (ApprovalBody registerGive).
+  const giveRef = useRef<(() => void) | null>(null);
+  const registerGive = useCallback((g: (() => void) | null) => { giveRef.current = g; }, []);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   // Whether THIS device can decrypt the content — nothing can be approved that
@@ -285,6 +288,7 @@ export function ApprovalCard({
             topExtras={topExtras}
             onContentState={({ loading, readable }) => { setContentLoading(loading); setContentReadable(readable); }}
             onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
+            registerGive={registerGive}
           />
         </article>
         {moreBelow && <div className="more-cue" aria-hidden="true" data-testid="more-cue">More below ↓</div>}
@@ -310,7 +314,11 @@ export function ApprovalCard({
           )}
           <div className={`av3-btns${canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
-              <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => void run('approve')}>
+              <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => {
+                // A chain account gives a mandate with its device touch on the give page (one implementation, DEC-80/91 direction 2026-11-20).
+                if (approveRoute({ giveWording, isMandate, canOpenGivePage: !!giveRef.current }) === 'give_page') { giveRef.current!(); return; }
+                void run('approve');
+              }}>
                 {approveWord}
               </button>
             )}

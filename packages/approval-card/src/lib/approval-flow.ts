@@ -90,3 +90,12 @@ export const APPROVALS_CHANGED_EVENT = 'suveren:approvals-changed';
 export function announceApprovalDecided(target: EventTarget | undefined = typeof window !== 'undefined' ? window : undefined): void {
   target?.dispatchEvent(new Event(APPROVALS_CHANGED_EVENT));
 }
+
+/**
+ * What the card's primary button does. A device-key account GIVES a mandate (create or change) with the give page's own flow
+ * (prepare, Touch ID or the phone, progress, result), opened from the proposal and started at once — one implementation for a
+ * mandate the person gives and one the AI proposed (Andreas, 2026-11-20). Everything else is decided on the card.
+ */
+export function approveRoute(o: { giveWording: boolean; isMandate: boolean; canOpenGivePage: boolean }): 'give_page' | 'decide' {
+  return o.giveWording && o.isMandate && o.canOpenGivePage ? 'give_page' : 'decide';
+}
