@@ -169,7 +169,7 @@ export const P = {
   removeButton: 'Remove with your touch', // DRAFT new (DEC-85: "... with your touch")
   touchWait: 'Waiting for your touch…', // DRAFT (Andreas 2026-11-20: the only line while the system's touch window comes)
   removeDone: (label: string): string => `${label} was removed.`, // DRAFT new
-  removeListNow: 'Your devices now:', // DRAFT new
+  removeListNow: SP.admitDoneList, // shared (approval-card pairing-texts): "Your devices now:"
   removedSelf: 'This phone was removed from your account.', // DRAFT new
 
   // ─── Replace the recovery code after joining (DEC-85, mockup D1–D5) ───────────
