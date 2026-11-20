@@ -4,6 +4,7 @@
  * Holds one SPClient, one AttestationCache, and one GateStore.
  */
 
+import { ReplacedMandates } from './replaced-mandates';
 import { SPClient } from './sp-client';
 import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from './attestation-cache';
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
@@ -34,6 +35,8 @@ export class SharedState {
   readonly spClient: SPClient;
   readonly cache: AttestationCache;
   readonly gateStore: GateStore;
+  /** Mandates the person replaced; no longer honoured here (replaced-mandates.ts). */
+  readonly replacedMandates: ReplacedMandates;
   readonly executionLog: ExecutionLog;
   readonly denialLog: DenialLog;
   readonly receiptArchive: ReceiptArchive;
@@ -93,6 +96,8 @@ export class SharedState {
     this.spClient = new SPClient(spUrl, undefined, dataDir);
     this.cache = new AttestationCache(this.spClient, dataDir);
     this.gateStore = new GateStore(gateStorePath);
+    this.replacedMandates = new ReplacedMandates(gateStorePath);
+    this.cache.useReplacedMandates((id) => this.replacedMandates.has(id));
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);

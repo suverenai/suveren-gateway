@@ -102,6 +102,24 @@ export interface CeremonyDeps {
   newAuthorizationId: () => string;
   /** Drop a revoked mandate from the MCP server's list now rather than at next login. */
   resyncGates?: () => Promise<unknown>;
+  /**
+   * The replaced-mandates record on the MCP server (replaced-mandates.ts): once
+   * recorded, the old mandate is no longer honoured on this gateway, and the
+   * record is the revoke outbox (replaced-revoke-retry.ts).
+   */
+  replaced?: {
+    record: (authorizationId: string, replacedBy: string) => Promise<void>;
+    noteAttempt: (authorizationId: string, error?: string) => Promise<void>;
+    clear: (authorizationId: string) => Promise<void>;
+  };
+}
+
+/** What happened to the replaced mandate after its replacement was delivered. */
+export interface RetireResult {
+  /** The revoke at the Authority Server did not go through (it is retried). */
+  revokeError?: string;
+  /** The old mandate is no longer honoured on this gateway (recorded locally). */
+  oldStoppedLocally?: boolean;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -319,25 +337,49 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
 
 /**
  * Retire a mandate after its replacement is signed AND delivered — never before,
- * so a failed delivery can never leave the person with no mandate at all. Both are
- * live for a moment: a brief overlap is safe, a gap is not. A failed revoke is
- * returned, never swallowed: after a reduction the old, wider mandate stays live.
+ * so a failed delivery can never leave the person with no mandate at all.
+ *
+ * First the old mandate stops being honoured on this gateway (the local record,
+ * replaced-mandates.ts): from that moment only the new limits apply here, even
+ * while the Authority Server still serves the old one. Then the revoke at the
+ * AS. A failed revoke is returned, never swallowed, and stays in the record so
+ * replaced-revoke-retry.ts retries it until the AS confirms.
  */
-async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps): Promise<{ revokeError?: string }> {
-  let res: AsResponse;
-  try {
-    res = await deps.as('POST', `/api/authorizations/${encodeURIComponent(oldId)}/revoke`, { reason: `Replaced by ${newId}` });
-  } catch (err) {
-    return { revokeError: err instanceof Error ? err.message : String(err) };
+async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps): Promise<RetireResult> {
+  let oldStoppedLocally = false;
+  if (deps.replaced) {
+    try {
+      await deps.replaced.record(oldId, newId);
+      oldStoppedLocally = true;
+    } catch (err) {
+      console.error('[Control Plane] could not record the replaced mandate locally:', err instanceof Error ? err.message : err);
+    }
   }
-  // Already revoked (409) is what was wanted.
-  if (res.status >= 300 && res.status !== 409) return { revokeError: readRefusal(res.body, `status ${res.status}`).message };
+  const revokeError = await revokeReplaced(oldId, newId, deps);
+  if (revokeError) {
+    if (oldStoppedLocally) await deps.replaced!.noteAttempt(oldId, revokeError).catch(() => {});
+    return { revokeError, ...(oldStoppedLocally ? { oldStoppedLocally } : {}) };
+  }
+  if (oldStoppedLocally) await deps.replaced!.clear(oldId).catch(() => {});
   void deps.resyncGates?.().catch(() => {});
   return {};
 }
 
+/** One revoke attempt at the AS. Undefined = done (revoked now, or already). */
+export async function revokeReplaced(oldId: string, newId: string, deps: Pick<CeremonyDeps, 'as'>): Promise<string | undefined> {
+  let res: AsResponse;
+  try {
+    res = await deps.as('POST', `/api/authorizations/${encodeURIComponent(oldId)}/revoke`, { reason: `Replaced by ${newId}` });
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  // Already revoked (409) is what was wanted.
+  if (res.status >= 300 && res.status !== 409) return readRefusal(res.body, `status ${res.status}`).message;
+  return undefined;
+}
+
 /** Create the mandate the plan describes (and retire the one it replaces). Returns its authorization id. */
-export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan } & RetireResult> {
   const plan = await planMandate(req, deps);
   const user = deps.user!;
 
@@ -604,7 +646,7 @@ function diffForCompare(d: MandateDiff): string {
  * proposal, possibly long after: everything is computed again from the signed old mandate,
  * and anything that would differ from what the person saw is refused.
  */
-export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan } & RetireResult> {
   const { diff, request } = await planMandateChange(req, deps);
   if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
     refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');

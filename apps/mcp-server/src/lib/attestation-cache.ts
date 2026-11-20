@@ -142,6 +142,23 @@ export class AttestationCache {
   private reapprovalNeeded = new Set<string>();
 
   /**
+   * Mandates the person replaced (replaced-mandates.ts): treated exactly like
+   * a revoked mandate — never listed, never matched — even while the Authority
+   * Server still serves them because their revoke has not gone through yet.
+   */
+  private isReplaced: (authorizationId: string) => boolean = () => false;
+
+  /** Wire the replaced-mandates store (shared-state.ts). */
+  useReplacedMandates(isReplaced: (authorizationId: string) => boolean): void {
+    this.isReplaced = isReplaced;
+  }
+
+  /** Drop a replaced mandate from the cache now (it was just recorded). */
+  dropReplaced(authorizationId: string): void {
+    this.authorizations.delete(authorizationId);
+  }
+
+  /**
    * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
    * Personal OR in one team"): the account's current active workspace's
    * group id — its active team, else its Personal group. `null` = not yet
@@ -291,6 +308,12 @@ export class AttestationCache {
     const auth = this.authorizations.get(path);
     if (!auth) return null;
 
+    // A replaced mandate is no longer honoured here, whatever the AS still serves.
+    if (this.isReplaced(auth.authorizationId)) {
+      this.authorizations.delete(path);
+      return null;
+    }
+
     // WS3 defence-in-depth: never hand back a mandate of another workspace
     // — drop it from the cache so the next sync re-learns it clean.
     if (this.isForeignWorkspace(auth.groupId)) {
@@ -320,6 +343,11 @@ export class AttestationCache {
     // revoked-but-unexpired attestation can't issue a receipt, so matching it for
     // a new action only produces dead proposals. Remove any cached copy too.
     if (result.revoked) {
+      this.authorizations.delete(authorizationId);
+      return null;
+    }
+    // Replaced by a mandate the person approved: same as revoked on this gateway.
+    if (this.isReplaced(authorizationId)) {
       this.authorizations.delete(authorizationId);
       return null;
     }
@@ -454,6 +482,10 @@ export class AttestationCache {
         this.authorizations.delete(path);
         continue;
       }
+      if (this.isReplaced(auth.authorizationId)) {
+        this.authorizations.delete(path);
+        continue;
+      }
       const hasValid = auth.attestations.some(a => a.expiresAt > now);
       if (hasValid) {
         results.push(auth);
@@ -476,6 +508,7 @@ export class AttestationCache {
    * Cache an authorization directly (e.g., from SP response after creation).
    */
   cacheAuthorization(auth: CachedAuthorization): void {
+    if (this.isReplaced(auth.authorizationId)) return;
     // Key by the per-ceremony id — grants can never merge or overwrite.
     this.authorizations.set(auth.authorizationId, auth);
   }

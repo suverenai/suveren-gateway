@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { replacedLine } from '../lib/replaced-mandate';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
 import { profileIdentity, shortProfileId } from '@suveren/approval-card/lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '@suveren/approval-card/lib/area';
@@ -108,6 +109,8 @@ interface AuthCardProps {
    *  mandate's protocol version. Learned lazily (only once an execution
    *  was actually attempted), so absence does not mean "confirmed fine". */
   needsReapprovalSet?: Set<string>;
+  /** Mandates the person replaced whose revoke on the AS is still open — no longer used here. */
+  replacedSet?: Set<string>;
   /** Connector manifests — to name the tickets under a mandate, and to tell
    *  which limits only simulation-only tools use. */
   manifests?: IntegrationManifest[];
@@ -141,11 +144,13 @@ function AuthCard({
   onArchive,
   highlightHash,
   needsReapprovalSet,
+  replacedSet,
   manifests = [],
   simulation = null,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
   const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
+  const replacedNote = replacedLine(status, item.authorization_id, replacedSet);
   const archived = isArchived(item, { revokedSet, archivedSet });
   const canArchive = !ownerLabel && !!onArchive && isArchivable(status);
   const isExpanded = expandedHash === item.authorization_id;
@@ -265,6 +270,7 @@ function AuthCard({
 
       {upgradeHint}
       {ownerLabel && <p className="ob-quiet">Owner: <b>{ownerLabel}</b></p>}
+      {replacedNote && <p className="ob-quiet" data-testid="mandate-replaced-note">{replacedNote}</p>}
       {/* Only when it says something: several domains, or one still missing. */}
       {(item.required_domains.length > 1 || item.missing_domains.length > 0) && (
         <div className="ob-badges">
@@ -597,6 +603,7 @@ export function AuthorizationsPage() {
   // (the gateway's own cache, not AS-sourced), so this only applies to the
   // Mine tab — a team row's data comes straight from the Authority Server.
   const [needsReapprovalSet, setNeedsReapprovalSet] = useState<Set<string>>(new Set());
+  const [replacedSet, setReplacedSet] = useState<Set<string>>(new Set());
 
   const navigate = useNavigate();
   const { group, groupId, domain: activeDomain, mode, activeTeam } = useAuth();
@@ -640,6 +647,14 @@ export function AuthorizationsPage() {
   }, []);
   useEffect(() => { fetchNeedsReapproval(); }, [fetchNeedsReapproval]);
 
+  // Replaced mandates whose revoke on the AS is still open: one quiet line each.
+  const fetchReplaced = useCallback(() => {
+    spClient.getReplacedMandates()
+      .then(ids => setReplacedSet(new Set(ids)))
+      .catch(() => setReplacedSet(new Set()));
+  }, []);
+  useEffect(() => { fetchReplaced(); }, [fetchReplaced]);
+
   const handleArchive = async (authorizationId: string, archived: boolean) => {
     setArchivingHash(authorizationId);
     try {
@@ -668,6 +683,7 @@ export function AuthorizationsPage() {
     fetchMineItems();
     if (isAdmin && groupId) fetchTeamItems();
     fetchNeedsReapproval();
+    fetchReplaced();
   });
 
   // Strip ?highlight= from the URL on mount and clear the in-state highlight
@@ -1010,7 +1026,7 @@ export function AuthorizationsPage() {
     highlightHash,
     manifests,
   };
-  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet };
+  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet, replacedSet };
 
   return (
     <div className="ob-page">

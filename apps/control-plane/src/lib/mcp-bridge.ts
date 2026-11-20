@@ -138,6 +138,47 @@ export async function resyncGates(): Promise<{ synced: number }> {
   return res.json() as Promise<{ synced: number }>;
 }
 
+/** A mandate the person replaced; not honoured on this gateway (mcp-server replaced-mandates.ts). */
+export interface ReplacedMandateEntry {
+  authorizationId: string;
+  replacedBy: string;
+  since: number;
+  attempts: number;
+  lastError?: string;
+  lastAttemptAt?: number;
+}
+
+async function replacedCall(method: string, path: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/replaced-mandates${path}`, {
+    method,
+    headers: internalHeaders(),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(`MCP replaced-mandates ${method} failed: ${(err as { error: string }).error}`);
+  }
+  return res.json();
+}
+
+/** Stop honouring `authorizationId` on this gateway: it was replaced by `replacedBy`. */
+export async function recordReplacedMandate(authorizationId: string, replacedBy: string): Promise<void> {
+  await replacedCall('POST', '', { authorizationId, replacedBy });
+}
+
+export async function listReplacedMandates(): Promise<ReplacedMandateEntry[]> {
+  const body = (await replacedCall('GET', '')) as { entries?: ReplacedMandateEntry[] };
+  return Array.isArray(body.entries) ? body.entries : [];
+}
+
+export async function noteReplacedRevokeAttempt(authorizationId: string, error?: string): Promise<void> {
+  await replacedCall('POST', `/${encodeURIComponent(authorizationId)}/attempt`, error ? { error } : {});
+}
+
+export async function clearReplacedMandate(authorizationId: string): Promise<void> {
+  await replacedCall('DELETE', `/${encodeURIComponent(authorizationId)}`);
+}
+
 /**
  * Nudge the MCP server to execute any just-committed proposals immediately,
  * so a human approval turns into a send without waiting for the poll loop.

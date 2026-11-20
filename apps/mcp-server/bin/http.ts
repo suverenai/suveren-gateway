@@ -393,6 +393,45 @@ app.post('/internal/run-committed', internalOnly, (_req: Request, res: Response)
   res.json({ ok: true });
 });
 
+/**
+ * Replaced mandates (src/lib/replaced-mandates.ts). The control plane records
+ * an old mandate here as soon as its replacement is delivered; from then on it
+ * is not honoured on this gateway, whatever the Authority Server still serves.
+ * The same record is the revoke outbox: the control plane retries the revoke,
+ * notes each attempt, and clears the record once the AS confirmed it.
+ */
+app.get('/internal/replaced-mandates', internalOnly, (_req: Request, res: Response) => {
+  res.json({ entries: state.replacedMandates.list() });
+});
+
+app.post('/internal/replaced-mandates', internalOnly, (req: Request, res: Response) => {
+  const { authorizationId, replacedBy } = req.body as { authorizationId?: unknown; replacedBy?: unknown };
+  if (typeof authorizationId !== 'string' || !authorizationId || typeof replacedBy !== 'string' || !replacedBy || authorizationId === replacedBy) {
+    res.status(400).json({ error: 'authorizationId and replacedBy are required and must differ' });
+    return;
+  }
+  const entry = state.replacedMandates.record(authorizationId, replacedBy);
+  // Stop honouring it now, not at the next resync: drop the cached grant and
+  // its local gate (intent). Tools are re-listed so the AI no longer sees it.
+  state.cache.dropReplaced(authorizationId);
+  state.gateStore.delete(authorizationId);
+  for (const [, session] of activeSessions) {
+    try { session.refreshTools(); } catch { /* a closed session refreshes on reconnect */ }
+  }
+  res.json({ ok: true, entry });
+});
+
+app.post('/internal/replaced-mandates/:id/attempt', internalOnly, (req: Request, res: Response) => {
+  const { error } = req.body as { error?: unknown };
+  state.replacedMandates.noteAttempt(req.params.id, typeof error === 'string' && error ? error : undefined);
+  res.json({ ok: true });
+});
+
+app.delete('/internal/replaced-mandates/:id', internalOnly, (req: Request, res: Response) => {
+  state.replacedMandates.clear(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Response) => {
   // WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
   // Personal OR in one team"): refresh which workspace is active BEFORE
