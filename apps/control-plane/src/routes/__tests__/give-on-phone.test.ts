@@ -1,0 +1,207 @@
+/**
+ * Give on the phone (device-keys plan 4.4 "Transport", DEC-86): a computer WITHOUT a check key prepares the give, seals it to the person's
+ * devices, and requests the mandate only once the phone's grant is stored and carries exactly the members planned here.
+ *
+ * Real: the routers (`/api/mandate/*`), the ceremony, the vault, the chain store, hap-core's builder and verifier, the content sealing.
+ * Stood in: the Authority Server's network (StubAs + StubMandates, which verify every chain entry and every grant with hap-core) and the
+ * phone itself (this file opens the sealed request with the phone's own reading key and signs the grant with the phone's key and a
+ * WebAuthn assertion the way the app does; the app's own code is tested in apps/approve).
+ */
+import { describe, it, expect, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { webcrypto, randomBytes as nodeRandom } from 'node:crypto';
+import * as dk from '@hap/core/device-keys';
+import { buildMandateProjection, decryptProposalContent, computeBoundsHash, computeScopeHash, computeIntentHash, computeProfileHash, computeExecutionContextHash, decodeMandateBlob, type MandatePayload } from '@hap/core';
+import { createGrantMembers } from '@hap/core/mandate-grant';
+import { StubAs } from '../../__tests__/helpers/stub-as';
+import { StubMandates } from '../../__tests__/helpers/stub-as-mandates';
+import { bootGateway, call, sessionHeaders, type GatewayRig } from '../../__tests__/helpers/device-rig';
+import { generateKeyPair } from '../../lib/e2e-crypto';
+import { asAuthHeaders } from '../../lib/as-credential';
+
+const profilesDir = process.env.SUVEREN_PROFILES_DIR ?? join(import.meta.dirname, '..', '..', '..', '..', '..', '..', 'hap-profiles');
+const SALES = JSON.parse(readFileSync(join(profilesDir, 'sales', '0.4.profile.json'), 'utf8'));
+const LIMITS = { read_access: 'unlimited', value_max: 1000, discount_max: 10, order_value_daily_max: 5000, quote_daily_max: 10, send_daily_max: 10, order_daily_max: 0, setup_daily_max: 0 };
+const REQ = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.', mode: 'review', ttlSeconds: 3600, title: 'Quotes', team: 'personal' };
+const RP = 'approve.test';
+const { grantMembersOf } = createGrantMembers(buildMandateProjection);
+
+const open: Array<{ close: () => Promise<void> }> = [];
+afterEach(async () => { for (const o of open.splice(0).reverse()) await o.close(); });
+
+/** The phone: its device key, its reading key, its passkey (P-256), and a WebAuthn assertion over one object hash as a real one is made. */
+async function makePhone() {
+  const seed = new Uint8Array(nodeRandom(32));
+  const signPub = await dk.ed25519PublicKey(seed);
+  const read = await generateKeyPair();
+  const pk = (await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as webcrypto.CryptoKeyPair;
+  const raw = new Uint8Array(await webcrypto.subtle.exportKey('raw', pk.publicKey));
+  const credId = dk.b64uEncode(new Uint8Array(nodeRandom(16)));
+  const record = await dk.buildDeviceRecord({
+    sign_pub: dk.b64uEncode(signPub), read_pub: dk.b64uEncode(read.publicKey), kind: 'approve-app', label: 'My iPhone', keystore: 'platform',
+    check: { type: 'webauthn', rp_id: RP, cred_id: credId, pub: dk.b64uEncode(dk.encodeCoseEc2(raw.slice(1, 33), raw.slice(33, 65))) },
+  } as never, signPub);
+  const prove = async (objectHashText: string) => {
+    const authData = dk.concat(await dk.sha256(dk.utf8(RP)), Uint8Array.of(0x05), Uint8Array.of(0, 0, 0, 1));
+    const clientData = dk.utf8(JSON.stringify({ type: 'webauthn.get', challenge: dk.b64uEncode(dk.hashBytes(objectHashText)), origin: `https://${RP}` }));
+    const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pk.privateKey, dk.concat(authData, await dk.sha256(clientData))));
+    return { authenticatorData: dk.b64uEncode(authData), clientDataJSON: dk.b64uEncode(clientData), signature: dk.b64uEncode(dk.ecdsaRawToDer(sig)) };
+  };
+  return { seed, record, read, prove };
+}
+type Phone = Awaited<ReturnType<typeof makePhone>>;
+
+async function world() {
+  const as = await new StubAs().listen();
+  open.push(as);
+  const mandates = new StubMandates(as, SALES);
+  const delivered: unknown[] = [];
+  // No native helper: this computer has no check key, so it cannot give a mandate itself.
+  const gw: GatewayRig = await bootGateway({ as, mandate: { deliver: async a => { delivered.push(a); }, reads: { heldBack: async () => [] as never, signedMandate: async () => ({ refusal: 'none', code: 'MANDATE_NOT_ACTIVE' }) as never } } });
+  open.push(gw);
+  const h = sessionHeaders(await gw.unlock());
+  const post = (path: string, body: unknown = {}) => call(gw.port, 'POST', path, { headers: h, body });
+  const get = (path: string) => call(gw.port, 'GET', path, { headers: h });
+  const start = await post('/auth/device/setup/start', {});
+  expect(start.status, start.text).toBe(200);
+  const fin = await post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: as.issueEnrolmentCode() });
+  expect(fin.status, fin.text).toBe(200);
+  const rootDid = String(start.body.rootDid);
+  mandates.users.set('u1', { did: rootDid });
+  const root = await dk.rootKeyFromRecoveryCode(String(start.body.recoveryCode));
+  /** Admit the phone (no granting device yet: the root key admits it, plan 3.2 rule 3). */
+  const addPhone = async (phone: Phone) => {
+    const entries = as.chainEntries() as dk.ChainEntry[];
+    const state = await dk.verifyChain({ expectedRootDid: rootDid, entries });
+    const e = dk.buildEntry({ root_did: rootDid, seq: state.head.seq + 1, prev: state.head.hash, op: 'add', created_at: Math.floor(Date.now() / 1000), signer: 'root', device: phone.record });
+    const hash = await dk.entryHash(e);
+    e.sigs = [await dk.signEntry(e, 'root', root.privateSeed), await dk.signEntry(e, phone.record.key_id, phone.seed)];
+    e.checks = [{ by: phone.record.key_id, check: await phone.prove(hash) }];
+    await as.appendEntry(e);
+  };
+  const asPost = async (path: string, body: unknown) => {
+    const r = await fetch(`${as.url}${path}`, { method: 'POST', headers: { ...asAuthHeaders(gw.vault.getSpCookie()!), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json().catch(() => ({})) as Record<string, unknown> };
+  };
+  return { as, mandates, gw, post, get, rootDid, addPhone, asPost, delivered };
+}
+type W = Awaited<ReturnType<typeof world>>;
+
+/** What the phone does with the sealed request: open it with its own key, recompute every hash from the plaintext, rebuild the members, sign. */
+async function phoneOpens(w: W, phone: Phone) {
+  const body = w.mandates.bodies.at(-1)!;
+  const wrap = body.deviceKeys[phone.record.key_id];
+  expect(wrap, 'the request is sealed to the phone too').toBeDefined();
+  const opened = await decryptProposalContent({ ciphertext: body.ciphertext, encrypted_keys: { [phone.record.key_id]: wrap }, readers: [phone.record.key_id], unreadable: [] }, phone.record.key_id, phone.read.privateKey);
+  const c = opened.arguments as Record<string, any>;
+  return { body, c };
+}
+
+async function phoneSigns(w: W, phone: Phone, c: Record<string, any>, tamper?: (members: Record<string, unknown>) => void) {
+  const g = c.give;
+  const payload = g.payload as MandatePayload;
+  const members = grantMembersOf(payload, { authorizationId: g.place.authorization_id, groupId: g.place.group_id, replaces: g.place.replaces, chainDids: g.place.chain_dids });
+  tamper?.(members);
+  const state = await dk.verifyChain({ expectedRootDid: w.rootDid, entries: w.as.chainEntries() });
+  const grant = dk.buildGrant({
+    op: g.op, owner_did: w.rootDid, key_id: phone.record.key_id, chain_seq: state.head.seq, chain_head: state.head.hash,
+    mandate_id: c.mandate_id, mandate_version: c.mandate_version, granted_at: Math.floor(Date.now() / 1000), nonce: dk.b64uEncode(new Uint8Array(nodeRandom(16))),
+  }, members);
+  const sig = await dk.signObject(grant, phone.seed);
+  const check = await phone.prove(await dk.objectHash(grant));
+  return w.asPost(`/api/mandates/${encodeURIComponent(c.mandate_id)}/grants`, { grant, sig, check });
+}
+
+async function prepareAndSend(w: W) {
+  const p = await w.post('/api/mandate/prepare', REQ);
+  expect(p.status, p.text).toBe(200);
+  return { prepared: p, sent: await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ }) };
+}
+
+describe('give on the phone', () => {
+  it('a computer without a check key and no phone cannot give, and is not offered the phone', async () => {
+    const w = await world();
+    const p = await w.post('/api/mandate/prepare', REQ);
+    expect(p.status, p.text).toBe(200);
+    expect(p.body.blocked).toMatchObject({ code: 'no_check_key' });
+    expect(p.body.onPhone).toBe(false);
+    const r = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'grant_refused' });
+    expect(w.mandates.bodies).toHaveLength(0);
+  });
+
+  it('with a phone: the request is sealed to every device, nothing is requested until the phone gives it, then the mandate is issued', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { prepared, sent } = await prepareAndSend(w);
+    expect(prepared.body.onPhone).toBe(true);
+    expect(sent.status, sent.text).toBe(200);
+    const mandateId = String(sent.body.mandateId);
+    // nothing granted, nothing requested yet
+    expect(w.mandates.rows).toHaveLength(0);
+    expect(w.mandates.issued).toHaveLength(0);
+    expect((await w.get(`/api/mandate/give-on-phone/${mandateId}`)).body).toEqual({ state: 'waiting' });
+
+    // the phone opens it: every hash it signs comes from the plaintext it shows
+    const { c } = await phoneOpens(w, phone);
+    expect(c.v).toBe(2);
+    expect(c.scope).toEqual(REQ.scope);
+    expect(c.intent).toBe(REQ.intent);
+    const pl = c.give.payload;
+    expect(computeProfileHash(c.give.profile)).toBe(pl.profile_hash);
+    expect(computeBoundsHash(c.give.bounds, c.give.profile)).toBe(pl.bounds_hash);
+    expect(computeScopeHash(c.scope, c.give.profile)).toBe(pl.scope_hash);
+    expect(computeIntentHash(c.intent)).toBe(pl.gate_content_hashes.intent);
+    expect(computeExecutionContextHash(c.give.profile)).toBe(pl.execution_context_hash);
+
+    const g = await phoneSigns(w, phone, c);
+    expect(g.status, JSON.stringify(g.body)).toBe(201);
+    const done = await w.get(`/api/mandate/give-on-phone/${mandateId}`);
+    expect(done.status, done.text).toBe(200);
+    expect(done.body).toMatchObject({ state: 'done', authorizationId: expect.stringMatching(/^authz_/) });
+    expect(w.mandates.issued).toHaveLength(1);
+    expect(decodeMandateBlob(w.mandates.issued[0].blob).payload.mandate_id).toBe(mandateId);
+    expect(w.delivered).toHaveLength(1);
+    // asked again: nothing waits under that id any more
+    expect((await w.get(`/api/mandate/give-on-phone/${mandateId}`)).body).toEqual({ state: 'unknown' });
+  });
+
+  it('a phone grant over other members (a longer expiry) is refused here and the mandate is never requested', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const { c } = await phoneOpens(w, phone);
+    const g = await phoneSigns(w, phone, c, m => { m.expires_at = (m.expires_at as number) + 60; });
+    expect(g.status, JSON.stringify(g.body)).toBe(201); // the Authority Server only checks the signature and the check
+    const r = await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`);
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'grant_invalid' });
+    expect(w.mandates.issued).toHaveLength(0);
+  });
+
+  it('a give that changed since it was prepared is not sent', async () => {
+    const w = await world();
+    await w.addPhone(await makePhone());
+    const p = await w.post('/api/mandate/prepare', REQ);
+    const r = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ, intent: 'Something else.' });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'changed_since_prepare' });
+    expect(w.mandates.bodies).toHaveLength(0);
+  });
+
+  it('the sealed request stays the body: the computer opens scope and intent from it after the grant', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const { c } = await phoneOpens(w, phone);
+    await phoneSigns(w, phone, c);
+    const row = w.mandates.rows.at(-1)!;
+    const body = await w.gw.grants!.openBody({ mandateId: String(sent.body.mandateId), version: 1, grantHash: row.grantHash });
+    expect(body).toEqual({ scope: REQ.scope, intent: REQ.intent });
+  });
+});

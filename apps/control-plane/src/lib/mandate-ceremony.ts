@@ -33,7 +33,7 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
-import type { MandateGrants, Issued, PreparedGrant } from './mandate-grants';
+import type { MandateGrants, Issued, PreparedGrant, PhoneGive } from './mandate-grants';
 import { createHash } from 'node:crypto';
 import { canonicalize } from '@hap/core';
 import { GrantRefusal } from './mandate-grants';
@@ -462,8 +462,22 @@ async function subjectsDisclosed(deps: CeremonyDeps, discloseIdentity: boolean |
  * Nothing falls back to a mandate without a grant. A change of an existing mandate is a new version under the
  * same mandate id; the Authority Server ends the older authorization when the new one is issued.
  */
-async function createGranted(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
-  const grants = deps.grants!;
+/** Everything the request of a granted mandate needs besides the grant itself. */
+interface GrantedContext {
+  req: MandateRequest;
+  plan: MandatePlan;
+  authorizationId: string;
+  profileHash: string;
+  boundsHash: string;
+  scopeHash: string;
+  intentHash: string;
+  ecHash: string;
+  enc?: EncryptedIntent;
+  issueInput: Parameters<MandateGrants['issue']>[0];
+}
+
+/** The hashes, the intent sealed to the approvers and the input of the grant: computed once, the same for a give here and on the phone. */
+async function grantedContext(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<GrantedContext> {
   const user = deps.user!;
   const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
   const scopeHash = computeScopeHash(plan.context as never, plan.profile);
@@ -481,21 +495,83 @@ async function createGranted(req: MandateRequest, plan: MandatePlan, deps: Cerem
 
   const authorizationId = deps.newAuthorizationId();
   const preChosenMandateId = deps.newMandateId?.();
+  const issueInput: Parameters<MandateGrants['issue']>[0] = {
+    ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
+    bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
+    authorizationId, ...(req.replaces ? { replaces: req.replaces } : {}),
+    ...(preChosenMandateId ? { mandateId: preChosenMandateId } : {}),
+    hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
+    ...(enc ? { intentDisclosureHash: enc.intentDisclosureHash } : {}),
+    subjectsDisclosed: disclosed, team: plan.team,
+    ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
+    as: deps.as,
+  };
+  return { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, ...(enc ? { enc } : {}), issueInput };
+}
+
+async function createGranted(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const ctx = await grantedContext(req, plan, deps);
   let issued: Issued;
   try {
-    issued = await grants.issue({
-      ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
-      bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
-      authorizationId, ...(req.replaces ? { replaces: req.replaces } : {}),
-      ...(preChosenMandateId ? { mandateId: preChosenMandateId } : {}),
-      hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
-      ...(enc ? { intentDisclosureHash: enc.intentDisclosureHash } : {}),
-      subjectsDisclosed: disclosed, team: plan.team,
-      ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
-      as: deps.as,
-    });
+    issued = await deps.grants!.issue(ctx.issueInput);
   } catch (err) { return grantRefused(err); }
+  return requestGranted(ctx, issued, deps);
+}
 
+// ─── give on the phone (device-keys plan 4.4 "Transport", DEC-86) ──────────────
+
+/** A give waiting on the person's phone: kept in this process only; a restart drops it (the person prepares it again). */
+interface PhoneGivePending { ctx: GrantedContext; give: PhoneGive; startedAt: number }
+const phoneGives = new Map<string, PhoneGivePending>();
+/** How long a give waits for the phone here. The Authority Server keeps the prepared row longer; after this the page prepares it again. */
+export const PHONE_GIVE_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Prepare the give for the person's phone instead of granting it here (a computer without a check key, or the person chose the phone):
+ * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
+ * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`).
+ */
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
+  const plan = await planMandate(req, deps);
+  const ctx = await grantedContext(req, plan, deps);
+  let give: PhoneGive;
+  try {
+    give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title });
+  } catch (err) { return grantRefused(err); }
+  const now = Date.now();
+  for (const [k, v] of phoneGives) if (now - v.startedAt > PHONE_GIVE_TTL_MS) phoneGives.delete(k);
+  phoneGives.set(give.mandateId, { ctx, give, startedAt: now });
+  return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
+}
+
+/**
+ * Has the phone given it? `waiting` while no grant of that version is stored; `done` once the phone's grant verified here with exactly the
+ * planned members AND the Authority Server issued the mandate; a refusal throws. `unknown`: nothing waits under this id here.
+ */
+export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+  const p = phoneGives.get(mandateId);
+  if (!p || Date.now() - p.startedAt > PHONE_GIVE_TTL_MS) { phoneGives.delete(mandateId); return { state: 'unknown' }; }
+  let issued: Issued | null;
+  try {
+    issued = await deps.grants!.phoneGrant(p.give);
+  } catch (err) { phoneGives.delete(mandateId); return grantRefused(err); }
+  if (!issued) return { state: 'waiting' };
+  phoneGives.delete(mandateId);
+  const r = await requestGranted(p.ctx, issued, deps);
+  return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
+}
+
+/** The person stopped waiting for the phone on this page. The prepared row runs out at the Authority Server by itself. */
+export function cancelPhoneGive(mandateId: string): boolean {
+  return phoneGives.delete(mandateId);
+}
+
+/** Request the granted mandate from the Authority Server, deliver its gate content, retire what it replaces. */
+async function requestGranted(ctx: GrantedContext, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, enc } = ctx;
+  const user = deps.user!;
+  const grants = deps.grants!;
   const res = await deps.as('POST', '/api/as/mandate', {
     authorization_id: authorizationId,
     profile_id: plan.profile.id,
@@ -558,6 +634,8 @@ export interface PreparedMandate {
   team: { approvers: PreparedGrant['approvers']; approvals: number | null; caps: PreparedRow[] } | null;
   /** The first refusal the real give would meet before the touch, or null. */
   blocked: PreparedGrant['blocked'];
+  /** The person's phone can give it instead (`/give-on-phone`): another active device of their chain names a check key. */
+  onPhone: boolean;
 }
 
 type FieldDef = { displayName?: string; unit?: string };
@@ -600,6 +678,7 @@ export async function prepareMandate(req: MandateRequest, deps: CeremonyDeps): P
     intent: plan.intent,
     team: plan.isPersonal ? null : { approvers: pg.approvers, approvals: pg.approvals, caps: rowsOf(caps, plan.profile.boundsSchema?.fields as Record<string, FieldDef> | undefined) },
     blocked: pg.blocked,
+    onPhone: pg.onPhone,
   };
 }
 
