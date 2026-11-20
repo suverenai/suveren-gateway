@@ -32,7 +32,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync, realpathSync, lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkHelperBuild } from './lib/helper-check.mjs';
@@ -131,10 +131,19 @@ if (existsSync(GUIDES_SRC)) {
 // build error instead of a silently-empty package (the 0.2.8 bug).
 const PROFILES_SRC = process.env.HAP_PROFILES_SRC ?? join(REPO_ROOT, '..', 'hap-profiles');
 if (existsSync(PROFILES_SRC)) {
-  cpSync(PROFILES_SRC, join(OUT, 'profiles'), {
+  // realpathSync + dereference: a symlinked hap-profiles (a checkout linked next to the gateway) was copied as a LINK,
+  // which the guard below saw through, but `npm pack` drops — a package with no profiles from a green build.
+  cpSync(realpathSync(PROFILES_SRC), join(OUT, 'profiles'), {
     recursive: true,
+    dereference: true,
     filter: (src) => !src.includes('/.git') && !src.includes('/test-results'),
   });
+}
+
+// npm pack leaves out a symlinked folder: the catalog must be real files in the bundle.
+if (existsSync(join(OUT, 'profiles')) && lstatSync(join(OUT, 'profiles')).isSymbolicLink()) {
+  console.error('[bundle] ✗ profiles is a symlink in the bundle — npm pack would ship no profiles');
+  process.exit(1);
 }
 
 // ─── Guard: essential catalogs MUST be present, or fail the build ──────────
