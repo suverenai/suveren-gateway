@@ -24,7 +24,9 @@ import { effectiveGrantors, MandateSignError, type ProfileConfig, type PreparedM
 import { useDeviceChain } from '../lib/use-device-chain';
 import {
   S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, scopeLabel, durationText, endDateText, giveErrorText,
+  GivePhoneFooter, givePhoneRefusalText, giveSummaryLine,
 } from '@suveren/approval-card/mandate-screens';
+import { phoneGiveOffered, afterPoll, afterRefusal, phoneGiveBusy, waitExpired, GIVE_PHONE_POLL_MS, type GivePhoneState } from '../lib/give-on-phone-flow';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -76,6 +78,8 @@ export function AgentReviewPage() {
   const [prepareTick, setPrepareTick] = useState(0);
   const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
   const [given, setGiven] = useState<{ authorizationId: string; text: string } | null>(null);
+  // "Give on your phone" (DEC-90): this computer has no check key, a phone of the chain can grant it.
+  const [phoneGive, setPhoneGive] = useState<GivePhoneState>({ s: 'offered' });
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -448,6 +452,51 @@ export function AgentReviewPage() {
     }
   };
 
+  // "Give on your phone" (DEC-90): the same prepared plan, sealed to the person's devices; the phone grants it with its touch.
+  const phoneOffered = chain && phoneGiveOffered(prepared);
+  const handleGiveOnPhone = async () => {
+    if (!giveRequest || !prepared || phoneGiveBusy(phoneGive)) return;
+    setError('');
+    setPhoneGive({ s: 'sending' });
+    try {
+      const r = await spClient.giveOnPhone({ ...giveRequest, planHash: prepared.planHash });
+      setPhoneGive({ s: 'waiting', mandateId: r.mandateId, expiresAt: r.expiresAt });
+    } catch (e) {
+      const code = e instanceof MandateSignError ? e.code : undefined;
+      if (code === 'changed_since_prepare' || code === 'prepare_required') setPrepareTick(t => t + 1);
+      setPhoneGive(st => afterRefusal(st, code, givePhoneRefusalText(code, e instanceof MandateSignError ? giveErrorText({ code: e.code, reason: e.reason }) : S13.giveErrNotAccepted)));
+    }
+  };
+  const handleStopPhone = () => {
+    if (phoneGive.s === 'waiting') void spClient.cancelGiveOnPhone(phoneGive.mandateId);
+    setPhoneGive({ s: 'stopped' });
+  };
+  const waitingId = phoneGive.s === 'waiting' ? phoneGive.mandateId : '';
+  useEffect(() => {
+    if (!waitingId) return;
+    let live = true;
+    const tick = async () => {
+      if (!live) return;
+      if (waitExpired(phoneGive, Date.now())) { setPhoneGive({ s: 'stopped' }); return; }
+      try {
+        const a = await spClient.pollGiveOnPhone(waitingId);
+        if (live) setPhoneGive(st => afterPoll(st, a));
+      } catch (e) {
+        const code = e instanceof MandateSignError ? e.code : undefined;
+        if (live) setPhoneGive(st => afterRefusal(st, code, givePhoneRefusalText(code, e instanceof MandateSignError ? giveErrorText({ code: e.code, reason: e.reason }) : S13.giveErrNotAccepted)));
+      }
+    };
+    const t = setInterval(() => { void tick(); }, GIVE_PHONE_POLL_MS);
+    return () => { live = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingId]);
+  useEffect(() => {
+    if (phoneGive.s !== 'given' || !authData) return;
+    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent']) sessionStorage.removeItem(k);
+    if (phoneGive.revokeError) { setError(replacedRevokeProblem(phoneGive.revokeError) || phoneGive.revokeError); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phoneGive.s]);
+
   if (!authData || !gateData) {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
   }
@@ -553,6 +602,7 @@ export function AgentReviewPage() {
   //     ('fail-safe-approval'), so review is NOT weakened by an automatic twin.
   // The earlier copy said "the more permissive limits effectively apply" for all
   // three — understating the cumulative case and overstating the mode case.
+  const giveSummary = giveSummaryLine({ limits: gateData.bounds as Record<string, string | number>, scope: gateData.context, durationSeconds: ttlSeconds, boundsSchema: profile?.boundsSchema as never, hidden: hiddenLimits });
   const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
 
   return (
@@ -566,6 +616,7 @@ export function AgentReviewPage() {
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
           Review your mandate details before signing.
         </p>
+        {chain && giveSummary && <p className="sum-line" data-testid="mandate-summary">{giveSummary}</p>}
 
         {/* Copy/Edit moved this mandate to a newer profile version — the AS
             refuses to sign a new one under the old version it was pinned to
@@ -888,28 +939,49 @@ export function AgentReviewPage() {
           </p>
         )}
 
-        {chain && prepared?.blocked && prepared.blocked.code !== 'approver_identity_unconfirmed' && (
+        {chain && prepared?.blocked && prepared.blocked.code !== 'approver_identity_unconfirmed' && !phoneOffered && (
           <p role="alert" data-testid="give-prepare-blocked" className="msg-error">{giveErrorText({ code: prepared.blocked.code })}</p>
         )}
         {chain && !prepared && prepareError && <p role="alert" data-testid="give-prepare-error" className="msg-error">{prepareError}</p>}
-        {chain && (
+        {chain && !phoneOffered && phoneGive.s === 'offered' && (
           <p className="cta-helper" data-testid="give-touch-note" style={{ marginBottom: '0.5rem' }}>
             {S13.giveTouchNote.replace('{area}', profileDisplayName(authData.profileId))}
             {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setPrepareTick(t => t + 1)}>{S13.heldCheckAgain}</button></>}
           </p>
         )}
 
+        {phoneOffered || phoneGive.s !== 'offered' ? (
+          <div className="card av3-card" data-testid="give-phone-card" style={{ position: 'relative' }}>
+            <GivePhoneFooter
+              view={phoneGive.s === 'refused' ? { s: 'refused', message: phoneGive.message } : { s: phoneGive.s }}
+              disabled={!giveRequest || !prepared || approverBlocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+              onGive={() => { void handleGiveOnPhone(); }}
+              onStop={handleStopPhone}
+              onClose={() => {
+                if (phoneGive.s === 'given') { navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`); return; }
+                if (phoneGive.s === 'offered') { navigate('/mandates/new/intent'); return; }
+                setPhoneGive({ s: 'offered' });
+              }}
+            />
+            {phoneGive.s === 'given' && (
+              <div className="av3-foot">
+                <button type="button" className="av3-btn av3-btn-primary" style={{ width: '100%' }} onClick={() => navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`)} data-testid="give-phone-done">Go to my mandates</button>
+              </div>
+            )}
+          </div>
+        ) : (
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
-          <button
-            className="btn btn-primary btn-lg"
-            style={{ flex: 1 }}
-            onClick={handleCommit}
-            disabled={submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
-          >
-            {chain ? (submitting ? S13.giveBusy : S13.giveButton) : submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
-          </button>
-        </div>
+            <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ flex: 1 }}
+              onClick={handleCommit}
+              disabled={submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+            >
+              {chain ? (submitting ? S13.giveBusy : S13.giveButton) : submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
+            </button>
+          </div>
+        )}
 
         <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', display: showBottomNote ? 'block' : 'none' }}>
           {bottomNote}

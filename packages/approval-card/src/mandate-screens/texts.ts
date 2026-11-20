@@ -38,6 +38,19 @@ export const S13 = {
   giveErrNotAccepted: 'suveren.ai did not accept the mandate. Try again.', // 223
   giveErrNotDelivered: 'The mandate could not reach the gateway, so it was ended again. Give it again.', // 224
   giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // 225
+  // "Give on your phone" on a computer without Touch ID (DEC-90, mockup phone-d3-live.html v7, Gateway view). All DRAFT.
+  givePhoneOffer: 'This computer has no Touch ID. Give this mandate on your phone: it shows you the same, and you give it there with your touch.', // DRAFT
+  givePhoneButton: 'Give on your phone', // DRAFT
+  givePhoneWaiting: 'Waiting for your phone… Open Suveren on your phone and give it there.', // DRAFT
+  givePhoneWaitingNote: 'Nothing is given until you touch on your phone. You can close this page; the request waits 30 minutes.', // DRAFT
+  givePhoneStop: 'Stop waiting', // DRAFT
+  givePhoneGiven: 'Signed', // DRAFT: the gateway's result stamp
+  givePhoneGivenOn: 'Given on your phone', // DRAFT
+  givePhoneStopped: 'Stopped. Nothing was given. The request on your phone runs out by itself.', // DRAFT
+  givePhoneAgain: 'Give on your phone again', // DRAFT
+  givePhoneMismatch: 'The answer from your phone does not match what is shown here. Nothing was given.', // DRAFT
+  givePhoneClose: 'Close', // DRAFT
+  givePhoneCancel: 'Cancel', // DRAFT
 
   // Screen 3: a mandate this gateway holds back
   heldTitle: 'On hold: Your AI cannot use these yet', // 250
