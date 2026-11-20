@@ -1,11 +1,9 @@
 /**
  * Unlock the gateway (screen 4) and what follows: the page session, then the sign-in to the account.
  *
- * DEC-66: Touch ID alone opens the gateway AND the page; the password is the way in where Touch ID is missing.
- * Until S1 ships the control plane keeps PLATFORM_UNLOCK_OPENS_PAGE_SESSION false: a touch then opens the vault
- * (the agents continue) but answers `sessionOpened: false` with no token, or `already_unlocked` when the vault is
- * already open. This driver works in both states: with a token it goes on; without one it asks for the password,
- * which is what opens a page session today.
+ * DEC-66 and DEC-92: Touch ID opens the gateway AND the page (PLATFORM_UNLOCK_OPENS_PAGE_SESSION is true since
+ * 2026-11-20); the password stays below it as the fallback, and is the way in where Touch ID is missing. The driver
+ * still handles a control plane that answers `sessionOpened: false` (the constant off): then it asks for the password.
  */
 
 import { Driver } from './driver';

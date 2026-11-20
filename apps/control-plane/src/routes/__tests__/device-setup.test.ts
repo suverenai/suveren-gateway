@@ -14,7 +14,7 @@ import { StubAs } from '../../__tests__/helpers/stub-as';
 import { bootGateway, call, sessionHeaders, tmpDir, type Reply } from '../../__tests__/helpers/device-rig';
 import { DeviceChainStore } from '../../lib/device-chain-store';
 import { loadOrGenerateDeviceSigningKey } from '../../lib/e2e-key-manager';
-import { DeviceSetup, SetupRefusal } from '../../lib/device-setup';
+import { DeviceSetup, SetupRefusal, systemComputerName, sanitizeLabel, DEFAULT_DEVICE_LABEL } from '../../lib/device-setup';
 import { Vault } from '../../lib/vault';
 import { DeviceSignin } from '../../lib/device-signin';
 import { DeviceAsClient } from '../../lib/device-as-client';
@@ -73,7 +73,8 @@ describe('set-up by a pasted enrolment code', () => {
     const entries = w.as.chainEntries() as ChainEntry[];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ op: 'genesis', seq: 0, prev: null, signer: 'root', root_did: start.body.rootDid, check: null });
-    expect(entries[0].device).toMatchObject({ kind: 'gateway', keystore: 'software', label: 'This computer', check: null });
+    // DEC-91: no name was sent, so the device is named after this computer
+    expect(entries[0].device).toMatchObject({ kind: 'gateway', keystore: 'software', label: systemComputerName(), check: null });
     // the root key AND the device both signed it, and hap-core accepts the whole chain
     expect(entries[0].sigs.map(s => s.by).sort()).toEqual(['root', start.body.deviceKeyId].sort());
     const state = await verifyChain({ expectedRootDid: String(start.body.rootDid), entries });
@@ -517,3 +518,27 @@ describe('with the switch off nothing of this exists', () => {
   });
 });
 
+
+
+describe('DEC-91: the device name comes from the computer', () => {
+  it('macOS: the ComputerName; elsewhere the host name without its domain', () => {
+    expect(systemComputerName({ platform: 'darwin', computerName: () => "Anna's MacBook Air", hostname: () => 'annas-mba.local' })).toBe("Anna's MacBook Air");
+    expect(systemComputerName({ platform: 'linux', computerName: () => 'never asked', hostname: () => 'build-01.corp.example' })).toBe('build-01');
+    expect(systemComputerName({ platform: 'win32', hostname: () => 'DESKTOP-7Q2' })).toBe('DESKTOP-7Q2');
+  });
+  it('a failing or empty source falls back, never throws', () => {
+    expect(systemComputerName({ platform: 'darwin', computerName: () => { throw new Error('no scutil'); }, hostname: () => 'mac.local' })).toBe('mac');
+    expect(systemComputerName({ platform: 'darwin', computerName: () => '  ', hostname: () => { throw new Error('x'); } })).toBe(DEFAULT_DEVICE_LABEL);
+  });
+  it('what is not a valid label is cleaned: control and format characters gone, spaces folded, at most 64 characters', () => {
+    expect(sanitizeLabel('Office\u0007 Mac\u200B')).toBe('Office Mac');
+    expect(sanitizeLabel('  a\n\tb  ')).toBe('a b');
+    expect(Array.from(sanitizeLabel('x'.repeat(80)))).toHaveLength(64);
+    expect(sanitizeLabel('\u200B\u0007')).toBe(DEFAULT_DEVICE_LABEL);
+    expect(sanitizeLabel(undefined)).toBe(DEFAULT_DEVICE_LABEL);
+  });
+  it('the result is always a label hap-core accepts', async () => {
+    const { isValidLabel } = await import('@hap/core/device-keys');
+    for (const raw of ['Office\u0007 Mac', 'x'.repeat(200), '', 'e\u0301', 'Ünïcödé Mac']) expect(isValidLabel(sanitizeLabel(raw))).toBe(true);
+  });
+});

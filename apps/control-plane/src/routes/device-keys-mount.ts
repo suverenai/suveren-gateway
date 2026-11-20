@@ -19,6 +19,8 @@ import { createConfirmPhoneRouter } from './confirm-phone';
 import { createPasswordRouter } from './password';
 import { createInternalOsSignalRouter } from './internal-os-signal';
 import { createDeviceSetupRouter, createConnectCallbackRouter } from './device-setup';
+import { createFirstStartRouter } from './first-start';
+import { FirstStart } from '../lib/first-start';
 import { DeviceChainStore } from '../lib/device-chain-store';
 import { DeviceAsClient } from '../lib/device-as-client';
 import { DeviceSignin, type AsKeyCheck, type DeviceSession } from '../lib/device-signin';
@@ -133,7 +135,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
-  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing } | undefined;
+  let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; approvals: DeviceApprovals; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing; firstStart: FirstStart } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
   if (o.device) {
@@ -168,7 +170,10 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     });
     // `setup` and `recovery` refuse to start while the other is running; each asks the other through a late-bound closure.
     let recovery!: DeviceRecovery;
+    // DEC-93: the one-time start access of a gateway nobody has used yet; its Connect hands over to set-up's finish.
+    const firstStart = new FirstStart({ vault: o.vault, client, checkAs: o.device.checkAs, now: o.device.now ? () => o.device!.now!() * 1000 : undefined });
     const setup = new DeviceSetup({
+      preConnected: firstStart,
       vault: o.vault, store, client, signin, checkAs: o.device.checkAs,
       now: o.device.now ? () => o.device!.now!() * 1000 : undefined,
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
@@ -192,7 +197,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       ...(o.platform && checks ? { checks, checkStore: o.platform.checkStore } : {}),
       otherFlowPending: () => setup.status().setupPending || setup.isBusy() || recovery.status().recoveryPending,
     });
-    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, teamChanges, readers, rewrap, pairing };
+    device = { signin, setup, store, client, recovery, alarm, pins, grantStore, grants, approvals, teamJoin, teamChanges, readers, rewrap, pairing, firstStart };
   }
   // A body that does not parse is answered here, for EVERY route under /auth (the recovery code and the password
   // are typed into several), with nothing of it in the answer or the log: Express's own handler logs the parser's
@@ -229,6 +234,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     }));
   }
   if (device) {
+    app.use('/auth', json, createFirstStartRouter({ firstStart: device.firstStart, pageSession: o.pageSession }));
     app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin, alarm: device.alarm, recovery: device.recovery }));
     app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
     app.use('/auth', json, createDevicePairingRouter({ vault: o.vault, pageSession: o.pageSession, pairing: device.pairing }));
@@ -240,7 +246,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
         hasCheckKey: o.hasCheckKey, now: o.device?.now, log: (m) => console.log(m),
       }),
     }));
-    app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup }));
+    app.use('/connect', createConnectCallbackRouter({ pageSession: o.pageSession, setup: device.setup, firstStart: device.firstStart }));
     app.use('/recover', createRecoveryCallbackRouter({ pageSession: o.pageSession, recovery: device.recovery }));
     // The MCP server's questions about device keys (its own chain, the heads it has verified), by internal secret.
     app.use('/internal', json, createInternalDeviceRouter(o.internalSecret, device.store, device.pins, {

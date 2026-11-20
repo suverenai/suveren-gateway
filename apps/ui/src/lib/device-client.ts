@@ -7,6 +7,9 @@
 
 import { spClient } from './sp-client';
 
+/** The header of the one-time start session (DEC-93; control plane lib/first-start.ts). */
+export const START_HEADER = 'x-suveren-start';
+
 export type Result<T> =
   | { ok: true; data: T; status: number }
   | { ok: false; code: string; status: number; retryAfterSeconds?: number; asCode?: string; extra: Record<string, unknown> };
@@ -56,6 +59,8 @@ export interface DeviceStatus {
   expiresAt?: number;
   pendingIdentityReset?: PendingIdentityReset | null;
   recovery?: RecoveryStatus;
+  /** DEC-93: Connect ran in the one-time start access; set-up skips its own Connect. */
+  preConnected?: ConnectAccount;
 }
 export interface ConnectAccount { name: string; email: string }
 export interface SetupStarted { setupId: string; recoveryCode: string; rootDid: string; deviceKeyId: string; label: string }
@@ -119,13 +124,26 @@ export class DeviceClient {
   unlock(password: string) { return this.go<UnlockAnswer>('/auth/unlock', json({ password })); }
   unlockPlatform() { return this.go<PlatformUnlockAnswer>('/auth/unlock/platform', json({})); }
   platformCapabilities() { return this.go<PlatformCapabilities>('/auth/platform/capabilities'); }
+  /** Turn unlock by Touch ID on (page session; the unlock password, and the touches the helper asks for). */
+  enablePlatform(password: string) { return this.go<{ backend: string; policy: string }>('/auth/platform/enable', json({ password })); }
+
+  // One-time start access (DEC-93): a gateway nobody has used starts at Connect, without an account key.
+  // Its own session: the token goes in START_HEADER, never in the page session's header.
+  startStatus() { return this.go<{ available: boolean }>('/auth/start/status'); }
+  startOpen() { return this.go<{ startToken: string }>('/auth/start/open', json({})); }
+  startConnect(token: string) { return this.go<ConnectStarted>('/auth/start/connect', { ...json({}), headers: { [START_HEADER]: token } }); }
+  startConnectStatus(token: string) { return this.go<ConnectStatus>('/auth/start/connect/status', { headers: { [START_HEADER]: token } }); }
+  startPassword(token: string, password: string) {
+    return this.go<{ sessionToken: string; account: ConnectAccount }>('/auth/start/password', { ...json({ password }), headers: { [START_HEADER]: token } });
+  }
 
   // Device status and sign-in
   status() { return this.go<DeviceStatus>('/auth/device/status'); }
   signIn() { return this.go<SignedIn>('/auth/device/signin', json({})); }
 
   // Set-up
-  setupStart(label: string, checkKey?: boolean) { return this.go<SetupStarted>('/auth/device/setup/start', json({ label, ...(checkKey !== undefined ? { checkKey } : {}) })); }
+  /** No label: the gateway names the device after this computer (DEC-91). */
+  setupStart(label?: string, checkKey?: boolean) { return this.go<SetupStarted>('/auth/device/setup/start', json({ ...(label !== undefined ? { label } : {}), ...(checkKey !== undefined ? { checkKey } : {}) })); }
   setupCancel() { return this.go<Record<string, never>>('/auth/device/setup/cancel', json({})); }
   connectStart(setupId: string) { return this.go<ConnectStarted>('/auth/device/setup/connect', json({ setupId })); }
   connectStatus(setupId: string) { return this.go<ConnectStatus>(`/auth/device/setup/connect/status?setupId=${encodeURIComponent(setupId)}`); }

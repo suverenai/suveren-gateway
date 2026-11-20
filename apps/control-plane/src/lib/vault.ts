@@ -1199,6 +1199,24 @@ export class Vault {
     return parsed;
   }
 
+  /** The folder this vault lives in (DEC-93 keeps its "claimed" marker beside it). */
+  directory(): string { return this.dataDir; }
+
+  /**
+   * A gateway nobody has used yet (DEC-93, one-time start access): locked, no password header, no account-key
+   * verifier, no credential, no slot and nothing sealed beside it. An unreadable vault file is NOT pristine.
+   */
+  isPristine(): boolean {
+    if (this.isUnlocked()) return false;
+    let data: VaultFile;
+    try { data = this.readVaultFileStrict(); } catch { return false; }
+    if ('password' in (data as unknown as Record<string, unknown>)) return false;
+    if (data.verifier) return false;
+    if (Object.keys(data.credentials ?? {}).length > 0) return false;
+    if (data.slots && Object.keys(data.slots).length > 0) return false;
+    return this.sealedSamples().length === 0;
+  }
+
   /** Is a slot there (sealed or not openable)? Reads the file only; throws when the file cannot be read. */
   hasSecretSlot(name: string): boolean {
     const blob = this.readVaultFileStrict().slots?.[name];

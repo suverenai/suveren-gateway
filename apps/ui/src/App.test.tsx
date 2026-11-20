@@ -84,10 +84,11 @@ describe('UnlockPage and SetupPage, first render', () => {
     expect(h).toContain(T.sessionIdle);
     expect(at('/login', <UnlockPage />, { access: 'password' })).toContain(T.unlockWhy);
   });
-  it('SetupPage: starts at the name', () => {
+  it('SetupPage: first render asks no name (DEC-91); the set-up then begins by itself', () => {
     const h = at('/device-setup', <SetupPage />, { access: 'password', pageSessionOpen: true });
     expect(h).toContain(T.nameTitle);
-    expect(h).toContain(T.nameLabel);
+    expect(h).not.toContain(T.nameLabel);
+    expect(h).not.toContain('<input');
   });
 });
 
@@ -110,6 +111,36 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     expect(src).toMatch(/wantCheckKey: \(\) => wantCheckKey\.current \}\), \[client\]\)/);
     expect(src).not.toMatch(/useState\(false\);\s*\n\s*const driver/);
   });
+  it('DEC-91: the set-up begins by itself, after the check-key answer, once, and not in the dev double mount', () => {
+    const src = readFileSync(join(dir, 'SetupScreens.tsx'), 'utf8');
+    const body = src.slice(src.indexOf('export function SetupPage'));
+    const yieldAt = body.indexOf('await Promise.resolve();');
+    const capsAt = body.indexOf('await client.platformCapabilities()');
+    const resumeAt = body.indexOf('await driver.resume()');
+    expect(yieldAt).toBeGreaterThan(-1);
+    expect(capsAt).toBeGreaterThan(yieldAt);
+    expect(resumeAt).toBeGreaterThan(capsAt);
+    expect(body).toMatch(/if \(!live\) return;/);
+    expect(body).toMatch(/\}, \[driver, client\]\);/);
+  });
+  it('a way into the device-key set-up always exists: team onboarding yields to the password offer; the card shows the next step', () => {
+    const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/offer \? '\/device-password' : '\/onboarding'/);
+    const card = readFileSync(join(dir, 'DeviceKeysCard.tsx'), 'utf8');
+    expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,200}to="\/device-password"/);
+    expect(card).toMatch(/if \(!setUp\)[\s\S]{0,200}to="\/device-setup"/);
+  });
+  it('DEC-93: a new gateway starts at /start; set-up opens with the page session alone; the start token stays out of the page session', () => {
+    const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/path="\/start" element=\{user \? <Navigate to="\/" replace \/> : <StartPage \/>\}/);
+    expect(app).toMatch(/<LoginOrStart switchOn=\{deviceKeysSwitch\}><LoginPage \/><\/LoginOrStart>/);
+    expect(app).toMatch(/path="\/device-setup" element=\{\(user \|\| pageSessionOpen\) && access === 'password'/);
+    const start = readFileSync(join(dir, 'StartScreens.tsx'), 'utf8');
+    // Only the start routes carry the start token; it is never stored (no storage API, only a ref).
+    expect(start).not.toMatch(/localStorage|sessionStorage|document\.cookie/);
+    expect(start).toMatch(/const token = useRef<string \| null>\(null\)/);
+    expect(start).toMatch(/turnOnTouchUnlock\(deviceClient, password\)/);
+  });
   it('9: the unlock driver is built once (a ref), not in a memo that the auth context can rebuild', () => {
     const src = readFileSync(join(dir, 'UnlockScreen.tsx'), 'utf8');
     expect(src).toMatch(/driverRef = useRef<UnlockDriver \| null>\(null\)/);
@@ -120,7 +151,7 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     let want = false;
     const { client } = fakeClient({ '/auth/device/setup/start': { body: { setupId: 's', recoveryCode: 'C' } } });
     const d = new SetupDriver({ client, open: vi.fn(), wantCheckKey: () => want });
-    await d.continueWithName('Mac');
+    await d.begin();
     want = true;
     expect(d.get().step).toBe('connect');
     expect(d.recoveryCode()).toBe('C');

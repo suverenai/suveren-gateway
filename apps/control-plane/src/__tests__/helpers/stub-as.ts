@@ -548,7 +548,7 @@ export class StubAs {
     const acc = this.accounts.get(row.userId)!;
     if (acc.rootDid) return refuse(409, 'CHAIN_EXISTS', 'connect refused: CHAIN_EXISTS');
     const enrolment = this.issueEnrolmentCode(row.userId, await keyIdOf(signPub));
-    json(201, { enrolment_code: enrolment, expires_at: this.now() + 900, account: { name: acc.name, email: acc.email } });
+    json(201, { enrolment_code: enrolment, expires_at: this.now() + 900, account: { id: row.userId, name: acc.name, email: acc.email } });
   }
 }
 

@@ -134,6 +134,25 @@ export async function loadOrGenerateDeviceSigningKey(vault: Vault): Promise<Devi
   return { privateSeed, publicKey };
 }
 
+/** A fresh device signing key, in memory only (DEC-93: made before the vault exists, stored once it does). */
+export async function generateDeviceSigningKey(): Promise<DeviceSigningKey> {
+  const privateSeed = new Uint8Array(randomBytes(32));
+  const publicKey = await (await deviceKeys()).ed25519PublicKey(privateSeed);
+  return { privateSeed, publicKey };
+}
+
+/**
+ * Store a signing key made before the vault existed (DEC-93). Refuses when the vault already holds one: the key the
+ * Authority Server bound the enrolment code to must be the one this computer signs with, never silently another.
+ */
+export function storeDeviceSigningKey(vault: Vault, key: DeviceSigningKey): void {
+  if (loadDeviceSigningKey(vault)) throw new Error('A device signing key is already stored');
+  vault.setSecretSlot(SIGNING_SLOT, {
+    privateKey: Buffer.from(key.privateSeed).toString('base64url'),
+    publicKey: Buffer.from(key.publicKey).toString('base64url'),
+  } satisfies StoredSigningKey);
+}
+
 /** The signing public key, or null when none was made yet. Never generates one. */
 export function getDeviceSigningPublicKey(vault: Vault): Uint8Array | null {
   return loadDeviceSigningKey(vault)?.publicKey ?? null;

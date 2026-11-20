@@ -3,6 +3,7 @@
  * mounted only with the device-keys switch on, every one behind the page session, answers never cached, nothing secret
  * in a log. The ceremony itself (the protocol against the phone app's own drivers) is __tests__/device-pairing.test.ts.
  */
+import { systemComputerName } from '../../lib/device-setup';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as dk from '@hap/core/device-keys';
 import { StubAs } from '../../__tests__/helpers/stub-as';
@@ -87,7 +88,7 @@ describe('a computer that is set up', () => {
     expect((await w.post('/auth/device/pairing/join/start')).body).toMatchObject({ code: 'already_set_up' });
     const list = await w.get('/auth/device/devices');
     expect(list.status).toBe(200);
-    expect(list.body).toMatchObject({ ok: true, canGrant: false, hasRoom: true, rows: [{ label: 'This computer', thisDevice: true, canGrant: false, kind: 'gateway' }] });
+    expect(list.body).toMatchObject({ ok: true, canGrant: false, hasRoom: true, rows: [{ label: systemComputerName(), thisDevice: true, canGrant: false, kind: 'gateway' }] }); // DEC-91: named after this computer
     expect(list.body.identityCode).toBe(await dk.identityCode(String(start.body.rootDid)));
     expect((await w.post('/auth/device/pairing/admit/start')).body).toMatchObject({ code: 'cannot_grant' });
   });
