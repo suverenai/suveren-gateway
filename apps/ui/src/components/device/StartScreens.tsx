@@ -58,7 +58,7 @@ export function StartPage() {
         if (r.data.state === 'waiting') return;
         if (r.data.state === 'ready' && r.data.account) { setSt({ step: 'password', account: r.data.account, busy: false }); return; }
         const code = r.data.state === 'expired' ? 'connect_timeout' : (r.data.code ?? 'connect_failed');
-        setSt({ step: 'connect', busy: false, error: textForCode(code, { screen: 'connect' }) });
+        setSt({ step: 'connect', busy: false, error: textForCode(code, { screen: 'connect', asCode: r.data.asCode }) });
       });
     }, 2000);
     return () => window.clearInterval(id);

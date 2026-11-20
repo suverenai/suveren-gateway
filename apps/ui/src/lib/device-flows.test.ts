@@ -109,6 +109,12 @@ describe('set up this computer (screens 2 and 3)', () => {
     d = new SetupDriver({ client, open: vi.fn() });
     await d.begin(); await d.connect(); await d.poll();
     expect(d.get()).toMatchObject({ error: T.connectOtherWindow });
+
+    // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code; "Try again" would never help.
+    ({ client } = mk({ ok: true, state: 'failed', code: 'connect_refused', asCode: 'CHAIN_EXISTS' }));
+    d = new SetupDriver({ client, open: vi.fn() });
+    await d.begin(); await d.connect(); await d.poll();
+    expect(d.get()).toMatchObject({ step: 'connect', error: DRAFT.connectChainExists });
   });
 
   it('cancel drops the code and goes back to the start', async () => {
