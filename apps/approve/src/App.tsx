@@ -207,12 +207,16 @@ function Home({ rt, tab, rotate, setTab, persistent, updated, onEnded, onRemoved
   rt: Rt; tab: 'requests' | 'devices' | 'admit'; rotate?: boolean; setTab: (t: 'requests' | 'devices' | 'admit') => void;
   persistent: boolean | null; updated: boolean; onEnded: () => void; onRemovedSelf: () => void;
 }) {
+  // While a touch signs a device change, nothing navigates away (UI review: nav locked during signing).
+  const [locked, setLocked] = useState(false);
   return (
     <div className="ap-shell">
-      <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => setTab(t)}
-        items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
+      <div {...(locked ? { inert: '', 'aria-disabled': true } : {})} data-testid="app-nav">
+        <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => { if (!locked) setTab(t); }}
+          items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
+      </div>
       {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
-      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} onRemovedSelf={onRemovedSelf} startRotate={rotate} />}
+      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} onRemovedSelf={onRemovedSelf} startRotate={rotate} onLockChange={setLocked} />}
       {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}
     </div>
   );
@@ -343,6 +347,7 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
         onLater={later}
         autoOpen={autoOpen}
         onToggleAuto={toggleAuto}
+        locked={busy}
         error={error}
         shown={shownId && shownCard ? {
           proposal: shownCard.proposal,
@@ -371,8 +376,9 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   );
 }
 
-function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, startRotate }: {
+function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, startRotate, onLockChange }: {
   rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void; onRemovedSelf: () => void; startRotate?: boolean;
+  onLockChange: (locked: boolean) => void;
 }) {
   const [rows, setRows] = useState<DeviceRow[]>([]);
   const [code, setCode] = useState<string | null>(null);
@@ -390,6 +396,10 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
     const t = window.setInterval(() => void rotator.poll(), POLL_MS);
     return () => window.clearInterval(t);
   }, [rotator, rotating.step]);
+  // Signing (the touch is out, nothing sent yet): the tabs are locked until it is done, failed or cancelled.
+  const signing = (removing.step === 'checking' && !removing.error) || (rotating.step === 'checking' && !rotating.error);
+  useEffect(() => { onLockChange(signing); }, [signing, onLockChange]);
+  useEffect(() => () => onLockChange(false), [onLockChange]);
   // Started from the join's done screen ("Make a new code", mockup D1).
   useEffect(() => { if (startRotate) rotator.start(); }, [rotator, startRotate]);
 
@@ -422,6 +432,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
         state={rotating}
         onOld={(c) => void rotator.submitOld(c)} onNew={(t) => void rotator.confirmNew(t)}
         onCancel={() => rotator.cancel()} onDone={() => { rotator.cancel(); void show(); }}
+        onCancelTouch={() => rotator.cancelTouch()} onRetryTouch={() => void rotator.retryTouch()}
       />
     );
   }
@@ -429,7 +440,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
     return (
       <RemoveScreen
         state={removing} nowSeconds={rt.now()}
-        onConfirm={() => void remover.confirm()} onCancel={() => remover.cancel()} onAdd={() => { remover.cancel(); onAdd(); }}
+        onConfirm={() => void remover.confirm()} onCancel={() => remover.cancel()} onCancelTouch={() => remover.cancelTouch()} onAdd={() => { remover.cancel(); onAdd(); }}
         onDone={() => {
           const self = removing.step === 'done' && removing.self;
           remover.cancel();

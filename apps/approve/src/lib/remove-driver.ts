@@ -32,7 +32,7 @@ export type RemoveState =
   | { step: 'idle' }
   | { step: 'confirm'; target: DeviceRow; after: DeviceRow[]; self: boolean }
   | { step: 'refused'; target: DeviceRow; self: boolean; error: string }
-  | { step: 'checking'; target: DeviceRow; self: boolean }
+  | { step: 'checking'; target: DeviceRow; self: boolean; error?: string }
   | { step: 'done'; label: string; rows: DeviceRow[]; self: boolean }
   | { step: 'failed'; target: DeviceRow | null; error: string };
 
@@ -53,8 +53,20 @@ export function leavesGrantingDevice(state: ChainState, target: string): boolean
 }
 
 export class RemoveDriver extends Driver<RemoveState> {
+  /** The confirm screen the touch came from: Cancel in the touch wait goes back to it. */
+  private confirmed: Extract<RemoveState, { step: 'confirm' }> | null = null;
+  /** Bumped by Cancel: a touch that answers after it is ignored, and nothing is sent. */
+  private gen = 0;
+
   constructor(private readonly d: RemoveDeps) {
     super({ step: 'idle' });
+  }
+
+  /** Cancel while the touch is asked (or after it failed): back to the confirm screen; a late answer sends nothing. */
+  cancelTouch(): void {
+    if (this.state.step !== 'checking') return;
+    this.gen++;
+    if (this.confirmed) this.set(this.confirmed); else this.set({ step: 'idle' });
   }
 
   /** Open the confirm screen for one device of the verified list. A removal that would leave no granting device is refused here. */
@@ -74,14 +86,18 @@ export class RemoveDriver extends Driver<RemoveState> {
   }
 
   cancel(): void {
+    this.gen++;
+    this.confirmed = null;
     this.set({ step: 'idle' });
   }
 
-  /** The touch, then sign, verify and append. */
+  /** The touch, then sign, verify and append. Also "Try again" after a failed touch. */
   async confirm(): Promise<void> {
     const st = this.state;
-    if (st.step !== 'confirm') return;
+    if (st.step === 'confirm') this.confirmed = st;
+    else if (!(st.step === 'checking' && st.error)) return;
     const { target, self } = st;
+    const gen = ++this.gen;
     this.set({ step: 'checking', target, self });
     const d = this.d;
     try {
@@ -104,6 +120,8 @@ export class RemoveDriver extends Driver<RemoveState> {
       };
       // The same check the server and every device make (3.3): a defect found here is found before anything is sent.
       await verifyChain({ expectedRootDid: account.root_did, entries: [...s.entries, final] });
+      // Cancelled while the touch was asked: nothing is sent.
+      if (gen !== this.gen) return;
 
       const res = await d.api.appendEntry(final, bearer);
       d.session.noteUse();
@@ -120,7 +138,9 @@ export class RemoveDriver extends Driver<RemoveState> {
       if (!fresh.ok) { this.set({ step: 'failed', target, error: errorText(fresh.code) }); return; }
       this.set({ step: 'done', label: target.label, rows: deviceRows(fresh.session.entries, fresh.session.chain, account.key_id, d.now()), self: false });
     } catch (e) {
-      if (e instanceof CheckError) { this.set({ step: 'failed', target, error: errorText(e.code === 'failed' ? 'check_failed' : e.code) }); return; }
+      if (gen !== this.gen) return;
+      // A touch that failed or was cancelled in the system window: said in the same place, with Try again and Cancel.
+      if (e instanceof CheckError) { this.set({ step: 'checking', target, self, error: errorText(e.code === 'failed' ? 'check_failed' : e.code) }); return; }
       const code = (e as { code?: unknown } | null)?.code;
       this.set({ step: 'failed', target, error: errorText(code === 'NO_GRANTING_DEVICE' ? 'last_granting' : 'generic') });
     }

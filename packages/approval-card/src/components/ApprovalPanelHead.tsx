@@ -28,9 +28,13 @@ export interface ApprovalPanelHeadProps {
   autoOpen: boolean | null;
   /** Turns the setting the other way: the host decides what "off" also does (the gateway sends the panel away). */
   onToggleAuto: () => void;
+  /** A decision is being signed: nothing in the head moves the person away (the phone's touch; UI review). Default false. */
+  locked?: boolean;
 }
 
-export function ApprovalPanelHead({ compact, position, total, prevId, nextId, onMove, onLater, autoOpen, onToggleAuto }: ApprovalPanelHeadProps) {
+export function ApprovalPanelHead({ compact, position, total, prevId: prev, nextId: next, onMove, onLater, autoOpen, onToggleAuto, locked = false }: ApprovalPanelHeadProps) {
+  const prevId = locked ? null : prev;
+  const nextId = locked ? null : next;
   const [menu, setMenu] = useState(false);
   const many = total > 1;
   const pos = position ? `${position.index} of ${total}` : '';
@@ -50,7 +54,7 @@ export function ApprovalPanelHead({ compact, position, total, prevId, nextId, on
         <div className="apr-acts">
           {autoOpen !== null && (
             <span className="apr-menu-wrap">
-              <button type="button" className="apr-btn apr-ico-plain" aria-label="More" title="More" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((o) => !o)} data-testid="approval-head-menu">&#8942;</button>
+              <button type="button" className="apr-btn apr-ico-plain" aria-label="More" title="More" aria-haspopup="menu" aria-expanded={menu} disabled={locked} onClick={() => setMenu((o) => !o)} data-testid="approval-head-menu">&#8942;</button>
               {menu && (
                 <div className="apr-pop apr-head-pop" role="menu">
                   <button
@@ -66,7 +70,7 @@ export function ApprovalPanelHead({ compact, position, total, prevId, nextId, on
               )}
             </span>
           )}
-          <button type="button" className="apr-btn apr-ico-plain" aria-label="Later" title="Later" onClick={() => { setMenu(false); onLater(); }} data-testid="approval-later">
+          <button type="button" className="apr-btn apr-ico-plain" aria-label="Later" title="Later" disabled={locked} onClick={() => { setMenu(false); onLater(); }} data-testid="approval-later">
             <svg className="apr-i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
           </button>
         </div>
@@ -89,11 +93,12 @@ export function ApprovalPanelHead({ compact, position, total, prevId, nextId, on
         </nav>
       ) : <span className="apr-nav-ph" />}
       <div className="apr-acts">
-        <button type="button" className="apr-btn" onClick={onLater} data-testid="approval-later">Later</button>
+        <button type="button" className="apr-btn" disabled={locked} onClick={onLater} data-testid="approval-later">Later</button>
         {autoOpen !== null && (
           <button
             type="button"
             className={`av3-btn apr-auto${autoOpen ? '' : ' av3-btn-primary'}`}
+            disabled={locked}
             onClick={onToggleAuto}
             data-testid="approval-auto-toggle"
           >

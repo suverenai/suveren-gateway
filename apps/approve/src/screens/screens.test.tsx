@@ -267,6 +267,16 @@ describe('the phone screens (both widths use the same markup and the same tokens
         expect(m).toContain('data-testid="approval-later"');
       });
 
+      it('while a decision is being signed the head moves nothing: no arrows, Later and the setting disabled (nav lock)', () => {
+        const m = panel({ prevId: 'p0', nextId: 'p2', locked: true });
+        expect(m).toMatch(/data-testid="approval-prev"[^>]*disabled|disabled[^>]*data-testid="approval-prev"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-next"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-later"/);
+        expect(m).toMatch(/disabled[^>]*data-testid="approval-head-menu"/);
+        const free = panel({ prevId: 'p0', nextId: 'p2' });
+        expect(free).not.toMatch(/disabled[^>]*data-testid="approval-later"/);
+      });
+
       it('while the approval is read: the panel says so, and no card', () => {
         const m = panel({ shown: null });
         expect(text(m)).toContain(P.listLoading);
@@ -284,7 +294,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
   describe('removing a device (stage D3, mockup C1–C5)', () => {
     const office = rows[0];
     const me = rows[1];
-    const rs = (state: Parameters<typeof RemoveScreen>[0]['state']) => html(<RemoveScreen state={state} nowSeconds={NOW} onConfirm={noop} onCancel={noop} onAdd={noop} onDone={noop} />);
+    const rs = (state: Parameters<typeof RemoveScreen>[0]['state']) => html(<RemoveScreen state={state} nowSeconds={NOW} onConfirm={noop} onCancel={noop} onCancelTouch={noop} onAdd={noop} onDone={noop} />);
 
     it('every row has Remove, this phone included (DEC-85)', () => {
       const m = html(<DeviceList rows={rows} nowSeconds={NOW} onRemove={noop} />);
@@ -317,14 +327,23 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(text(m)).toContain(P.devAddComputer);
     });
 
-    it('while the touch is asked: only "Waiting for your touch…" with the gateway\'s spinner, in place of the buttons', () => {
+    it('while the touch is asked: "Waiting for your touch…" with the gateway\'s spinner in place of the buttons, and Cancel', () => {
       const m = rs({ step: 'checking', target: office, self: false });
       expect(m).toContain('data-testid="touch-wait"');
       expect(m).toContain('av3-spin');
       expect(text(m)).toContain(P.touchWait);
       expect(text(m)).not.toContain(P.removeButton);
-      expect(text(m)).not.toContain(P.cancel);
-      expect(m).not.toContain('<button');
+      expect(m).toContain('data-testid="touch-cancel"');
+      expect(m.match(/<button/g)).toHaveLength(1);
+    });
+
+    it('a failed touch: said in the same place, with Try again and Cancel', () => {
+      const m = rs({ step: 'checking', target: office, self: false, error: errorText('check_failed') });
+      expect(m).toContain('data-testid="touch-failed"');
+      expect(text(m)).toContain(errorText('check_failed'));
+      expect(m).toContain('data-testid="touch-retry"');
+      expect(m).toContain('data-testid="touch-cancel"');
+      expect(m).not.toContain('av3-spin');
     });
 
     it('done: the new list', () => {
@@ -347,7 +366,7 @@ describe('the phone screens (both widths use the same markup and the same tokens
   });
 
   describe('replacing the recovery code (DEC-85, mockup D1–D5)', () => {
-    const rot = (state: Parameters<typeof RotateScreen>[0]['state']) => html(<RotateScreen state={state} onOld={noop} onNew={noop} onCancel={noop} onDone={noop} />);
+    const rot = (state: Parameters<typeof RotateScreen>[0]['state']) => html(<RotateScreen state={state} onOld={noop} onNew={noop} onCancel={noop} onCancelTouch={noop} onRetryTouch={noop} onDone={noop} />);
 
     it('the join\'s done screen offers it, with Later', () => {
       const t = text(html(<JoinScreen state={{ step: 'done' }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} onRotate={noop} />));
@@ -378,10 +397,12 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(t).toContain(P.rotateButton);
     });
 
-    it('the touch: only "Waiting for your touch…" with the spinner, no buttons, no code', () => {
+    it('the touch: "Waiting for your touch…" with the spinner and Cancel, no code; a failure offers Try again', () => {
       const m = rot({ step: 'checking' });
       expect(m).toContain('data-testid="touch-wait"');
-      expect(m).not.toContain('<button');
+      expect(m.match(/<button/g)).toHaveLength(1);
+      const f = rot({ step: 'checking', error: errorText('cancelled') });
+      expect(f).toContain('data-testid="touch-retry"');
     });
 
     it('waiting for the email: where it went, the six digits to compare', () => {

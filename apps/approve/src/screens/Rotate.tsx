@@ -15,6 +15,9 @@ export interface RotateScreenProps {
   onOld: (code: string) => void;
   onNew: (typed: string) => void;
   onCancel: () => void;
+  /** Cancel while the touch is asked or after it failed: back to the new code. */
+  onCancelTouch: () => void;
+  onRetryTouch: () => void;
   onDone: () => void;
   /** Drawn with the scan view open (tests and screenshots). */
   scanning?: boolean;
@@ -25,7 +28,7 @@ export function RotateScreen(p: RotateScreenProps) {
   return <Step key={p.state.step} {...p} />;
 }
 
-function Step({ state: st, onOld, onNew, onCancel, onDone, scanning }: RotateScreenProps) {
+function Step({ state: st, onOld, onNew, onCancel, onCancelTouch, onRetryTouch, onDone, scanning }: RotateScreenProps) {
   const [scan, setScan] = useState(scanning === true);
   const [typed, setTyped] = useState('');
   switch (st.step) {
@@ -71,7 +74,7 @@ function Step({ state: st, onOld, onNew, onCancel, onDone, scanning }: RotateScr
     case 'checking':
       return (
         <Screen title={P.rotateNewTitle}>
-          <TouchWait text={P.touchWait} />
+          <TouchWait text={P.touchWait} error={st.error} onRetry={onRetryTouch} onCancel={onCancelTouch} retryLabel={P.tryAgain} cancelLabel={P.cancel} />
         </Screen>
       );
     case 'waiting':

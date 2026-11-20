@@ -116,7 +116,7 @@ describe('replace the recovery code on the phone (DEC-85, mockup D1–D5)', () =
     expect(as.staged).toHaveLength(0);
   });
 
-  it('a cancelled touch: back to the new code, nothing staged', async () => {
+  it('a touch cancelled in the system window: said in the touch wait, nothing staged; Try again stages', async () => {
     const { as, rt, recoveryCode } = await joined();
     const d = driverOf(rt);
     d.start();
@@ -125,7 +125,30 @@ describe('replace the recovery code on the phone (DEC-85, mockup D1–D5)', () =
     if (st.step !== 'new') throw new Error(st.step);
     pk(rt).cancelNext = true;
     await d.confirmNew(st.code);
-    expect(d.get()).toMatchObject({ step: 'new', error: errorText('cancelled') });
+    expect(d.get()).toEqual({ step: 'checking', error: errorText('cancelled') });
+    expect(as.staged).toHaveLength(0);
+    await d.retryTouch();
+    expect(d.get().step).toBe('waiting');
+    expect(as.staged).toHaveLength(1);
+  });
+
+  it('Cancel while the touch is asked: back to the new code, and a late answer stages nothing (no email)', async () => {
+    const { as, rt, recoveryCode } = await joined();
+    const d = driverOf(rt);
+    d.start();
+    await d.submitOld(recoveryCode);
+    const st = d.get();
+    if (st.step !== 'new') throw new Error(st.step);
+    let open!: () => void;
+    pk(rt).gate = new Promise((r) => { open = r; });
+    const pending = d.confirmNew(st.code);
+    while (!pk(rt).waiting) await new Promise((r) => setTimeout(r, 1));
+    expect(d.get().step).toBe('checking');
+    d.cancelTouch();
+    expect(d.get()).toEqual({ step: 'new', code: st.code });
+    open();
+    await pending;
+    expect(d.get()).toEqual({ step: 'new', code: st.code });
     expect(as.staged).toHaveLength(0);
   });
 

@@ -347,6 +347,10 @@ export class FakePasskeys implements CheckDevice {
   cancelNext = false;
   /** Set to make `register` come back without user verification. */
   noScreenLock = false;
+  /** While set, `prove` waits for it: the system window is open. */
+  gate: Promise<void> | null = null;
+  /** True while a `prove` waits on the gate. */
+  waiting = false;
   constructor(private readonly rpId = APP_RP_ID, private readonly origin = `https://${APP_RP_ID}`) {}
 
   async register(keyId: string, _label: string): Promise<PasskeyRegistration> {
@@ -368,6 +372,7 @@ export class FakePasskeys implements CheckDevice {
   }
 
   async prove(credId: string, objectHashText: string): Promise<WebauthnProof> {
+    if (this.gate) { this.waiting = true; await this.gate; this.waiting = false; }
     if (this.cancelNext) { this.cancelNext = false; throw new CheckError('cancelled'); }
     const pair = this.keys.get(credId);
     if (!pair) throw new Error('unknown credential');

@@ -88,13 +88,33 @@ describe('this phone removes a device (stage D3, mockup C1–C5)', () => {
     expect(d.get().step).toBe('confirm');
   });
 
-  it('a cancelled touch: nothing sent, said in words', async () => {
+  it('a touch cancelled in the system window: said in the touch wait, nothing sent; Try again works', async () => {
     const { as, rt, home } = await world();
     pk(rt).cancelNext = true;
     const d = driverOf(rt);
     await d.start(home.keyId);
     await d.confirm();
-    expect(d.get()).toMatchObject({ step: 'failed', error: errorText('cancelled') });
+    expect(d.get()).toMatchObject({ step: 'checking', error: errorText('cancelled') });
+    expect(as.entries).toHaveLength(3);
+    await d.confirm();
+    expect(d.get()).toMatchObject({ step: 'done', label: 'Home Mac' });
+    expect(as.entries).toHaveLength(4);
+  });
+
+  it('Cancel while the touch is asked: back to the confirm screen, and a touch that answers late sends nothing', async () => {
+    const { as, rt, home } = await world();
+    const d = driverOf(rt);
+    await d.start(home.keyId);
+    let open!: () => void;
+    pk(rt).gate = new Promise((r) => { open = r; });
+    const pending = d.confirm();
+    while (!pk(rt).waiting) await new Promise((r) => setTimeout(r, 1));
+    expect(d.get().step).toBe('checking');
+    d.cancelTouch();
+    open();
+    expect(d.get()).toMatchObject({ step: 'confirm', target: { label: 'Home Mac' } });
+    await pending;
+    expect(d.get().step).toBe('confirm');
     expect(as.entries).toHaveLength(3);
   });
 

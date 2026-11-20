@@ -85,12 +85,14 @@ export interface RemoveScreenProps {
   nowSeconds: number;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Cancel while the touch is asked or after it failed: back to the confirm screen. */
+  onCancelTouch: () => void;
   onAdd: () => void;
   onDone: () => void;
 }
 
 /** Remove a device (mockup C2–C4): what it does, the list after the change, then the touch. */
-export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onAdd, onDone }: RemoveScreenProps) {
+export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onCancelTouch, onAdd, onDone }: RemoveScreenProps) {
   switch (st.step) {
     case 'idle':
       return null;
@@ -113,7 +115,9 @@ export function RemoveScreen({ state: st, nowSeconds, onConfirm, onCancel, onAdd
               <button type="button" className="btn btn-ghost btn-full" onClick={onCancel}>{P.cancel}</button>
             </>
           )}
-          {st.step === 'checking' && <TouchWait text={P.touchWait} />}
+          {st.step === 'checking' && (
+            <TouchWait text={P.touchWait} error={st.error} onRetry={onConfirm} onCancel={onCancelTouch} retryLabel={P.tryAgain} cancelLabel={P.cancel} />
+          )}
         </Screen>
       );
     }

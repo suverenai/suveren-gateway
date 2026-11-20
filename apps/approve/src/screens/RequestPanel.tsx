@@ -21,6 +21,8 @@ export interface RequestPanelProps {
   onLater: () => void;
   autoOpen: boolean | null;
   onToggleAuto: () => void;
+  /** A decision is out: the head moves nothing (UI review: nav locked during signing). */
+  locked?: boolean;
   /** The approval on screen; null while it is read. */
   shown: { proposal: Proposal; card: Omit<RequestCardProps, 'proposal'> } | null;
   error?: string;
@@ -39,6 +41,7 @@ export function RequestPanel(p: RequestPanelProps) {
         onLater={p.onLater}
         autoOpen={p.autoOpen}
         onToggleAuto={p.onToggleAuto}
+        locked={p.locked}
       />
       <div className="apr-body">
         {p.error && <Notice kind="error">{p.error}</Notice>}

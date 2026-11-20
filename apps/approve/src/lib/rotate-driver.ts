@@ -38,7 +38,7 @@ export type RotateState =
   | { step: 'idle' }
   | { step: 'old'; busy: boolean; error?: string }
   | { step: 'new'; code: string; error?: string }
-  | { step: 'checking' }
+  | { step: 'checking'; error?: string }
   | { step: 'waiting'; confirmCode: string; email: string | null; expiresAt: number }
   | { step: 'done' }
   | { step: 'failed'; error: string };
@@ -92,6 +92,8 @@ export function maskEmail(email: string | undefined): string | null {
 export class RotateDriver extends Driver<RotateState> {
   private oldCode: string | null = null;
   private newCode: string | null = null;
+  /** Bumped by Cancel: a touch that answers after it is ignored, and nothing is staged. */
+  private gen = 0;
   private staged: { entry: ChainEntry; hash: string } | null = null;
 
   constructor(private readonly d: RotateDeps) {
@@ -104,7 +106,22 @@ export class RotateDriver extends Driver<RotateState> {
     this.set({ step: 'old', busy: false });
   }
 
+  /** Cancel while the touch is asked (or after it failed): back to the new code; a late answer stages nothing. */
+  cancelTouch(): void {
+    if (this.state.step !== 'checking' || !this.newCode) return;
+    this.gen++;
+    this.set({ step: 'new', code: this.newCode });
+  }
+
+  /** "Try again" after a failed touch: the new code was already typed again correctly. */
+  async retryTouch(): Promise<void> {
+    const st = this.state;
+    if (st.step !== 'checking' || !st.error || !this.newCode) return;
+    await this.sign();
+  }
+
   cancel(): void {
+    this.gen++;
     this.oldCode = null;
     this.newCode = null;
     this.staged = null;
@@ -145,7 +162,13 @@ export class RotateDriver extends Driver<RotateState> {
       same = false;
     }
     if (!same) { this.set({ step: 'new', code: this.newCode, error: errorText('new_code_mismatch') }); return; }
+    await this.sign();
+  }
 
+  /** The touch over the entry, the signatures, the local check, then the hand-off. */
+  private async sign(): Promise<void> {
+    if (!this.newCode || !this.oldCode) return;
+    const gen = ++this.gen;
     this.set({ step: 'checking' });
     const d = this.d;
     const s = d.session.current();
@@ -167,6 +190,8 @@ export class RotateDriver extends Driver<RotateState> {
       };
       // The same check the server and every device make (3.3): a defect found here is found before anything is sent.
       await verifyChain({ expectedRootDid: account.root_did, entries: [...s.entries, final] });
+      // Cancelled while the touch was asked: nothing is staged, no email goes out.
+      if (gen !== this.gen) return;
       const res = await d.api.stageRecovery(final);
       d.session.noteUse();
       if (!res.ok) {
@@ -178,7 +203,9 @@ export class RotateDriver extends Driver<RotateState> {
       this.oldCode = null;
       this.set({ step: 'waiting', confirmCode: await confirmCodeOf(hash), email: maskEmail(s.user.email), expiresAt });
     } catch (e) {
-      if (e instanceof CheckError) { this.set({ step: 'new', code: this.newCode, error: errorText(e.code === 'failed' ? 'check_failed' : e.code) }); return; }
+      if (gen !== this.gen) return;
+      // A touch that failed or was cancelled in the system window: said in the same place, with Try again and Cancel.
+      if (e instanceof CheckError) { this.set({ step: 'checking', error: errorText(e.code === 'failed' ? 'check_failed' : e.code) }); return; }
       this.set({ step: 'failed', error: errorText('generic') });
     } finally {
       oldRoot.privateSeed.fill(0);
