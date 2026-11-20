@@ -23,8 +23,8 @@
  *
  * The gateway accepts an answer only if (plan 7): it is exactly this shape; it names this gateway's own identity, request, change
  * hash and gateway key; `key_id` is an ACTIVE GRANTING device of the gateway's OWN verified chain (not the gateway itself); the head
- * check of 3.3 rule 3 passes; the signature verifies; for an allow, the check verifies under the device's check key in force at
- * `chain_seq`; and its time lies inside the request. The request is used once (the gateway's ChangeConfirmations).
+ * check of 3.3 rule 3 passes; the signature verifies; for an allow, the check verifies under the device's check key in force now
+ * (the same key it had at `chain_seq`); and its time lies inside the request. The request is used once (the gateway's ChangeConfirmations).
  *
  * No error here carries a key, a value or a ciphertext.
  */
@@ -314,8 +314,12 @@ export async function verifyAnswer(a: { confirmation: unknown; sig: unknown; che
   if (!(await sigOk(dev!.sign_pub, c, a.sig))) fail('bad_signature');
   if (c.decision === 'allow') {
     if (a.check === undefined) fail('check_required');
-    const key = checkKeyAt(ctx.chain, c.key_id, c.chain_seq);
-    if (!key || !(await verifyCheck(key, await objectHash(c), a.check))) fail('bad_check');
+    // The check key in force NOW, not the one at the named head: a check key replaced since (lost, compromised) confirms nothing
+    // any more, even in an answer that names an older head (independent review L2). The one at `chain_seq` must be the same key.
+    const now = dev!.check;
+    const then = checkKeyAt(ctx.chain, c.key_id, c.chain_seq);
+    if (!now || !then || JSON.stringify(now) !== JSON.stringify(then)) fail('bad_check');
+    if (!(await verifyCheck(now!, await objectHash(c), a.check))) fail('bad_check');
   }
   if (c.confirmed_at > ctx.now + CONFIRMATION_SKEW_SECONDS || c.confirmed_at < x.createdAt - CONFIRMATION_SKEW_SECONDS) fail('bad_time');
   if (ctx.now >= x.expiresAt) fail('expired');

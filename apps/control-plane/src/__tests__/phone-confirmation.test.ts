@@ -25,7 +25,7 @@ import { loadOrGenerateDeviceSigningKey, loadOrGenerateKeyPair } from '../lib/e2
 import { ChangeConfirmations } from '../lib/change-confirmation';
 import { describeChange } from '../lib/change-describe';
 import { PhoneConfirmations, PhoneConfirmRefusal } from '../lib/phone-confirmation';
-import { FakeAs, registerPhone, testRuntime, AS_URL, type TestRuntime } from '../../../approve/src/lib/test-kit';
+import { FakeAs, PeerComputer, addWithRoot, registerPhone, testRuntime, AS_URL, type TestRuntime } from '../../../approve/src/lib/test-kit';
 import { ChangeConfirmDriver, ChangeRequestReader, type ChangeItem } from '../../../approve/src/lib/change-requests';
 import { buildConfirmation } from '@suveren/pairing';
 
@@ -75,7 +75,7 @@ async function world(o: { withCheckKey?: boolean } = {}) {
     describe: (kind, name, change) => describeChange(kind, name, change, MANIFESTS, (n) => STORED[n] ?? null),
   });
   const phone = new PhoneConfirmations({ vault, store, client: client as never, readers, confirmations, hasCheckKey: () => o.withCheckKey === true, now: as.now });
-  return { as, rt, root, vault, store, confirmations, phone, keyId: device.key_id };
+  return { as, rt, root, vault, store, confirmations, phone, readers, readPub: reading.publicKey, keyId: device.key_id };
 }
 type World = Awaited<ReturnType<typeof world>>;
 
@@ -264,6 +264,59 @@ describe('refusals', () => {
     const req = w.confirmations.request(SESSION, 'replace', 'gmail', CHANGE);
     expect(w.confirmations.confirm(SESSION, req.request_id, 'password')).toBe(true);
     expect(w.confirmations.consume(SESSION, req.request_id, 'replace', 'gmail', CHANGE)).toBe(true);
+  });
+});
+
+describe('independent review fixes', () => {
+  it('L1: the own head moves forward after a verified read; an older chain served later is a rollback, nothing is sent', async () => {
+    const w = await world();
+    await addWithRoot(w.as, w.root, await PeerComputer.create('Spare Mac', false));
+    const fresh = await w.as.state();
+    await w.readers.own(w.readPub);
+    expect(w.store.read()!.head).toEqual(fresh.head);
+    // The server hides the newest entry again.
+    w.as.entries.pop();
+    const req = w.confirmations.request(SESSION, 'replace', 'gmail', CHANGE);
+    expect(await refusalOf(w.phone.send(SESSION, req.request_id))).toBe('own_chain_unusable');
+    expect(w.as.confirmations.size).toBe(0);
+  });
+
+  it('L3: a request the server refused keeps its 300 seconds (the password after it too), and the page is told the phone could not be reached', async () => {
+    const w = await world();
+    const req = w.confirmations.request(SESSION, 'replace', 'gmail', CHANGE);
+    // The server refuses it (the id is taken there).
+    w.as.confirmations.set(req.request_id, { request_id: req.request_id, gateway_key_id: 'x', device_keys: {}, created_at: w.as.now(), expires_at: w.as.now() + 900, answer: null });
+    expect(await refusalOf(w.phone.send(SESSION, req.request_id))).toBe('phone_unreachable');
+    w.as.clock += 301;
+    expect(w.confirmations.confirm(SESSION, req.request_id, 'password')).toBe(false);
+    expect(w.confirmations.consume(SESSION, req.request_id, 'replace', 'gmail', CHANGE)).toBe(false);
+  });
+
+  it('L3: a request the server took lives 15 minutes', async () => {
+    const w = await world();
+    const { req } = await sendOne(w);
+    w.as.clock += 600;
+    await driverFor(w.rt, (await phoneItems(w))[0]).confirm();
+    expect(await w.phone.poll(SESSION, req.request_id)).toBe('confirmed');
+  });
+
+  it('L4: once the computer has read the answer, the row is gone at the server (confirmed and denied)', async () => {
+    const w = await world();
+    const a = await sendOne(w);
+    await driverFor(w.rt, (await phoneItems(w))[0]).confirm();
+    expect(await w.phone.poll(SESSION, a.req.request_id)).toBe('confirmed');
+    expect(w.as.confirmations.has(a.req.request_id)).toBe(false);
+    const b = await sendOne(w);
+    await driverFor(w.rt, (await phoneItems(w))[0]).deny();
+    expect(await w.phone.poll(SESSION, b.req.request_id)).toBe('denied');
+    expect(w.as.confirmations.has(b.req.request_id)).toBe(false);
+  });
+
+  it('L5: a change the phone could not be shown in full is never sent to the phone', async () => {
+    const w = await world();
+    const req = w.confirmations.request(SESSION, 'replace', 'gmail', { route: 'credentials', op: 'put-merge', fields: { clientId: 'x'.repeat(600) } });
+    expect(await refusalOf(w.phone.send(SESSION, req.request_id))).toBe('change_not_describable');
+    expect(w.as.confirmations.size).toBe(0);
   });
 });
 

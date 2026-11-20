@@ -13,6 +13,9 @@
  *           session that asked, for the exact change (ChangeConfirmations.consume).
  *   cancel  withdraws it at the Authority Server and here.
  *
+ * Known and accepted (independent review L6): "Do not allow" needs no touch, so someone holding the person's phone with an open
+ * app session can refuse every change. That stops a change, it never makes one; the unlock password stays on the computer.
+ *
  * Nothing is logged but codes: never a view, a key, a wrap or an answer.
  */
 import { randomBytes } from 'node:crypto';
@@ -143,11 +146,12 @@ export class PhoneConfirmations {
       reply = await d.client.call('POST', '/api/devices/confirmations', { bearer: credential, body: { request_id: req.request_id, envelope, sender_sig: senderSig, ciphertext, device_keys: wraps } });
     } catch (e) {
       if (e instanceof AsTlsMismatchError) throw new PhoneConfirmRefusal(502, 'as_tls_mismatch');
-      if (e instanceof AsUnreachableError) throw new PhoneConfirmRefusal(502, 'as_unreachable');
+      if (e instanceof AsUnreachableError) throw new PhoneConfirmRefusal(502, 'phone_unreachable');
       throw e;
     }
-    if (reply.status === 429) throw new PhoneConfirmRefusal(429, 'too_many_requests');
-    if (reply.status !== 201) throw new PhoneConfirmRefusal(502, 'as_refused');
+    // A phone is there but the Authority Server did not take the request: the page says so before it offers the password (L3).
+    if (reply.status !== 201) throw new PhoneConfirmRefusal(502, 'phone_unreachable');
+    if (!d.confirmations.extendForPhone(sessionId, req.request_id, req.expires_at)) throw new PhoneConfirmRefusal(404, 'request_unknown');
     this.sent.set(req.request_id, { sessionId, rootDid: own.rootDid, gatewayKeyId: own.keyId, changeHash: req.change_hash, createdAt: Math.floor(req.createdAt / 1000), expiresAt });
     this.prune();
     const labels = phones.map((p) => own.state.devices[p.keyId]?.label).filter((l): l is string => typeof l === 'string');
@@ -193,7 +197,18 @@ export class PhoneConfirmations {
     if (decision === 'deny') return this.finish(sessionId, requestId, s, 'denied');
     if (!this.d.confirmations.confirm(sessionId, requestId, 'phone')) return this.finish(sessionId, requestId, s, 'expired');
     s.final = 'confirmed';
+    await this.dropAtAs(requestId);
     return 'confirmed';
+  }
+
+  /** The answer was read: the row has done its job at the Authority Server and goes (independent review L4). Best effort. */
+  private async dropAtAs(requestId: string): Promise<void> {
+    try {
+      const c = this.d.vault.getSpCookie();
+      if (isBearerCredential(c)) await this.d.client.call('DELETE', `/api/devices/confirmations/${encodeURIComponent(requestId)}`, { bearer: c });
+    } catch {
+      /* it runs out at the Authority Server by itself */
+    }
   }
 
   /** The person cancelled on the page: withdrawn at the Authority Server and here. */
@@ -209,9 +224,10 @@ export class PhoneConfirmations {
     }
   }
 
-  private finish(sessionId: string, requestId: string, s: Sent, status: PhoneConfirmStatus): PhoneConfirmStatus {
+  private async finish(sessionId: string, requestId: string, s: Sent, status: PhoneConfirmStatus): Promise<PhoneConfirmStatus> {
     s.final = status;
     this.d.confirmations.forget(sessionId, requestId);
+    await this.dropAtAs(requestId);
     return status;
   }
 

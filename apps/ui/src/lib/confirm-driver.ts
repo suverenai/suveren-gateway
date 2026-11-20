@@ -59,7 +59,9 @@ export class ConfirmDriver extends Driver<ConfirmState> {
     // No check key: the phone first, where there is one (plan 7, DEC-47).
     const sent = await this.d.client.confirmViaPhone(this.request.request_id);
     if (sent.ok) { this.set({ ...this.state, phase: 'asking', mode: 'phone', phoneUntil: sent.data.expiresAt }); return; }
-    this.set({ ...this.state, phase: 'asking', mode: 'password', ...(NO_PHONE.has(sent.code) ? {} : { error: textForCode(sent.code, { screen: 'confirm' }) }) });
+    // A phone is there but could not be reached: said in its own words before the password (independent review L3).
+    const notice = sent.code === 'phone_unreachable' ? T.confirmPhoneUnreachable : NO_PHONE.has(sent.code) ? undefined : textForCode(sent.code, { screen: 'confirm' });
+    this.set({ ...this.state, phase: 'asking', mode: 'password', ...(notice ? { error: notice } : {}) });
   }
 
   /** Phone mode: what became of the request. The page calls it every few seconds. */

@@ -100,6 +100,7 @@ export const T = {
   confirmPhoneWaiting: 'Waiting for your phone…', // DRAFT new
   confirmUsePassword: 'Use the password instead', // DRAFT new
   confirmPhoneDenied: 'Not allowed on your phone. Nothing changed.', // DRAFT new (mockup E3)
+  confirmPhoneUnreachable: 'Your phone could not be reached. Confirm with your password instead.', // DRAFT new (independent review L3)
   confirmPhoneInvalid: 'The answer from your phone could not be checked. Nothing changed. Try again; if it repeats, tell support.', // DRAFT new
 
   // Screen 6: errors

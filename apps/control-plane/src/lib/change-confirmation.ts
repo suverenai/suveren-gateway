@@ -124,14 +124,23 @@ export class ChangeConfirmations {
   }
 
   /**
-   * The phone path takes this request (lib/phone-confirmation.ts): it now lives {@link PHONE_CONFIRMATION_TTL_MS} from when it was
-   * made, and the open request is returned with what the phone is shown. Null if it is unknown, not this session's, confirmed or over.
+   * The open request with what the phone is shown, for the phone path (lib/phone-confirmation.ts). `expires_at` is what it WILL be
+   * once the phone has it ({@link PHONE_CONFIRMATION_TTL_MS} from when it was made); the request itself keeps its 300 seconds until
+   * {@link extendForPhone} (independent review L3: a request the Authority Server refused never lives longer, also not for the password).
+   * Null if it is unknown, not this session's, confirmed or over.
    */
   forPhone(sessionId: string, requestId: string): OpenChangeRequest | null {
     const p = this.pending.get(requestId);
     if (!p || p.sessionId !== sessionId || p.confirmed || this.now() >= p.expires_at) return null;
-    p.expires_at = Math.max(p.expires_at, p.createdAt + PHONE_CONFIRMATION_TTL_MS);
-    return { ...publicOf(p), createdAt: p.createdAt, detail: p.detail };
+    return { ...publicOf(p), expires_at: Math.max(p.expires_at, p.createdAt + PHONE_CONFIRMATION_TTL_MS), createdAt: p.createdAt, detail: p.detail };
+  }
+
+  /** The Authority Server took the request for the phones: from now on it lives as long as the phone was told. */
+  extendForPhone(sessionId: string, requestId: string, expiresAt: number): boolean {
+    const p = this.pending.get(requestId);
+    if (!p || p.sessionId !== sessionId || p.confirmed || this.now() >= p.expires_at) return false;
+    p.expires_at = Math.max(p.expires_at, Math.min(expiresAt, p.createdAt + PHONE_CONFIRMATION_TTL_MS));
+    return true;
   }
 
   /** The request is withdrawn (cancelled on the page, or refused on the phone): nothing can confirm or use it any more. */

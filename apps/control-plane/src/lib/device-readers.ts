@@ -169,6 +169,14 @@ export class DeviceReaders {
     if (got.kind === 'bad') {
       throw new OwnChainError(got.code === 'chain_fork' || got.code === 'chain_rollback' || got.code === 'chain_invalid' ? got.code : got.code === 'as_unreachable' ? 'as_unreachable' : got.code === 'head_mismatch' ? 'chain_invalid' : 'as_answer_invalid');
     }
+    // The head moves forward once the whole chain verified (like the pins of other people in resolve()): an Authority Server that
+    // later serves the older head, hiding a removal made since, is caught as a rollback (independent review L1).
+    try {
+      this.d.store.advance(got.state.head);
+    } catch (e) {
+      const reason = (e as { reason?: unknown })?.reason;
+      throw new OwnChainError(reason === 'rollback' ? 'chain_rollback' : reason === 'fork' ? 'chain_fork' : 'chain_unreadable');
+    }
     const dk = await deviceKeys();
     if (!dk.isActive(got.state, stored.keyId)) throw new OwnChainError('device_removed');
     const devices = await this.devicesOf(got.state);

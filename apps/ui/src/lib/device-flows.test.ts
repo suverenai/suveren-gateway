@@ -313,6 +313,16 @@ describe('confirm a change to a login (screen 5)', () => {
     }
   });
 
+  it('a phone that could not be reached: its own notice, then the password (L3)', async () => {
+    const { client } = fakeClient({ '/auth/platform/capabilities': { body: { checkKey: false } }, '/auth/confirm/request': { body: req }, '/auth/confirm/phone': refuse(502, 'phone_unreachable'), '/auth/confirm': { body: { ok: true, confirmation: 'R1' } } });
+    const settle = vi.fn();
+    const d = new ConfirmDriver({ client, ask: { kind: 'replace', name: 'gmail', change: 1 }, settle });
+    await d.begin();
+    expect(d.get()).toMatchObject({ mode: 'password', error: T.confirmPhoneUnreachable });
+    await d.withPassword('pw');
+    expect(settle).toHaveBeenCalledWith('R1');
+  });
+
   it('denied, run out, or an answer that does not verify: said in words, nothing settles', async () => {
     const cases: Array<[string, string]> = [['denied', T.confirmPhoneDenied], ['expired', T.confirmExpired], ['invalid', T.confirmPhoneInvalid]];
     for (const [status, text] of cases) {

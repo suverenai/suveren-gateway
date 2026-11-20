@@ -207,6 +207,27 @@ describe('the gateway checks an answer (plan 7)', () => {
     expect(await codeOf(verifyAnswer(fork, { chain: a.chain, expect: expectOf(a), now: NOW }))).toBe('chain_fork');
   });
 
+  it('a check key replaced since: an answer at the older head with the old key is refused, the new key confirms (L2)', async () => {
+    const a = await account();
+    const oldHead = { seq: a.chain.head.seq, hash: a.chain.head.hash };
+    const oldPriv = a.phone.checkPriv!;
+    const fresh = await checkKey();
+    // A root-signed `set` gives the phone a new check key (the old one was lost); the new key proves itself over the entry.
+    const e = buildEntry({ root_did: a.root.did, seq: a.chain.head.seq + 1, prev: a.chain.head.hash, op: 'set', created_at: NOW - 50, signer: 'root', target: a.phone.record.key_id, check: fresh.check });
+    e.sigs.push(await signEntry(e, 'root', a.root.privateSeed));
+    e.checks = [{ by: a.phone.record.key_id, check: await proofOver(fresh.priv, await entryHash(e)) }];
+    const chain = await verifyChain({ expectedRootDid: a.root.did, entries: [...a.entries, e] });
+    const stale = buildConfirmation({
+      root_did: a.root.did, key_id: a.phone.record.key_id, chain_seq: oldHead.seq, chain_head: oldHead.hash, request_id: RID, change_hash: HASH,
+      gateway_key_id: a.gw.record.key_id, decision: 'allow', confirmed_at: NOW,
+    });
+    const staleAnswer = { confirmation: stale, sig: await signObject(stale, a.phone.seed), check: await proofOver(oldPriv, await objectHash(stale)) };
+    expect(await codeOf(verifyAnswer(staleAnswer, { chain, expect: expectOf(a), now: NOW }))).toBe('bad_check');
+    const current = buildConfirmation({ ...stale, chain_seq: chain.head.seq, chain_head: chain.head.hash });
+    const good = { confirmation: current, sig: await signObject(current, a.phone.seed), check: await proofOver(fresh.priv, await objectHash(current)) };
+    expect((await verifyAnswer(good, { chain, expect: expectOf(a), now: NOW })).decision).toBe('allow');
+  });
+
   it('refuses an answer with an extra member', async () => {
     const a = await account();
     const good = await answerBy(a, a.phone);
