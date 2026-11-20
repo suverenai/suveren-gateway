@@ -21,6 +21,8 @@ export interface PhoneGiveRecord {
   /** The give as `sendToPhone` planned it (PhoneGive) and the ceremony's context (no functions): stored and handed back as they were. */
   give: Record<string, unknown>;
   ctx: Record<string, unknown>;
+  /** The approved AI proposal this give carries out (setup__create_mandate / setup__change_mandate), when it came from one. */
+  proposalId?: string;
 }
 
 interface File { v: 1; gives: Record<string, PhoneGiveRecord> }
@@ -34,7 +36,8 @@ export class PhoneGiveStore {
     const f = v as Partial<File>;
     if (f?.v !== 1 || !f.gives || typeof f.gives !== 'object') throw new Error('The waiting gives cannot be read');
     for (const [id, r] of Object.entries(f.gives)) {
-      if (!isId(id) || typeof r?.startedAt !== 'number' || typeof r.give !== 'object' || typeof r.ctx !== 'object') throw new Error('The waiting gives cannot be read');
+      if (!isId(id) || typeof r?.startedAt !== 'number' || typeof r.give !== 'object' || typeof r.ctx !== 'object'
+      || (r.proposalId !== undefined && typeof r.proposalId !== 'string')) throw new Error('The waiting gives cannot be read');
     }
     return f as File;
   }
@@ -49,7 +52,7 @@ export class PhoneGiveStore {
   hold(mandateId: string, record: Omit<PhoneGiveRecord, 'startedAt'>): void {
     if (!isId(mandateId)) throw new Error('bad mandate id');
     const f = this.live(this.read());
-    f.gives[mandateId] = { startedAt: this.now(), give: record.give, ctx: record.ctx };
+    f.gives[mandateId] = { startedAt: this.now(), give: record.give, ctx: record.ctx, ...(record.proposalId ? { proposalId: record.proposalId } : {}) };
     const ids = Object.keys(f.gives).sort((a, b) => f.gives[a].startedAt - f.gives[b].startedAt);
     while (ids.length > MAX_WAITING) delete f.gives[ids.shift()!];
     this.vault.setSecretSlot(SLOT, f);
@@ -59,6 +62,20 @@ export class PhoneGiveStore {
   get(mandateId: string): PhoneGiveRecord | null {
     if (!isId(mandateId)) return null;
     return this.live(this.read()).gives[mandateId] ?? null;
+  }
+
+  /** Every give still waiting (ids, oldest first): what the background completion goes through. */
+  list(): Array<{ mandateId: string; startedAt: number; proposalId?: string }> {
+    const f = this.live(this.read());
+    return Object.entries(f.gives)
+      .map(([mandateId, r]) => ({ mandateId, startedAt: r.startedAt, ...(r.proposalId ? { proposalId: r.proposalId } : {}) }))
+      .sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  /** The give waiting for an approved proposal, or null. */
+  byProposal(proposalId: string): { mandateId: string; startedAt: number } | null {
+    if (typeof proposalId !== 'string' || proposalId.length === 0) return null;
+    return this.list().find(g => g.proposalId === proposalId) ?? null;
   }
 
   /** Stop waiting for it. True when one was waiting. */

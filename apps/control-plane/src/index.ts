@@ -10,7 +10,7 @@
  */
 
 import { noForeignFraming } from './lib/no-foreign-framing';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -93,7 +93,7 @@ import { createInternalMandateRouter } from './routes/internal-mandate';
 import { createMandateRouter } from './routes/mandate';
 import { createTeamJoinRouter } from './routes/team-join';
 import { createTeamChangesRouter } from './routes/team-changes';
-import type { CeremonyDeps } from './lib/mandate-ceremony';
+import { completeWaitingGives, type CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
@@ -599,6 +599,19 @@ const replacedRetryDeps = (): RetryDeps => ({
   resyncGates: () => resyncGates(),
 });
 startReplacedRevokeRetry(replacedRetryDeps());
+
+// Gives waiting on the person's phone (DEC-86/DEC-90) are finished here too, not only by a page that polls: an approved AI proposal sent
+// to the phone has no page waiting for it. Every 5 seconds, only while signed in with a device chain; one check per give at a time.
+const PHONE_GIVE_COMPLETE_MS = 5_000;
+setInterval(() => {
+  if (!vault.isUnlocked() || !vault.getSpCookie()) return;
+  const d: CeremonyDeps = { ...mandateCeremonyDeps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+  if (!d.grants?.active()) return;
+  void completeWaitingGives(d,
+    () => { eventBus.emit('attestation-changed'); void resyncGates().catch(() => {}); },
+    r => console.warn(`[Control Plane] a give waiting on the phone ended: ${r.message}`),
+  ).catch(() => {});
+}, PHONE_GIVE_COMPLETE_MS).unref?.();
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.

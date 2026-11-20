@@ -18,7 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, isNoCheckKeyRefusal, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 import { eventBus } from '../lib/event-bus';
 import { ApprovalRefusal, type DeviceApprovals, type TakenApproval } from '../lib/device-approvals';
 
@@ -132,6 +132,20 @@ export function createInternalMandateRouter(
       eventBus.emit('attestation-changed'); // see the change branch above
       res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
     } catch (err) {
+      // A computer without Touch ID cannot grant what the person approved; their phone can (DEC-90). The claim on the approval is kept (not
+      // released): the give carries the mandate id the claim names, so once the phone's grant is issued the Authority Server refuses the
+      // approval to anyone else (a claim whose mandate was issued is never taken over), and before that only this computer holds it.
+      if (spend && isNoCheckKeyRefusal(err)) {
+        try {
+          const change = (effective as { change?: MandateChangeRequest }).change;
+          const g = change ? await changeOnPhone(change, d, { proposalId: spend.proposalId }) : await giveOnPhone(effective, d, { proposalId: spend.proposalId });
+          res.json({ ok: true, onPhone: { mandateId: g.mandateId, mandateVersion: g.mandateVersion, expiresAt: g.expiresAt }, proposalId: spend.proposalId });
+          return;
+        } catch (phoneErr) {
+          // No phone that can give it either: the person hears the computer's own refusal below.
+          if (!(phoneErr instanceof MandateRefused)) console.error('[Control Plane] sending the approved mandate to the phone failed:', phoneErr instanceof Error ? phoneErr.message : phoneErr);
+        }
+      }
       await spend?.release();
       if (err instanceof MandateRefused) {
         res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.detail ?? {}) });

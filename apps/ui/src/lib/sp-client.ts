@@ -2499,6 +2499,14 @@ class SPClient {
     return body as { state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string };
   }
 
+  /** The give an approved AI proposal sent to the phone (DEC-90: a computer without Touch ID), or null while none waits for it. */
+  async findApprovedGiveOnPhone(proposalId: string): Promise<{ mandateId: string; startedAt: number } | null> {
+    const res = await this.fetch(`/api/mandate/give-on-phone?proposal=${encodeURIComponent(proposalId)}`);
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as { waiting?: { mandateId: string; startedAt: number } | null };
+    return body.waiting ?? null;
+  }
+
   /** Stop waiting for the phone on this page. The prepared request runs out at the Authority Server by itself. */
   async cancelGiveOnPhone(mandateId: string): Promise<void> {
     await this.fetch(`/api/mandate/give-on-phone/${encodeURIComponent(mandateId)}`, { method: 'DELETE' }).catch(() => {});

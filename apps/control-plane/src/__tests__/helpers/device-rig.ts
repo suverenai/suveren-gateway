@@ -126,6 +126,7 @@ export interface GatewayRig {
   /** What the mandate router handed to the intent delivery and the gate resync. */
   delivered: Array<{ authorizationId: string }>;
   resynced: { count: number };
+  ceremony: (() => Omit<CeremonyDeps, 'newAuthorizationId'>) | undefined;
   /** Unlock with the password and return the page session. */
   unlock: () => Promise<{ token: string; cookie: string }>;
   close: () => Promise<void>;
@@ -157,6 +158,7 @@ export interface BootOptions {
 }
 
 export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
+  let ceremonyOut: (() => Omit<CeremonyDeps, 'newAuthorizationId'>) | undefined;
   const dir = o.dir ?? tmpDir();
   const enabled = o.enabled ?? true;
   const clock = o.clock ?? { t: Math.floor(Date.now() / 1000) };
@@ -217,7 +219,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       });
       return { status: r.status, body: await r.json().catch(() => ({})) };
     };
-    const ceremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
+    const ceremonyDeps = ceremonyOut = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
       user: vault.getSessionUser(), as,
       encrypt: async (_intent, recipients) => ({
         intentCiphertext: 'Y2lwaGVy', encryptedKeys: Object.fromEntries(recipients.map(r => [r.userId, { ct: 'a', enc: 'b' }])),
@@ -233,9 +235,12 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
     app.use('/internal', json, createInternalMandateRouter(() => 'sekret', ceremonyDeps, approvals));
   }
   const server: Server = await new Promise(r => { const sv = app.listen(0, o.listenHost ?? '127.0.0.1', () => r(sv)); });
+  const ceremony = ceremonyOut;
   const port = (server.address() as { port: number }).port;
   return {
     port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, approvals, delivered, resynced,
+    /** The ceremony's deps as the routers get them (undefined without `mandate`): what index.ts's background completion runs with. */
+    ceremony,
     unlock: async () => {
       const r = await call(port, 'POST', '/auth/unlock', { body: { password: PW }, connectTo: o.listenHost });
       if (r.status !== 200) throw new Error(`unlock failed: ${r.status} ${r.text}`);

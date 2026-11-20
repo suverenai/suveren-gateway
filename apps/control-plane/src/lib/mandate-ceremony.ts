@@ -572,7 +572,7 @@ type StoredContext = Omit<GrantedContext, 'issueInput'>;
  * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
  * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
  */
-export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, meta: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
   const plan = await planMandate(req, deps);
   const ctx = await grantedContext(req, plan, deps);
@@ -581,7 +581,7 @@ export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Prom
     give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title, ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}) });
   } catch (err) { return grantRefused(err); }
   const { issueInput: _fn, ...stored } = ctx;
-  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown> });
+  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown>, ...(meta.proposalId ? { proposalId: meta.proposalId } : {}) });
   return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
 }
 
@@ -599,9 +599,30 @@ async function previousOf(authorizationId: string, deps: CeremonyDeps): Promise<
  * planned members AND the Authority Server issued the mandate; a refusal throws (and ends the wait). `unknown`: nothing waits under this id.
  */
 export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+  // The page and the background completion may ask at the same moment: one check at a time per give, so a mandate is never requested twice.
+  if (phoneGiveInFlight.has(mandateId)) return { state: 'waiting' };
+  phoneGiveInFlight.add(mandateId);
+  try {
+    return await pollPhoneGiveOnce(mandateId, deps);
+  } finally {
+    phoneGiveInFlight.delete(mandateId);
+  }
+}
+
+const phoneGiveInFlight = new Set<string>();
+/** Gives finished in this process, kept a little while so a later ask (the page after the background, or the reverse) hears "done". */
+const phoneGiveDone = new Map<string, { at: number; authorizationId: string; revokeError?: string }>();
+const PHONE_GIVE_DONE_KEEP_MS = 10 * 60_000;
+
+async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
   const store = deps.grants!.phoneGives;
   const p = store.get(mandateId);
-  if (!p) return { state: 'unknown' };
+  if (!p) {
+    // Finished a moment ago by the other asker (the page or the background completion): the same answer, not "nothing waits".
+    const done = phoneGiveDone.get(mandateId);
+    if (done && Date.now() - done.at < PHONE_GIVE_DONE_KEEP_MS) return { state: 'done', authorizationId: done.authorizationId, ...(done.revokeError ? { revokeError: done.revokeError } : {}) };
+    return { state: 'unknown' };
+  }
   let issued: Issued | null;
   try {
     issued = await deps.grants!.phoneGrant(p.give as unknown as PhoneGive);
@@ -609,7 +630,44 @@ export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Prom
   if (!issued) return { state: 'waiting' };
   store.drop(mandateId);
   const r = await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
+  phoneGiveDone.set(mandateId, { at: Date.now(), authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) });
+  for (const [id, d] of phoneGiveDone) if (Date.now() - d.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveDone.delete(id);
   return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
+}
+
+/**
+ * A change the person approved (an AI proposal, setup__change_mandate) on a computer that cannot grant it: the same checks as
+ * `changeMandate` (the diff still the one approved), then sent to the phone like a give from the page (DEC-90).
+ */
+export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps, meta: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  const { diff, request } = await planMandateChange(req, deps);
+  if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
+    refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
+  }
+  return giveOnPhone(request, deps, meta);
+}
+
+/** Can this gateway hand a grant to the person's phone (an active device of the chain, other than this one, with a check key)? */
+export function isNoCheckKeyRefusal(err: unknown): boolean {
+  return err instanceof MandateRefused && err.code === 'grant_refused' && (err.detail as { grantCode?: unknown } | undefined)?.grantCode === 'no_check_key';
+}
+
+/**
+ * Finish every give that waits on the phone, page or not (an approved AI proposal has no page that polls): what the timer in index.ts
+ * runs. A give whose phone grant arrived is requested and delivered; a refusal ends it. `onDone` is told of each mandate that went live.
+ */
+export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string; proposalId?: string }) => void, onRefused?: (r: { mandateId: string; proposalId?: string; message: string }) => void): Promise<void> {
+  if (!deps.grants?.active()) return;
+  let waiting: Array<{ mandateId: string; proposalId?: string }>;
+  try { waiting = deps.grants.phoneGives.list(); } catch { return; }
+  for (const g of waiting) {
+    try {
+      const r = await pollPhoneGive(g.mandateId, deps);
+      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId, ...(g.proposalId ? { proposalId: g.proposalId } : {}) });
+    } catch (err) {
+      onRefused?.({ mandateId: g.mandateId, ...(g.proposalId ? { proposalId: g.proposalId } : {}), message: err instanceof Error ? err.message : String(err) });
+    }
+  }
 }
 
 /** The person stopped waiting for the phone on this page. The prepared row runs out at the Authority Server by itself. */
