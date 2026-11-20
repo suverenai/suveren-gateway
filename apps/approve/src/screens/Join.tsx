@@ -18,6 +18,8 @@ export interface JoinScreenProps {
   scanning?: boolean;
   /** A way back to a start screen with another choice (only while phone-first setup is on, DEC-83). */
   canGoBack?: boolean;
+  /** Why the phone is back here (mockup C5: it was removed from the account). */
+  notice?: string;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {
@@ -33,6 +35,7 @@ export function JoinScreen(p: JoinScreenProps) {
     case 'scan':
       return (
         <Screen title={P.joinTitle}>
+          {p.notice && <div data-testid="join-notice"><Notice kind="error">{p.notice}</Notice></div>}
           <p>{P.joinIntro}</p>
           <p>{P.joinScanWhy}</p>
           {st.error && <Notice kind="error">{st.error}</Notice>}

@@ -7,7 +7,7 @@ import { NeedsScreen, WelcomeScreen } from './Start';
 import { RegisterScreen, type RegisterScreenProps } from './Register';
 import { JoinScreen } from './Join';
 import { AdmitScreen } from './Admit';
-import { DevicesScreen, DeviceList } from './Devices';
+import { DevicesScreen, DeviceList, RemoveScreen } from './Devices';
 import { RequestsScreen, RequestDetail } from './Requests';
 import { RequestPanel } from './RequestPanel';
 import type { CardCheck, ReadyCard } from '../lib/card-checks';
@@ -277,6 +277,67 @@ describe('the phone screens (both widths use the same markup and the same tokens
       const t = text(html(<RequestsScreen proposals={[]} error={P.listFailed} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />));
       expect(t).toContain(P.listFailed);
       expect(t).not.toContain(P.listEmpty);
+    });
+  });
+
+  describe('removing a device (stage D3, mockup C1–C5)', () => {
+    const office = rows[0];
+    const me = rows[1];
+    const rs = (state: Parameters<typeof RemoveScreen>[0]['state']) => html(<RemoveScreen state={state} nowSeconds={NOW} onConfirm={noop} onCancel={noop} onAdd={noop} onDone={noop} />);
+
+    it('every row has Remove, this phone included (DEC-85)', () => {
+      const m = html(<DeviceList rows={rows} nowSeconds={NOW} onRemove={noop} />);
+      expect(m.match(/data-testid="device-remove"/g)).toHaveLength(2);
+      expect(html(<DeviceList rows={rows} nowSeconds={NOW} />)).not.toContain('device-remove');
+    });
+
+    it('a computer: what it does, its logins, the list after the change, then the touch button', () => {
+      const t = text(rs({ step: 'confirm', target: office, after: [me], self: false }));
+      expect(t).toContain(P.removeTitle('Office Mac'));
+      expect(t).toContain(P.removeComputerEffect('Office Mac'));
+      expect(t).toContain(P.removeLogins('Office Mac'));
+      expect(t).toContain(P.removeListAfter);
+      expect(t).toContain(P.removeButton);
+      expect(t).toContain('My iPhone');
+    });
+
+    it('this phone: its own words, no logins line', () => {
+      const t = text(rs({ step: 'confirm', target: me, after: [office], self: true }));
+      expect(t).toContain(P.removeSelfTitle);
+      expect(t).toContain(P.removeSelfEffect);
+      expect(t).not.toContain(P.removeLogins('My iPhone'));
+    });
+
+    it('refused before the touch: the reason, no touch button, a way to add a device', () => {
+      const m = rs({ step: 'refused', target: me, self: true, error: errorText('last_granting_self') });
+      expect(m).toContain('data-testid="remove-refused"');
+      expect(text(m)).toContain(errorText('last_granting_self'));
+      expect(text(m)).not.toContain(P.removeButton);
+      expect(text(m)).toContain(P.devAddComputer);
+    });
+
+    it('while the touch is asked: no button to press twice', () => {
+      const t = text(rs({ step: 'checking', target: office, self: false }));
+      expect(t).toContain(P.removeChecking);
+      expect(t).not.toContain(P.removeButton);
+    });
+
+    it('done: the new list', () => {
+      const t = text(rs({ step: 'done', label: 'Office Mac', rows: [me], self: false }));
+      expect(t).toContain(P.removeDone('Office Mac'));
+      expect(t).toContain(P.removeListNow);
+    });
+
+    it('the devices screen shows the notices from the other devices', () => {
+      const m = html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} notices={[P.noticeAdded('Home Mac', 'today', 'Office Mac')]} />);
+      expect(m).toContain('data-testid="chain-notice"');
+      expect(text(m)).toContain('Home Mac was added to your account today on Office Mac. If this was not you, remove it.');
+    });
+
+    it('removed on another device (C5): the start screen says so', () => {
+      const m = html(<JoinScreen state={{ step: 'scan', busy: false }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} notice={errorText('device_removed')} />);
+      expect(m).toContain('data-testid="join-notice"');
+      expect(text(m)).toContain(errorText('device_removed'));
     });
   });
 

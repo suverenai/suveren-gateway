@@ -13,9 +13,11 @@ export function TileList({ title, children, testid }: { title?: string; children
   );
 }
 
-export function TileRow({ mark, name, detail, tag, strongTag, testid }: {
+export function TileRow({ mark, name, detail, tag, strongTag, testid, action }: {
   /** One or two letters in the round mark. */
   mark: string; name: string; detail?: ReactNode; tag?: string; strongTag?: boolean; testid?: string;
+  /** A small button at the end of the row (the phone's "Remove", as the Team page's member actions). */
+  action?: ReactNode;
 }) {
   return (
     <div className="su-m" data-testid={testid}>
@@ -25,6 +27,7 @@ export function TileRow({ mark, name, detail, tag, strongTag, testid }: {
         {detail !== undefined && <span>{detail}</span>}
       </div>
       {tag && <span className={`su-role${strongTag ? ' is-admin' : ''}`}>{tag}</span>}
+      {action}
     </div>
   );
 }

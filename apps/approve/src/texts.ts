@@ -157,6 +157,34 @@ export const P = {
   whenYesterday: SP.whenYesterday, // shared (approval-card pairing-texts)
   whenDaysAgo: SP.whenDaysAgo, // shared (approval-card pairing-texts)
 
+  // ─── Remove a device (stage D3, mockup C1–C5) ─────────────────────────────────
+  devRemove: 'Remove', // DRAFT new
+  removeTitle: (label: string): string => `Remove "${label}"?`, // DRAFT new
+  removeSelfTitle: 'Remove this phone?', // DRAFT new
+  removeComputerEffect: (label: string): string => `${label} can no longer sign in, read new requests or decide. Its gateway locks.`, // DRAFT new
+  removePhoneEffect: (label: string): string => `${label} can no longer sign in, read new requests or decide.`, // DRAFT new
+  removeLogins: (label: string): string => `The logins of your connected systems stay on ${label} until someone clears it. If it was lost or stolen, change those passwords too.`, // DRAFT new
+  removeSelfEffect: 'This phone can no longer sign in, read requests or decide. The app then clears its data on this phone.', // DRAFT new
+  removeListAfter: SP.admitListTitle, // shared (approval-card pairing-texts): "Your devices after this:"
+  removeButton: 'Remove with your touch', // DRAFT new (DEC-85: "... with your touch")
+  removeChecking: 'Your phone asks for your touch, to remove the device.', // DRAFT new
+  removeDone: (label: string): string => `${label} was removed.`, // DRAFT new
+  removeListNow: 'Your devices now:', // DRAFT new
+  removedSelf: 'This phone was removed from your account.', // DRAFT new
+
+  // ─── Replace the recovery code after joining (DEC-85, mockup D1–D5) ───────────
+  rotateOfferTitle: 'Replace your recovery code', // DRAFT
+  rotateOfferBody: (label: string): string => `Your recovery code was made on ${label}. Replace it now on this phone, so only the new code works.`, // DRAFT new
+  rotateNeedPaper: 'You need the paper with your old code.', // DRAFT new
+  rotateStart: 'Make a new code', // DRAFT
+  rotateLater: 'Later', // DRAFT new
+
+  // ─── Notices from the other devices (mockup F1–F3, plan 20.17) ────────────────
+  noticeAdded: (label: string, when: string, by: string): string => `${label} was added to your account ${when} on ${by}. If this was not you, remove it.`, // DRAFT new
+  noticeRemoved: (label: string, by: string): string => `${label} was removed from your account on ${by}.`, // DRAFT new
+  noticeRotated: (by: string): string => `${by} replaced your recovery code. The old code no longer works. If this was not you, contact support.`, // DRAFT new
+  noticeByCode: 'your recovery code', // DRAFT new (who signed: the recovery code, not a device)
+
   // ─── Navigation ───────────────────────────────────────────────────────────────
   navRequests: 'Requests', // DRAFT
   navDevices: 'Devices', // DRAFT
@@ -262,6 +290,12 @@ const ERRORS: Record<string, string> = {
   mandate_revoked: 'The mandate behind this request was ended. Nothing can be approved under it.', // DRAFT
   mandate_expired: 'The mandate behind this request has run out. Nothing can be approved under it.', // DRAFT
   check_required: 'Your touch is needed first. Nothing was decided. Try again.', // DRAFT
+  // Removing a device (stage D3)
+  last_granting_self: 'This phone is the only one of your devices that can confirm changes. Add a device that can, then remove this phone. Nothing changed.', // DRAFT new (mockup C3)
+  last_granting: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new
+  no_granting_device: 'Then none of your devices could confirm changes. Add a device that can first. Nothing changed.', // DRAFT new (the AS code NO_GRANTING_DEVICE)
+  bad_target: 'This device is no longer in your list. Nothing changed.', // DRAFT new (BAD_TARGET)
+  remove_chain_moved: 'Your list of devices changed meanwhile. Nothing was removed. Look at the list again.', // DRAFT new
 };
 
 export function errorText(code: string | undefined): string {

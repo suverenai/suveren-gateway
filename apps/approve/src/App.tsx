@@ -24,7 +24,10 @@ import { NeedsScreen, WelcomeScreen } from './screens/Start';
 import { RegisterScreen } from './screens/Register';
 import { JoinScreen } from './screens/Join';
 import { AdmitScreen } from './screens/Admit';
-import { DevicesScreen } from './screens/Devices';
+import { DevicesScreen, RemoveScreen } from './screens/Devices';
+import { RemoveDriver } from './lib/remove-driver';
+import { chainNotices, type ChainNotice } from './lib/chain-notices';
+import { whenText } from './screens/Frame';
 import { RequestsScreen } from './screens/Requests';
 import { RequestPanel } from './screens/RequestPanel';
 import { loadAutoOpen, saveAutoOpen } from './lib/panel-setting';
@@ -46,7 +49,7 @@ type View =
   | { t: 'needs'; needs: Need[] }
   | { t: 'welcome' }
   | { t: 'register' }
-  | { t: 'join' }
+  | { t: 'join'; notice?: string }
   | { t: 'locked'; error: string | null; ended: boolean; canForget: boolean }
   | { t: 'home'; tab: 'requests' | 'devices' | 'admit' };
 
@@ -116,6 +119,15 @@ function Screens() {
     return () => window.clearInterval(t);
   }, [rt, locked]);
 
+  const forgetTo = useCallback(async (notice?: string) => {
+    bindPhoneHost(null);
+    await rt.session.end().catch(() => {});
+    await rt.keys.deleteAll().catch(() => {});
+    await rt.accounts.clear().catch(() => {});
+    setView(PHONE_FIRST_SETUP && !notice ? { t: 'welcome' } : { t: 'join', notice });
+  }, [rt]);
+  const forget = useCallback(async () => { await forgetTo(); }, [forgetTo]);
+
   // ─── open a session ───────────────────────────────────────────────────────────
   const openSession = useCallback(async () => {
     setBusy(true);
@@ -131,11 +143,7 @@ function Screens() {
     setView({ t: 'home', tab: 'requests' });
   }, [rt, locked]);
 
-  const forget = useCallback(async () => {
-    await rt.keys.deleteAll().catch(() => {});
-    await rt.accounts.clear().catch(() => {});
-    setView(PHONE_FIRST_SETUP ? { t: 'welcome' } : { t: 'join' });
-  }, [rt]);
+
 
   switch (view.t) {
     case 'boot':
@@ -147,11 +155,11 @@ function Screens() {
     case 'register':
       return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
     case 'join':
-      return <JoinFlow key={joinKey} rt={rt} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
+      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
-      return <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} />;
+      return <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} onRemovedSelf={() => void forgetTo(P.removedSelf)} />;
   }
 }
 
@@ -173,7 +181,7 @@ function RegisterFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDo
   );
 }
 
-function JoinFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: () => void }) {
+function JoinFlow({ rt, notice, onBack, onDone }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void }) {
   const driver = useMemo(() => new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now }), [rt]);
   useEffect(() => () => driver.dispose(), [driver]);
   const state = useDriver(driver);
@@ -185,21 +193,21 @@ function JoinFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: 
     <JoinScreen
       state={state} nowSeconds={rt.now()}
       onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
-      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice}
     />
   );
 }
 
-function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
+function Home({ rt, tab, setTab, persistent, updated, onEnded, onRemovedSelf }: {
   rt: Rt; tab: 'requests' | 'devices' | 'admit'; setTab: (t: 'requests' | 'devices' | 'admit') => void;
-  persistent: boolean | null; updated: boolean; onEnded: () => void;
+  persistent: boolean | null; updated: boolean; onEnded: () => void; onRemovedSelf: () => void;
 }) {
   return (
     <div className="ap-shell">
       <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => setTab(t)}
         items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
       {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
-      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} />}
+      {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} onRemovedSelf={onRemovedSelf} />}
       {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}
     </div>
   );
@@ -358,17 +366,24 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
   );
 }
 
-function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void }) {
+function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf }: {
+  rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void; onRemovedSelf: () => void;
+}) {
   const [rows, setRows] = useState<DeviceRow[]>([]);
   const [code, setCode] = useState<string | null>(null);
+  const [notices, setNotices] = useState<string[]>([]);
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const remover = useMemo(() => new RemoveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const removing = useDriver(remover);
 
   const show = useCallback(async () => {
     const s = rt.session.current();
     const account = await rt.accounts.read();
     if (!s || !account) { onEnded(); return; }
-    setRows(deviceRows(s.entries, s.chain, account.key_id, rt.now()));
+    const now = rt.now();
+    setRows(deviceRows(s.entries, s.chain, account.key_id, now));
+    setNotices(chainNotices(s.entries, s.chain, account.key_id, now).map((n) => noticeText(n, now)));
     setCode(await identityCodeOf(account.root_did));
   }, [rt, onEnded]);
 
@@ -384,12 +399,34 @@ function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persiste
 
   useEffect(() => { void show(); void refresh(); }, [show, refresh]);
 
+  if (removing.step !== 'idle') {
+    return (
+      <RemoveScreen
+        state={removing} nowSeconds={rt.now()}
+        onConfirm={() => void remover.confirm()} onCancel={() => remover.cancel()} onAdd={() => { remover.cancel(); onAdd(); }}
+        onDone={() => {
+          const self = removing.step === 'done' && removing.self;
+          remover.cancel();
+          if (self) onRemovedSelf(); else void show();
+        }}
+      />
+    );
+  }
   return (
     <DevicesScreen
       rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
       version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
+      onRemove={(keyId) => void remover.start(keyId)} notices={notices}
     />
   );
+}
+
+/** A notice from the chain, in words (mockup F1, F3). */
+function noticeText(n: ChainNotice, now: number): string {
+  const by = n.by ?? P.noticeByCode;
+  if (n.kind === 'added') return P.noticeAdded(n.label, whenText(n.at, now), by);
+  if (n.kind === 'removed') return P.noticeRemoved(n.label, by);
+  return P.noticeRotated(by);
 }
 
 function AdmitFlow({ rt, onDone }: { rt: Rt; onDone: () => void }) {
