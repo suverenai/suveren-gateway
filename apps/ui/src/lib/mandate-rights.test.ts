@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mandateRight } from './mandate-rights';
+import { isTeamAdmin, mandateRight } from './mandate-rights';
 
 /**
  * The mandate screen used to say "Not enabled for <team>" only on its last page,
@@ -67,5 +67,17 @@ describe('mandateRight', () => {
 
   it('a snapshot without isPersonal is treated as a team — the safe side', () => {
     expect(mandateRight({ ...base, grantors: [] })).toMatchObject({ can: false });
+  });
+});
+
+describe('isTeamAdmin (the Authority Server: the creator is the admin)', () => {
+  it('the creator is the admin even when the membership carries no role', () => {
+    expect(isTeamAdmin({ createdBy: 'u_me' }, { role: undefined }, 'u_me')).toBe(true);
+    expect(isTeamAdmin({ createdBy: 'u_other' }, {}, 'u_me')).toBe(false);
+  });
+  it('a membership role of admin also counts; nothing known means no', () => {
+    expect(isTeamAdmin({}, { role: 'admin' }, 'u_me')).toBe(true);
+    expect(isTeamAdmin(null, null, 'u_me')).toBe(false);
+    expect(isTeamAdmin({ createdBy: 'u_me' }, null, undefined)).toBe(false);
   });
 });

@@ -14,7 +14,7 @@ import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '@suveren/approval-card/lib/source-manifests';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
-import { mandateRight } from '../lib/mandate-rights';
+import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '@suveren/approval-card/lib/reject-outcome';
 import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
@@ -69,7 +69,7 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user, activeMembership } = useAuth();
+  const { user, activeMembership, activeTeam } = useAuth();
   const spUrl = useSpUrl();
   // Chain accounts only (device keys on, a set-up device): the review step gives the mandate with Touch ID (DEC-80). Everyone else sees today's page.
   const chain = useDeviceChain();
@@ -560,7 +560,7 @@ export function AgentReviewPage() {
     userId: user?.id,
     profileName: profileDisplayName(authData.profileId),
     teamName: authData.groupName,
-    isAdmin: activeMembership?.role === 'admin',
+    isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
   });
   const blockedByTeamGate = !right.can;
   const giveCaps = Object.entries(profileConfig?.caps ?? {}).map(([k, v]) => ({ label: profile?.boundsSchema?.fields?.[k]?.displayName ?? k, value: limitValueText(profile?.boundsSchema?.fields?.[k], v) }));

@@ -11,7 +11,7 @@ import {
   effectiveGrantors,
 } from '../lib/sp-client';
 import { pickerEntries, findPreselectedEntry } from '../lib/picker-entries';
-import { mandateRight } from '../lib/mandate-rights';
+import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import { ProfileIcon } from './ProfileIcon';
@@ -42,7 +42,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
   // Loads the connector manifests' area icons (lib/area.ts) and re-renders once they are known.
   useAreaCatalog();
   const navigate = useNavigate();
-  const { group, groupId, domain, user, activeMembership } = useAuth();
+  const { group, groupId, domain, user, activeMembership, activeTeam } = useAuth();
   const spUrl = useSpUrl();
   const enableHref = teamSettingsHref(spUrl, groupId);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
@@ -97,7 +97,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       userId: user?.id,
       profileName: profileDisplayName(profile.id),
       teamName: group?.name,
-      isAdmin: activeMembership?.role === 'admin',
+      isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
     });
   };
 

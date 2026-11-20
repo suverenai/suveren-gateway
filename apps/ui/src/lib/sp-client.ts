@@ -47,6 +47,8 @@ export interface SPGroup {
   name: string;
   myDomains: string[];
   isAdmin: boolean;
+  /** The creator, who is the team's admin on the Authority Server (groups-store `createdBy`). */
+  createdBy?: string;
   /** v0.4: true for the auto-provisioned single-member personal workspace. */
   isPersonal?: boolean;
 }

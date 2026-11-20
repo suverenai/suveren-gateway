@@ -166,6 +166,7 @@ export const DRAFT = {
   // DEC-93: the first screen of a gateway nobody has used yet (no account key)
   startTitle: 'Connect to your Suveren account', // DRAFT
   startWhy: 'This gateway is new. Connect it to your Suveren account first; then you set an unlock password.', // DRAFT
+  startUseAccountKey: 'Sign in with an account key instead', // DRAFT
 
   touchSetupSkipped: 'Touch ID was not turned on. You can turn it on later under Settings.', // DRAFT
   touchCardTitle: 'Unlock with Touch ID', // DRAFT

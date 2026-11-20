@@ -75,3 +75,12 @@ export function mandateRight(i: MandateRightInput): MandateRight {
   }
   return { can: true };
 }
+
+/**
+ * Is the signed-in person an admin of the active team? The Authority Server's rule: the team's creator
+ * (`createdBy`), or a membership that says `role: 'admin'` where an Authority Server reports one.
+ */
+export function isTeamAdmin(team: { createdBy?: string } | null | undefined, membership: { role?: string } | null | undefined, userId: string | undefined): boolean {
+  if (membership?.role === 'admin') return true;
+  return !!userId && !!team?.createdBy && team.createdBy === userId;
+}
