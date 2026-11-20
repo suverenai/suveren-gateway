@@ -207,7 +207,7 @@ export function createDeviceSetupRouter(deps: DeviceSetupRouterDeps): Router {
  * where the work happens, not by this path. The answer says nothing about the
  * account; the page reads the outcome with its own session.
  */
-export function createConnectCallbackRouter(deps: { pageSession: PageSessionDeps; setup: DeviceSetup }): Router {
+export function createConnectCallbackRouter(deps: { pageSession: PageSessionDeps; setup: DeviceSetup; firstStart?: { connectCallback: DeviceSetup['connectCallback'] } }): Router {
   const router = Router();
   const one = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
   router.get('/callback', async (req: Request, res: Response) => {
@@ -218,9 +218,10 @@ export function createConnectCallbackRouter(deps: { pageSession: PageSessionDeps
       res.status(403).type('text/plain').send(DEVICE_MESSAGES.origin_refused);
       return;
     }
-    const outcome = await deps.setup.connectCallback({
-      state: one(req.query.state), code: one(req.query.code), error: one(req.query.error),
-    });
+    const query = { state: one(req.query.state), code: one(req.query.code), error: one(req.query.error) };
+    // A Connect of the one-time start access (DEC-93) or of set-up: each recognises only its own `state`.
+    const first = deps.firstStart ? await deps.firstStart.connectCallback(query) : 'unknown';
+    const outcome = first === 'accepted' ? first : await deps.setup.connectCallback(query);
     res.status(outcome === 'accepted' ? 200 : 400)
       .type('text/plain')
       .send(outcome === 'accepted' ? DEVICE_MESSAGES.connect_callback_done : DEVICE_MESSAGES.connect_callback_unknown);

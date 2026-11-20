@@ -35,6 +35,8 @@ export class SetupDriver extends Driver<SetupState> {
   /** The recovery code of the started set-up. Never in the state, never in a log. */
   private code: string | null = null;
   private polling = false;
+  /** DEC-93: Connect already ran in the one-time start access, before the vault existed; set-up goes straight to the code. */
+  private preConnected: ConnectAccount | undefined;
 
   constructor(private readonly d: SetupDeps, initial: SetupState = { step: 'start', busy: false }) {
     super(initial);
@@ -55,6 +57,7 @@ export class SetupDriver extends Driver<SetupState> {
   async resume(): Promise<void> {
     const s = await this.d.client.status();
     if (s.ok && s.data.setupPending) { this.set({ step: 'stuck', busy: false, error: T.setupUnfinished }); return; }
+    if (s.ok) this.preConnected = s.data.preConnected;
     // Nothing started: begin at once, so the first thing the person sees is Connect (DEC-91).
     if (s.ok && !s.data.setUp) await this.begin();
   }
@@ -70,6 +73,11 @@ export class SetupDriver extends Driver<SetupState> {
       return;
     }
     this.code = r.data.recoveryCode;
+    if (this.preConnected) {
+      // DEC-93: the account is already connected (start access): the code is next, then finish posts the genesis.
+      this.set({ step: 'code', setupId: r.data.setupId, account: this.preConnected, checked: false, busy: false });
+      return;
+    }
     this.set({ step: 'connect', busy: false, setupId: r.data.setupId });
   }
 

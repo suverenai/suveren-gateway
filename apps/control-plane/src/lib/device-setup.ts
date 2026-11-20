@@ -130,6 +130,11 @@ export interface DeviceSetupDeps {
   otherFlowPending?: () => boolean;
   /** The label used when the page sends none (DEC-91). Default: the system's computer name. */
   defaultLabel?: () => string;
+  /**
+   * DEC-93: a Connect made before the vault existed (lib/first-start.ts). Its enrolment code is bound to the signing
+   * key now in the vault; finish uses it when the page brings no code and set-up's own Connect did not run.
+   */
+  preConnected?: { pending(): { enrolmentCode: string; account: ConnectAccount } | null; clear(): void };
 }
 
 function isStoredCheckKey(v: unknown): v is StoredCheckKey {
@@ -209,9 +214,11 @@ export class DeviceSetup {
   isBusy(): boolean { return this.busy; }
 
   /** What the page needs to show; never the recovery code. */
-  status(): { setUp: boolean; setupPending: boolean; connect?: 'waiting' | 'ready' | 'failed' } {
+  status(): { setUp: boolean; setupPending: boolean; connect?: 'waiting' | 'ready' | 'failed'; preConnected?: ConnectAccount } {
     const p = this.live();
-    return { setUp: this.d.store.exists(), setupPending: p !== null, ...(p?.connect ? { connect: p.connect.status } : {}) };
+    const setUp = this.d.store.exists();
+    const pre = setUp ? null : this.d.preConnected?.pending() ?? null;
+    return { setUp, setupPending: p !== null, ...(p?.connect ? { connect: p.connect.status } : {}), ...(pre ? { preConnected: pre.account } : {}) };
   }
 
   /**
@@ -416,6 +423,11 @@ export class DeviceSetup {
       } else if (p.connect?.status === 'ready' && p.connect.sessionId === input.sessionId) {
         code = p.connect.result!.enrolmentCode;
         account = p.connect.result!.account;
+      } else {
+        // DEC-93: the Connect made before the vault existed (the first-start session that made it is gone; the page
+        // session that holds this set-up was opened by that same flow's password step).
+        const pre = this.d.preConnected?.pending();
+        if (pre) { code = pre.enrolmentCode; account = pre.account; }
       }
       // No code: the Authority Server may already hold this computer's genesis (a lock, a restart or a lost
       // answer cut an earlier finish short). Find out; only then is a code missing.
@@ -485,6 +497,7 @@ export class DeviceSetup {
     }
     this.pending = null;
     try { this.persist(null); } catch { /* the chain is stored; an unreadable leftover is ignored once a chain exists */ }
+    this.d.preConnected?.clear();
     const r = await this.d.signin.signIn();
     return {
       rootDid: p.rootDid,

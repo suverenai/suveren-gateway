@@ -130,6 +130,17 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,200}to="\/device-password"/);
     expect(card).toMatch(/if \(!setUp\)[\s\S]{0,200}to="\/device-setup"/);
   });
+  it('DEC-93: a new gateway starts at /start; set-up opens with the page session alone; the start token stays out of the page session', () => {
+    const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
+    expect(app).toMatch(/path="\/start" element=\{user \? <Navigate to="\/" replace \/> : <StartPage \/>\}/);
+    expect(app).toMatch(/<LoginOrStart switchOn=\{deviceKeysSwitch\}><LoginPage \/><\/LoginOrStart>/);
+    expect(app).toMatch(/path="\/device-setup" element=\{\(user \|\| pageSessionOpen\) && access === 'password'/);
+    const start = readFileSync(join(dir, 'StartScreens.tsx'), 'utf8');
+    // Only the start routes carry the start token; it is never stored (no storage API, only a ref).
+    expect(start).not.toMatch(/localStorage|sessionStorage|document\.cookie/);
+    expect(start).toMatch(/const token = useRef<string \| null>\(null\)/);
+    expect(start).toMatch(/turnOnTouchUnlock\(deviceClient, password\)/);
+  });
   it('9: the unlock driver is built once (a ref), not in a memo that the auth context can rebuild', () => {
     const src = readFileSync(join(dir, 'UnlockScreen.tsx'), 'utf8');
     expect(src).toMatch(/driverRef = useRef<UnlockDriver \| null>\(null\)/);

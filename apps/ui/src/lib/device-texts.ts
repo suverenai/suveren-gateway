@@ -51,6 +51,7 @@ export const T = {
   connectTabGone: 'This link no longer works. Start again from the gateway page.', // 62
   connectedTitle: 'Connected', // 63
   connectedAs: (name: string, email: string): string => `Connected as ${name} (${email}). You are signed in.`, // 64
+  startConnectedAs: (name: string, email: string): string => `Connected to the account of ${name} (${email}).`, // DRAFT (DEC-93)
   connectedSigninFailed: 'Connected, but signing in did not work. Try again.', // 65
   connectRefused: 'The connection was refused. Nothing changed. Try again.', // 66
   connectNotAccepted: 'suveren.ai did not accept this set-up. Nothing changed. Try again.', // 67
@@ -157,6 +158,10 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
 export const DRAFT = {
   // DEC-92: Touch ID opens the gateway page; turned on at set-up where this computer has Touch ID, or later in Settings.
   touchSetupWaiting: 'Turning on Touch ID for this gateway. Touch the sensor when your Mac asks.', // DRAFT
+  // DEC-93: the first screen of a gateway nobody has used yet (no account key)
+  startTitle: 'Connect to your Suveren account', // DRAFT
+  startWhy: 'This gateway is new. Connect it to your Suveren account first; then you set an unlock password.', // DRAFT
+
   touchSetupSkipped: 'Touch ID was not turned on. You can turn it on later under Settings.', // DRAFT
   touchCardTitle: 'Unlock with Touch ID', // DRAFT
   touchCardBody: 'Open this gateway with your fingerprint instead of typing the unlock password. The password still works.', // DRAFT

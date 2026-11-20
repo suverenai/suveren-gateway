@@ -27,6 +27,7 @@ import { AgentBriefPage } from './pages/AgentBriefPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { UnlockPage } from './components/device/UnlockScreen';
 import { SetupPage } from './components/device/SetupScreens';
+import { StartPage, LoginOrStart } from './components/device/StartScreens';
 import { SetPasswordPage } from './components/device/PasswordScreen';
 import { RecoverPage } from './components/device/RecoverScreens';
 import { ConfirmationHost } from './components/device/ConfirmChange';
@@ -48,7 +49,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 export function AppRoutes() {
-  const { user, access, deviceKeysSwitch, passwordSet, handleSessionLocked, refreshGroups } = useAuth();
+  const { user, access, deviceKeysSwitch, passwordSet, pageSessionOpen, handleSessionLocked, refreshGroups } = useAuth();
   const navigate = useNavigate();
 
   // A gateway with device keys on and no unlock password offers the password once after the account-key sign-in
@@ -94,9 +95,12 @@ export function AppRoutes() {
     <>
     <Routes>
       {/* A gateway with an unlock password is opened by the password or Touch ID; every other gateway keeps the account-key sign-in. */}
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : access === 'password' ? <UnlockPage /> : access === null ? null : <LoginPage />} />
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : access === 'password' ? <UnlockPage /> : access === null ? null : <LoginOrStart switchOn={deviceKeysSwitch}><LoginPage /></LoginOrStart>} />
+      {/* DEC-93: a gateway nobody has used yet starts here, at Connect, without an account key. */}
+      <Route path="/start" element={user ? <Navigate to="/" replace /> : <StartPage />} />
       <Route path="/device-password" element={user ? <SetPasswordPage /> : <Navigate to="/login" replace />} />
-      <Route path="/device-setup" element={user && access === 'password' ? <SetupPage /> : <Navigate to="/login" replace />} />
+      {/* After the start access (DEC-93) the page has its session before anyone is signed in: set-up signs in at its end. */}
+      <Route path="/device-setup" element={(user || pageSessionOpen) && access === 'password' ? <SetupPage /> : <Navigate to="/login" replace />} />
       <Route path="/device-recovery-code" element={user && access === 'password' ? <RecoverPage kind="rotate" onBack={() => navigate('/settings')} /> : <Navigate to="/login" replace />} />
       <Route path="/onboarding" element={user ? <OnboardingPage /> : <Navigate to="/login" replace />} />
       <Route element={

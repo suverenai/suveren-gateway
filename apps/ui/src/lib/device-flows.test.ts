@@ -48,6 +48,33 @@ describe('set up this computer (screens 2 and 3)', () => {
     expect(calls.map(c => c.path.split('?')[0]).slice(-1)[0]).toBe('/auth/device/setup/finish');
   });
 
+  it('DEC-93: after the start access (Connect already done) set-up goes straight to the code and finishes with it', async () => {
+    const { client, calls } = fakeClient({
+      '/auth/device/status': { body: { ok: true, setUp: false, setupPending: false, signedIn: false, preConnected: { name: 'Anna Muster', email: 'anna@example.com' } } },
+      '/auth/device/setup/start': { body: { ok: true, setupId: 's1', recoveryCode: 'SV1-AAAA-BBBB', rootDid: 'did:x', deviceKeyId: 'k', label: 'Office Mac' } },
+      '/auth/device/setup/finish': { body: { ok: true, rootDid: 'did:x', deviceKeyId: 'k', signedIn: true, account: { name: 'Anna Muster', email: 'anna@example.com' } } },
+    });
+    const open = vi.fn();
+    const d = new SetupDriver({ client, open });
+    await d.resume();
+    expect(d.get()).toMatchObject({ step: 'code', setupId: 's1', account: { email: 'anna@example.com' }, checked: false });
+    expect(open).not.toHaveBeenCalled();
+    expect(calls.some(c => c.path.startsWith('/auth/device/setup/connect'))).toBe(false);
+    d.toggleKept(true);
+    await d.finish();
+    expect(d.get()).toMatchObject({ step: 'connected', signedIn: true });
+  });
+
+  it('without a Connect from the start access, set-up still begins at Connect', async () => {
+    const { client } = fakeClient({
+      '/auth/device/status': { body: { ok: true, setUp: false, setupPending: false, signedIn: false } },
+      '/auth/device/setup/start': { body: { ok: true, setupId: 's1', recoveryCode: 'SV1-AAAA-BBBB', rootDid: 'did:x', deviceKeyId: 'k', label: 'Office Mac' } },
+    });
+    const d = new SetupDriver({ client, open: vi.fn() });
+    await d.resume();
+    expect(d.get()).toMatchObject({ step: 'connect', setupId: 's1' });
+  });
+
   it('every refusal of the start step has its text', async () => {
     for (const [code, text] of [['label_invalid', T.nameInvalid], ['password_required', T.setupPasswordFirst], ['already_set_up', T.setupAlreadyDone], ['setup_pending', T.setupUnfinished], ['setup_busy', T.setupBusy]] as const) {
       const { client } = fakeClient({ '/auth/device/setup/start': refuse(409, code) });
