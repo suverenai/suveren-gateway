@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSSEEvent } from '../contexts/EventSourceContext';
+import { useState, useEffect } from 'react';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,13 +20,13 @@ import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
 import { unmetForMandate, atLeastOneSignHint } from '@hap/core/scope-rules';
 import { MandateChangeDiff } from '@suveren/approval-card/components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
-import { effectiveGrantors, MandateSignError, type ProfileConfig, type PreparedMandate } from '../lib/sp-client';
+import { effectiveGrantors, MandateSignError, type ProfileConfig } from '../lib/sp-client';
 import { useDeviceChain } from '../lib/use-device-chain';
 import {
   S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, scopeLabel, durationText, endDateText, giveErrorText,
-  GivePhoneFooter, givePhoneRefusalText, giveSummaryLine, GiveTouchFooter, afterProgress, type GiveTouchView,
+  GivePhoneFooter, giveSummaryLine, GiveTouchFooter,
 } from '@suveren/approval-card/mandate-screens';
-import { phoneGiveOffered, afterPoll, afterRefusal, phoneGiveBusy, waitExpired, GIVE_PHONE_POLL_MS, type GivePhoneState } from '../lib/give-on-phone-flow';
+import { useGive, closeReplacedProposal } from '../lib/use-give';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -74,19 +73,7 @@ export function AgentReviewPage() {
   const [adminName, setAdminName] = useState('');
   const [approverIds, setApproverIds] = useState<string[]>([]);
   // What the gateway checked (POST /api/mandate/prepare): the plan, the approvers with their confirmation, and any refusal before the touch.
-  const [prepared, setPrepared] = useState<PreparedMandate | null>(null);
-  const [prepareError, setPrepareError] = useState('');
-  const [prepareTick, setPrepareTick] = useState(0);
-  const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
   const [given, setGiven] = useState<{ authorizationId: string; text: string } | null>(null);
-  // A give with Touch ID on this computer (chain gateways): never a silent wait — the touch, then each step the gateway reports.
-  const [touchView, setTouchView] = useState<GiveTouchView>({ s: 'offered' });
-  const onGiveProgress = useCallback((payload: unknown) => {
-    setTouchView(v => afterProgress(v, (payload as { stage?: unknown } | null)?.stage));
-  }, []);
-  useSSEEvent('give-progress', onGiveProgress);
-  // "Give on your phone" (DEC-90): this computer has no check key, a phone of the chain can grant it.
-  const [phoneGive, setPhoneGive] = useState<GivePhoneState>({ s: 'offered' });
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -343,38 +330,12 @@ export function AgentReviewPage() {
     discloseIdentity,
     replaces: sessionStorage.getItem('agentEditReplaces') || undefined,
   } : null;
-  const giveRequestKey = giveRequest ? JSON.stringify(giveRequest) : '';
-  useEffect(() => {
-    if (!chain || !giveRequest) { setPrepared(null); return; }
-    let live = true;
-    const t = setTimeout(() => {
-      void spClient.prepareMandate(giveRequest).then(r => {
-        if (!live) return;
-        if (r.ok) { setPrepared(r.prepared); setPrepareError(''); } else { setPrepared(null); setPrepareError(r.message); }
-      });
-    }, 300);
-    return () => { live = false; clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, giveRequestKey, prepareTick]);
-
-  /**
-   * The AI's proposal this give was opened from is closed once the person's own mandate is live (DL6 "no double"; the card's
-   * "Give this mandate" on a device-key gateway opens this page the same way). Outcome `replaced`, not a plain reject: the AI
-   * uses the mandate. The route depends on the proposal (review: /resolve per domain; above cap: /reject). Returns a problem, or ''.
-   */
-  const withdrawReplacedProposal = async (proposalId: string): Promise<string> => {
-    try {
-      const proposal = await spClient.getProposal(proposalId);
-      if (proposal.status !== 'pending') return '';
-      const route = replacedWithdrawRoute(proposal, user?.id ?? '');
-      if (!route) return 'you are not one of the people who may decide it';
-      if (route.route === 'approver') await spClient.rejectProposal(proposalId, replacedOutcomeArgs());
-      else await spClient.resolveProposal(proposalId, 'reject', route.domain, replacedOutcomeArgs());
-      return '';
-    } catch (e) {
-      return e instanceof Error ? e.message : 'unknown error';
-    }
-  };
+  // The one give driver (lib/use-give.ts): the same as the approval card's "Give this mandate".
+  const fromProposal = sessionStorage.getItem('agentReplacesProposal') || undefined;
+  const driver = useGive(chain ? giveRequest : null, { chain, fromProposal, userId: user?.id ?? '' });
+  const { prepared, prepareError, touchView, phoneGive } = driver;
+  const setPrepareTick = (_: unknown) => driver.recheck();
+  const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
 
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
@@ -382,9 +343,10 @@ export function AgentReviewPage() {
       setError('No active group; cannot create mandate.');
       return;
     }
+    // A chain gateway gives with the shared driver (Touch ID, progress, result) — the same as the approval card.
+    if (chain) { setError(''); await driver.give(); return; }
     setSubmitting(true);
     setError('');
-    if (chain) setTouchView({ s: 'touch' });
     try {
       // Edit flow: this ceremony supersedes an existing grant. Grants are
       // content-immutable (the attestation signature freezes bounds/scope/
@@ -430,33 +392,28 @@ export function AgentReviewPage() {
       // domain (/resolve), an above-cap one by its approvers (/reject). Using
       // /reject for everything left review proposals PENDING (found live
       // 2026-10-12). A failure is shown, never swallowed.
-      const withdrawProblem = replacesProposalId ? await withdrawReplacedProposal(replacesProposalId) : '';
+      const withdrawProblem = replacesProposalId ? await closeReplacedProposal(replacesProposalId, user?.id ?? '') : '';
 
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
       sessionStorage.removeItem('agentEditReplaces');
       sessionStorage.removeItem('agentReplacesProposal');
       sessionStorage.removeItem('agentChangeAiIntent');
-      sessionStorage.removeItem('agentGiveNow');
       if (revokeProblem) {
-        if (chain) setTouchView({ s: 'offered' });
         // Stay on the page: a mandate the person believes is replaced is still live.
         setError(revokeProblem);
         return;
       }
       if (withdrawProblem) {
-        if (chain) setTouchView({ s: 'offered' });
         // The mandate is live; only the AI's proposal is still open. Stay on
         // the page and say what to do instead of hiding it.
         setError(`Your mandate is signed and active. The AI's proposal could not be withdrawn (${withdrawProblem}) — reject it under Approvals.`);
         return;
       }
-      if (chain) { setTouchView({ s: 'given' }); setGiven({ authorizationId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) }); return; }
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
-      if (chain) setTouchView({ s: 'offered' });
       if (chain && e instanceof MandateSignError) {
-        if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(t => t + 1);   // look at the plan again
+        if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(0);   // look at the plan again
         if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason }));
         return;
       }
@@ -466,55 +423,19 @@ export function AgentReviewPage() {
     }
   };
 
-  // "Give on your phone" (DEC-90): the same prepared plan, sealed to the person's devices; the phone grants it with its touch.
-  const phoneOffered = chain && phoneGiveOffered(prepared);
-  const handleGiveOnPhone = async () => {
-    if (!giveRequest || !prepared || phoneGiveBusy(phoneGive)) return;
-    setError('');
-    setPhoneGive({ s: 'sending' });
-    try {
-      const r = await spClient.giveOnPhone({ ...giveRequest, planHash: prepared.planHash });
-      setPhoneGive({ s: 'waiting', mandateId: r.mandateId, expiresAt: r.expiresAt });
-    } catch (e) {
-      const code = e instanceof MandateSignError ? e.code : undefined;
-      if (code === 'changed_since_prepare' || code === 'prepare_required') setPrepareTick(t => t + 1);
-      setPhoneGive(st => afterRefusal(st, code, givePhoneRefusalText(code, e instanceof MandateSignError ? giveErrorText({ code: e.code, reason: e.reason }) : S13.giveErrNotAccepted)));
-    }
-  };
-  const handleStopPhone = () => {
-    if (phoneGive.s === 'waiting') void spClient.cancelGiveOnPhone(phoneGive.mandateId);
-    setPhoneGive({ s: 'stopped' });
-  };
-  const waitingId = phoneGive.s === 'waiting' ? phoneGive.mandateId : '';
+  // "Give on your phone" (DEC-90) and the Touch ID give: the shared driver.
+  const phoneOffered = driver.phoneOffered;
+  const handleGiveOnPhone = driver.giveOnPhone;
+  const handleStopPhone = driver.stopPhone;
+  // Given (here or on the phone): the hand-over keys go, the result stays on screen.
   useEffect(() => {
-    if (!waitingId) return;
-    let live = true;
-    const tick = async () => {
-      if (!live) return;
-      if (waitExpired(phoneGive, Date.now())) { setPhoneGive({ s: 'stopped' }); return; }
-      try {
-        const a = await spClient.pollGiveOnPhone(waitingId);
-        if (live) setPhoneGive(st => afterPoll(st, a));
-      } catch (e) {
-        const code = e instanceof MandateSignError ? e.code : undefined;
-        if (live) setPhoneGive(st => afterRefusal(st, code, givePhoneRefusalText(code, e instanceof MandateSignError ? giveErrorText({ code: e.code, reason: e.reason }) : S13.giveErrNotAccepted)));
-      }
-    };
-    const t = setInterval(() => { void tick(); }, GIVE_PHONE_POLL_MS);
-    return () => { live = false; clearInterval(t); };
+    if (!driver.givenId || !authData) return;
+    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent']) sessionStorage.removeItem(k);
+    if (driver.error) { setError(driver.error); return; }
+    setGiven({ authorizationId: driver.givenId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingId]);
-  useEffect(() => {
-    if (phoneGive.s !== 'given' || !authData) return;
-    const fromProposal = sessionStorage.getItem('agentReplacesProposal');
-    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent', 'agentGiveNow']) sessionStorage.removeItem(k);
-    if (phoneGive.revokeError) { setError(replacedRevokeProblem(phoneGive.revokeError) || phoneGive.revokeError); }
-    // Given on the phone from an AI proposal: that proposal is closed the same way as after a give on this computer.
-    if (fromProposal) void withdrawReplacedProposal(fromProposal).then(problem => {
-      if (problem) setError(`Your mandate is given and active. The AI's proposal could not be withdrawn (${problem}) — reject it under Approvals.`);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phoneGive.s]);
+  }, [driver.givenId]);
+  useEffect(() => { if (driver.error) setError(driver.error); }, [driver.error]);
 
   if (!authData || !gateData) {
     return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
@@ -625,9 +546,6 @@ export function AgentReviewPage() {
   const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
 
   const giveDisabled = submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0;
-  // Opened from the card's "Give this mandate" (device-key gateway): the give starts at once, the same way the button starts it —
-  // Touch ID here, or the phone where this computer cannot give it. Only when nothing is missing; otherwise the page waits for the person.
-  const giveNow = chain && !!prepared && sessionStorage.getItem('agentGiveNow') === '1';
 
   return (
     <>
@@ -970,7 +888,7 @@ export function AgentReviewPage() {
         {chain && !phoneOffered && phoneGive.s === 'offered' && (
           <p className="cta-helper" data-testid="give-touch-note" style={{ marginBottom: '0.5rem' }}>
             {S13.giveTouchNote.replace('{area}', profileDisplayName(authData.profileId))}
-            {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setPrepareTick(t => t + 1)}>{S13.heldCheckAgain}</button></>}
+            {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setPrepareTick(0)}>{S13.heldCheckAgain}</button></>}
           </p>
         )}
 
@@ -984,7 +902,7 @@ export function AgentReviewPage() {
               onClose={() => {
                 if (phoneGive.s === 'given') { navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`); return; }
                 if (phoneGive.s === 'offered') { navigate('/mandates/new/intent'); return; }
-                setPhoneGive({ s: 'offered' });
+                driver.resetPhone();
               }}
             />
             {phoneGive.s === 'given' && (
@@ -1005,7 +923,6 @@ export function AgentReviewPage() {
           </div>
         ) : (
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-            {giveNow && <GiveNowStart phone={phoneOffered} ready={!giveDisabled} onPhone={() => void handleGiveOnPhone()} onGive={() => void handleCommit()} />}
             <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
             <button
               className="btn btn-primary btn-lg"
@@ -1026,16 +943,3 @@ export function AgentReviewPage() {
   );
 }
 
-/** Starts the give once, when the page was opened from the card's "Give this mandate" and nothing is missing (renders nothing). */
-function GiveNowStart({ phone, ready, onPhone, onGive }: { phone: boolean; ready: boolean; onPhone: () => void; onGive: () => void }) {
-  const started = useRef(false);
-  useEffect(() => {
-    if (started.current) return;
-    if (phone) { started.current = true; onPhone(); return; }
-    if (!ready) return;
-    started.current = true;
-    onGive();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phone, ready]);
-  return null;
-}

@@ -67,12 +67,12 @@ describe('nav badge refresh', () => {
 });
 
 describe('approveRoute: one mechanism for giving a mandate (2026-11-20)', () => {
-  it('a device-key account gives an AI-proposed mandate (create or change) on the give page, never with a bare decision', () => {
-    expect(approveRoute({ giveWording: true, isMandate: true, canOpenGivePage: true })).toBe('give_page');
+  it('a device-key account gives an AI-proposed mandate in place with the give driver, never with a bare decision', () => {
+    expect(approveRoute({ giveWording: true, isMandate: true, canGive: true })).toBe('give');
   });
   it('everything else is decided on the card: an action, a gateway without device keys, content not readable here', () => {
-    expect(approveRoute({ giveWording: true, isMandate: false, canOpenGivePage: true })).toBe('decide');
-    expect(approveRoute({ giveWording: false, isMandate: true, canOpenGivePage: true })).toBe('decide');
-    expect(approveRoute({ giveWording: true, isMandate: true, canOpenGivePage: false })).toBe('decide');
+    expect(approveRoute({ giveWording: true, isMandate: false, canGive: true })).toBe('decide');
+    expect(approveRoute({ giveWording: false, isMandate: true, canGive: true })).toBe('decide');
+    expect(approveRoute({ giveWording: true, isMandate: true, canGive: false })).toBe('decide');
   });
 });

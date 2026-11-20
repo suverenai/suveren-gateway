@@ -92,8 +92,24 @@ export interface ApprovalHost {
    * such screen — then those two links are not shown.
    */
   useOpenMandateScreen(): ((handoff: MandateScreenHandoff) => void) | null;
+  /**
+   * A device-key gateway: the ONE give driver (the give page uses the same) for an AI-proposed mandate, run IN PLACE on the card from
+   * exactly the arguments the card opened and shows — prepare, Touch ID or the phone, the progress lines, the result stamp. Null when
+   * the host does not give mandates this way (no chain, no args yet, the phone app).
+   */
+  useMandateGive?(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void }): MandateGive | null;
   /** A link to a page of the host (`to` is a host path). */
   Link: ComponentType<{ to: string; className?: string; children?: ReactNode }>;
+}
+
+/** A give the card runs in place (see `useMandateGive`). */
+export interface MandateGive {
+  /** Starts it (Touch ID here, or the phone where this computer cannot give it). */
+  start: () => void;
+  /** Started and not back at the offer: the card shows `footer` instead of its buttons. */
+  active: boolean;
+  /** The give's own footer: the touch wait, each step the gateway reports, the result stamp, or a refusal. */
+  footer: ReactNode;
 }
 
 let configured: ApprovalHost | null = null;
