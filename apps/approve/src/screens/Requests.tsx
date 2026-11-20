@@ -16,6 +16,10 @@ export interface RequestsScreenProps {
   nowMs: number;
   onOpen: (id: string) => void;
   onRefresh: () => void;
+  /** The offer to turn notifications on (stage D4): shown once a phone is in the account, until on or "not now". */
+  pushOffer?: { busy?: boolean; error?: string; onOn: () => void; onNotNow: () => void };
+  /** Waiting requests that came without a notice (plan 8); 0 or absent shows nothing. */
+  missed?: number;
 }
 
 export function RequestsScreen(p: RequestsScreenProps) {
@@ -25,7 +29,16 @@ export function RequestsScreen(p: RequestsScreenProps) {
       <p>{P.welcomeReadOnly}</p>
       {p.error && <Notice kind="error">{p.error}</Notice>}
       {p.proposals === null && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
+      {p.pushOffer && (
+        <div data-testid="push-offer">
+          <Notice kind="info"><strong>{P.pushOfferTitle}</strong> {P.pushOfferBody}</Notice>
+          {p.pushOffer.error && <Notice kind="error">{p.pushOffer.error}</Notice>}
+          <button type="button" className="btn btn-primary btn-full" onClick={p.pushOffer.onOn} disabled={p.pushOffer.busy}>{P.pushTurnOn}</button>
+          <button type="button" className="btn btn-ghost btn-full" onClick={p.pushOffer.onNotNow} disabled={p.pushOffer.busy}>{P.pushNotNow}</button>
+        </div>
+      )}
       {p.proposals !== null && p.proposals.length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
+      {!!p.missed && <p className="form-hint" data-testid="push-missed">{P.pushMissed(p.missed)}</p>}
       <div className="dash-rows" data-testid="request-list">
         {(p.proposals ?? []).map((pr) => (
           <ApprovalRow key={pr.id} proposal={pr} manifests={NO_MANIFESTS} titles={NO_TITLES} onOpen={() => p.onOpen(pr.id)} />

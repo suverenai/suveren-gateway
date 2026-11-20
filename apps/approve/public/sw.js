@@ -6,7 +6,7 @@
 //
 // It never touches the Authority Server: only same-origin GET requests are handled, and the server is another
 // origin. It never stores decrypted content (the app never hands it any) and no response of a signed-in call.
-// Push (stage D4) is not here yet.
+// Push (stage D4): see the end of this file.
 const CACHE = 'suveren-approve-shell-v1';
 
 self.addEventListener('install', () => {
@@ -41,5 +41,108 @@ self.addEventListener('fetch', (event) => {
       return cached;
     }
     return refresh;
+  })());
+});
+
+// ─── Push (stage D4, device-keys plan 8 "Notifications") ──────────────────────────────────────────────────────────
+//
+// The Authority Server sends `{ "ids": [<request id>, ...] }`, encrypted to this phone; the browser decrypts it. The
+// text shown is fixed and generic: no name, no amount, no "Approve" action (F14). Tapping opens the app at the request
+// (one id) or at the list. Each id is recorded so the app can count requests that came without a notice.
+// The words are a copy of texts.ts (`pushTitle`, `pushOne`, `pushMany`); texts.test.ts fails when they drift.
+// BEGIN PUSH TEXTS
+const PUSH_TEXT = {
+  title: 'Suveren',
+  one: 'A request is waiting for you.',
+  many: '{n} requests are waiting for you.',
+};
+// END PUSH TEXTS
+const SEEN_KEY = 'push:seen';
+const SEEN_MAX = 500;
+const ID_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
+
+function idsOf(event) {
+  try {
+    const body = event.data ? event.data.json() : null;
+    const ids = body && Array.isArray(body.ids) ? body.ids.filter((x) => typeof x === 'string' && ID_SHAPE.test(x)) : [];
+    return ids.slice(0, 100);
+  } catch {
+    return [];
+  }
+}
+
+// The app's own IndexedDB store (src/lib/idb.ts: database `suveren-approve`, store `kv`).
+function kvUpdate(key, fn) {
+  return new Promise((resolve) => {
+    const r = indexedDB.open('suveren-approve', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('kv'); };
+    r.onerror = () => resolve();
+    r.onsuccess = () => {
+      const db = r.result;
+      const tx = db.transaction('kv', 'readwrite');
+      const store = tx.objectStore('kv');
+      const get = store.get(key);
+      get.onsuccess = () => store.put(fn(get.result), key);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); resolve(); };
+      tx.onabort = () => { db.close(); resolve(); };
+    };
+  });
+}
+
+const TAG = 'suveren-waiting';
+
+self.addEventListener('push', (event) => {
+  const ids = idsOf(event);
+  event.waitUntil((async () => {
+    // One notice at a time (one tag): a new one replaces the one still shown, so it carries that one's ids too and a
+    // tap opens the list when more than one request waits.
+    let shown = [];
+    try {
+      for (const n of await self.registration.getNotifications({ tag: TAG })) {
+        const prev = n.data && Array.isArray(n.data.ids) ? n.data.ids : [];
+        shown = shown.concat(prev.filter((x) => typeof x === 'string' && ID_SHAPE.test(x)));
+      }
+    } catch {
+      shown = [];
+    }
+    const all = [...new Set([...shown, ...ids])].slice(-100);
+    // A push without a notice is not allowed (userVisibleOnly): even an unreadable message shows the generic one.
+    const body = all.length > 1 ? PUSH_TEXT.many.replace('{n}', String(all.length)) : PUSH_TEXT.one;
+    await Promise.all([
+      kvUpdate(SEEN_KEY, (old) => [...(Array.isArray(old) ? old : []).filter((x) => !ids.includes(x)), ...ids].slice(-SEEN_MAX)),
+      self.registration.showNotification(PUSH_TEXT.title, { body, tag: TAG, renotify: true, icon: '/icons/icon-192.png', data: { ids: all } }),
+    ]);
+  })());
+});
+
+// The browser replaced or dropped the subscription. The worker has no session (the token lives in the app's memory
+// only), so it subscribes again where it can and marks the app to send the subscription to suveren.ai at its next
+// session (lib/push.ts RESYNC_KEY, PushControl.resync).
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const key = event.oldSubscription && event.oldSubscription.options && event.oldSubscription.options.applicationServerKey;
+      if (!event.newSubscription && key) await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    } catch {
+      // the app's next session subscribes again
+    }
+    await kvUpdate('push:resync', () => true);
+  })());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const ids = (event.notification.data && event.notification.data.ids) || [];
+  const target = ids.length === 1 ? `/#request=${ids[0]}` : '/';
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) {
+      if (new URL(w.url).origin !== self.location.origin) continue;
+      await w.focus();
+      w.postMessage({ t: 'open-request', id: ids.length === 1 ? ids[0] : null });
+      return;
+    }
+    await self.clients.openWindow(target);
   })());
 });

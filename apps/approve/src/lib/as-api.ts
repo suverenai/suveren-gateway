@@ -149,4 +149,19 @@ export class AsApi {
   decide(proposalId: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw', body: unknown, bearer: string) {
     return this.go<Record<string, unknown>>('POST', `/api/proposals/${encodeURIComponent(proposalId)}/${route}`, { body, bearer });
   }
+
+  /** The Authority Server's VAPID public key (`GET /api/push/key`, stage D4): public, no session. 503 PUSH_NOT_CONFIGURED when it sends none. */
+  pushKey() {
+    return this.go<{ key: string }>('GET', '/api/push/key');
+  }
+
+  /** Store this phone's Web Push subscription (`PUT /api/devices/me/push`): the browser's PushSubscription JSON. */
+  putPush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, bearer: string) {
+    return this.go<Record<string, never>>('PUT', '/api/devices/me/push', { body: subscription, bearer });
+  }
+
+  /** Remove this phone's subscription (`DELETE /api/devices/me/push`). */
+  deletePush(bearer: string) {
+    return this.go<Record<string, never>>('DELETE', '/api/devices/me/push', { bearer });
+  }
 }

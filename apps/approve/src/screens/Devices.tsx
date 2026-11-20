@@ -1,6 +1,7 @@
 import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';
 import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
 import type { DeviceRow } from '../lib/chain-view';
+import type { PushState } from '../lib/push';
 import { P } from '../texts';
 import { Notice, whenText } from './Frame';
 
@@ -41,6 +42,29 @@ export interface DevicesScreenProps {
   onRefresh: () => void;
   busy?: boolean;
   error?: string;
+  /** Notifications on this phone (stage D4); absent while their state is read. */
+  push?: PushPanelProps;
+}
+
+export interface PushPanelProps {
+  state: PushState;
+  busy?: boolean;
+  error?: string;
+  onOn: () => void;
+  onOff: () => void;
+}
+
+/** Notifications on this phone: the state in one sentence and the one button that changes it. */
+export function PushPanel(p: PushPanelProps) {
+  const line = { on: P.pushStateOn, off: P.pushStateOff, denied: P.pushStateDenied, unsupported: P.pushStateUnsupported }[p.state];
+  return (
+    <div data-testid="push-panel" data-state={p.state}>
+      <p className="form-hint">{line}</p>
+      {p.error && <Notice kind="error">{p.error}</Notice>}
+      {p.state === 'off' && <button type="button" className="btn btn-secondary btn-full" onClick={p.onOn} disabled={p.busy}>{P.pushTurnOn}</button>}
+      {p.state === 'on' && <button type="button" className="btn btn-ghost btn-full" onClick={p.onOff} disabled={p.busy}>{P.pushTurnOff}</button>}
+    </div>
+  );
 }
 
 export function DevicesScreen(p: DevicesScreenProps) {
@@ -53,6 +77,7 @@ export function DevicesScreen(p: DevicesScreenProps) {
       {p.identityCode && <CodeBlock label={P.devIdentity} code={p.identityCode} testid="identity-code" />}
       <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onAddComputer} disabled={p.busy}>{P.devAddComputer}</button>
       <button type="button" className="btn btn-ghost btn-full" onClick={p.onRefresh} disabled={p.busy}>{P.devRefresh}</button>
+      {p.push && <PushPanel {...p.push} />}
       <p className="form-hint" data-testid="second-icon">{P.secondIcon}</p>
       {p.persistent !== null && <p className="form-hint">{p.persistent ? P.storagePersistent : P.storageNotPersistent}</p>}
       <p className="form-hint" data-testid="app-version">{P.appVersion(p.version, p.build)}</p>

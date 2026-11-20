@@ -28,6 +28,7 @@ import { DevicesScreen } from './screens/Devices';
 import { RequestsScreen, RequestDetail } from './screens/Requests';
 import { OpenSessionScreen } from './screens/OpenSession';
 import { useDriver } from './screens/Frame';
+import { requestFromHash, type PushState } from './lib/push';
 
 /** How often an open list is read again (a timer; it never counts as use of the session). */
 const REFRESH_MS = 30_000;
@@ -43,6 +44,9 @@ type View =
   | { t: 'join' }
   | { t: 'locked'; error: string | null; ended: boolean; canForget: boolean }
   | { t: 'home'; tab: 'requests' | 'devices' | 'admit' };
+
+/** A request a notification asked to open (`#request=<id>` at start, or a message from the service worker): opened once the session is. */
+type OpenRequest = { id: string; n: number } | null;
 
 /** The theme switch is the gateway's (shared `ThemeToggle`, `useTheme`: `data-theme` on <html>, system default, remembered in localStorage). */
 export default function App() {
@@ -61,8 +65,26 @@ function Screens() {
   const [updated, setUpdated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [joinKey, setJoinKey] = useState(0);
+  const [openRequest, setOpenRequest] = useState<OpenRequest>(() => {
+    const id = requestFromHash(globalThis.location?.hash ?? '');
+    return id ? { id, n: 0 } : null;
+  });
   const viewRef = useRef(view);
   viewRef.current = view;
+
+  // A tap on a notification while the app is open: the service worker focuses this window and names the request (stage D4).
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as { t?: unknown; id?: unknown } | null;
+      if (!d || d.t !== 'open-request') return;
+      const id = typeof d.id === 'string' ? requestFromHash(`#request=${d.id}`) : null;
+      setOpenRequest((cur) => (id ? { id, n: (cur?.n ?? 0) + 1 } : null));
+      if (viewRef.current.t === 'home') setView({ t: 'home', tab: 'requests' });
+    };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', onMsg);
+  }, []);
 
   // ─── start ────────────────────────────────────────────────────────────────────
   const locked = useCallback((error: string | null = null, ended = false, canForget = false) => {
@@ -122,6 +144,9 @@ function Screens() {
     const account = await rt.accounts.read();
     if (!account) { locked(errorText('not_paired')); return; }
     bindPhoneHost({ reader: rt.reader, keys: rt.keys, ownKeyId: account.key_id, userId: r.session.user.id });
+    // Notifications that are on send their subscription again (renewed by the browser, or deleted after a 410). Quiet.
+    const bearer = rt.session.bearer();
+    if (bearer) void rt.push.resync(bearer);
     setView({ t: 'home', tab: 'requests' });
   }, [rt, locked]);
 
@@ -145,7 +170,10 @@ function Screens() {
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
-      return <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)} />;
+      return (
+        <Home rt={rt} tab={view.tab} setTab={(tab) => setView({ t: 'home', tab })} persistent={persistent} updated={updated} onEnded={() => locked(null, true)}
+          openRequest={openRequest} onOpened={() => { setOpenRequest(null); if (globalThis.location?.hash) history.replaceState(null, '', ' '); }} />
+      );
   }
 }
 
@@ -184,29 +212,54 @@ function JoinFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDone: 
   );
 }
 
-function Home({ rt, tab, setTab, persistent, updated, onEnded }: {
+function Home({ rt, tab, setTab, persistent, updated, onEnded, openRequest, onOpened }: {
   rt: Rt; tab: 'requests' | 'devices' | 'admit'; setTab: (t: 'requests' | 'devices' | 'admit') => void;
-  persistent: boolean | null; updated: boolean; onEnded: () => void;
+  persistent: boolean | null; updated: boolean; onEnded: () => void; openRequest: OpenRequest; onOpened: () => void;
 }) {
   return (
     <div className="ap-shell">
       <Tabs label="App" value={tab === 'requests' ? 'requests' : 'devices'} onChange={(t) => setTab(t)}
         items={[{ id: 'requests', label: P.navRequests }, { id: 'devices', label: P.navDevices }]} />
-      {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} />}
+      {tab === 'requests' && <Requests rt={rt} onEnded={onEnded} openRequest={openRequest} onOpened={onOpened} />}
       {tab === 'devices' && <Devices rt={rt} persistent={persistent} updated={updated} onAdd={() => setTab('admit')} onEnded={onEnded} />}
       {tab === 'admit' && <AdmitFlow rt={rt} onDone={() => setTab('devices')} />}
     </div>
   );
 }
 
-function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
+function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () => void; openRequest: OpenRequest; onOpened: () => void }) {
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [open, setOpen] = useState<{ proposal: Proposal; check: CardCheck | null } | null>(null);
+  const [offer, setOffer] = useState<{ busy: boolean; error?: string } | null>(null);
+  const [missed, setMissed] = useState(0);
+
+  // The offer to turn notifications on: once the phone is in the account, until they are on or the person said "not now".
+  useEffect(() => {
+    void (async () => {
+      if ((await rt.push.state()) === 'off' && !(await rt.push.offerDismissed())) setOffer({ busy: false });
+    })();
+  }, [rt]);
+
+  const turnOn = useCallback(async () => {
+    const bearer = rt.session.bearer();
+    if (!bearer) { onEnded(); return; }
+    rt.session.noteUse();
+    setOffer({ busy: true });
+    const r = await rt.push.turnOn(bearer);
+    if (r.ok) { setOffer(null); return; }
+    if (r.code === 'push_denied' || r.code === 'push_unsupported') await rt.push.dismissOffer();
+    setOffer({ busy: false, error: errorText(r.code) });
+  }, [rt, onEnded]);
 
   const load = useCallback(async (byPerson: boolean) => {
     const r = await rt.reader.list(byPerson);
-    if (r.ok) { setProposals(r.data); setError(undefined); return; }
+    if (r.ok) {
+      setProposals(r.data);
+      setError(undefined);
+      setMissed(await rt.push.missed(r.data.filter((x) => x.status === 'pending')));
+      return;
+    }
     if (r.code === 'session_ended') { onEnded(); return; }
     setError(r.code === 'as_unreachable' ? errorText('as_unreachable') : P.listFailed);
   }, [rt, onEnded]);
@@ -235,6 +288,13 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
     return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
   }, [rt, open]);
 
+  // A request a notification named: opened once, then forgotten.
+  useEffect(() => {
+    if (!openRequest) return;
+    onOpened();
+    void openOne(openRequest.id);
+  }, [openRequest, onOpened, openOne]);
+
   if (open) {
     return (
       <RequestDetail
@@ -243,7 +303,11 @@ function Requests({ rt, onEnded }: { rt: Rt; onEnded: () => void }) {
       />
     );
   }
-  return <RequestsScreen proposals={proposals} error={error} nowMs={Date.now()} onOpen={(id) => void openOne(id)} onRefresh={() => void load(true)} />;
+  return (
+    <RequestsScreen proposals={proposals} error={error} nowMs={Date.now()} onOpen={(id) => void openOne(id)} onRefresh={() => void load(true)}
+      missed={missed}
+      pushOffer={offer ? { ...offer, onOn: () => void turnOn(), onNotNow: () => { setOffer(null); void rt.push.dismissOffer(); } } : undefined} />
+  );
 }
 
 function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persistent: boolean | null; updated: boolean; onAdd: () => void; onEnded: () => void }) {
@@ -251,6 +315,18 @@ function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persiste
   const [code, setCode] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [push, setPush] = useState<{ state: PushState; busy: boolean; error?: string } | null>(null);
+
+  useEffect(() => { void rt.push.state().then((state) => setPush({ state, busy: false })); }, [rt]);
+
+  const changePush = useCallback(async (on: boolean) => {
+    const bearer = rt.session.bearer();
+    if (!bearer) { onEnded(); return; }
+    rt.session.noteUse();
+    setPush((cur) => (cur ? { ...cur, busy: true, error: undefined } : cur));
+    const r = on ? await rt.push.turnOn(bearer) : await rt.push.turnOff(bearer);
+    setPush({ state: await rt.push.state(), busy: false, error: r.ok ? undefined : errorText(r.code) });
+  }, [rt, onEnded]);
 
   const show = useCallback(async () => {
     const s = rt.session.current();
@@ -276,6 +352,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded }: { rt: Rt; persiste
     <DevicesScreen
       rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
       version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
+      push={push ? { ...push, onOn: () => void changePush(true), onOff: () => void changePush(false) } : undefined}
     />
   );
 }

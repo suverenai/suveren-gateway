@@ -157,6 +157,23 @@ export const P = {
   whenYesterday: SP.whenYesterday, // shared (approval-card pairing-texts)
   whenDaysAgo: SP.whenDaysAgo, // shared (approval-card pairing-texts)
 
+  // ─── Notifications (stage D4, plan 8) ────────────────────────────────────────
+  // The notification itself: fixed and generic, no name, no amount, no action (F14). public/sw.js carries a copy of
+  // these three (a service worker cannot import this module); texts.test.ts fails when they drift.
+  pushTitle: 'Suveren', // DRAFT
+  pushOne: 'A request is waiting for you.', // DRAFT
+  pushMany: (n: number) => `${n} requests are waiting for you.`, // DRAFT
+  pushOfferTitle: 'Get a notice when something waits for you', // DRAFT
+  pushOfferBody: 'The notice says only that a request is waiting. What it is about you see here, after you open the app.', // DRAFT
+  pushTurnOn: 'Turn on notifications', // DRAFT
+  pushNotNow: 'Not now', // DRAFT
+  pushTurnOff: 'Turn off notifications', // DRAFT
+  pushStateOn: 'Notifications on this phone are on.', // DRAFT
+  pushStateOff: 'Notifications on this phone are off.', // DRAFT
+  pushStateDenied: 'This phone blocks notifications for Suveren. Allow them in the phone\'s settings, then come back here.', // DRAFT
+  pushStateUnsupported: 'This phone cannot show notifications from this app. Open the app now and then to see what waits.', // DRAFT
+  pushMissed: (n: number) => (n === 1 ? '1 waiting request came without a notice.' : `${n} waiting requests came without a notice.`), // DRAFT (plan 8: the app counts them)
+
   // ─── Navigation ───────────────────────────────────────────────────────────────
   navRequests: 'Requests', // DRAFT
   navDevices: 'Devices', // DRAFT
@@ -262,6 +279,13 @@ const ERRORS: Record<string, string> = {
   mandate_revoked: 'The mandate behind this request was ended. Nothing can be approved under it.', // DRAFT
   mandate_expired: 'The mandate behind this request has run out. Nothing can be approved under it.', // DRAFT
   check_required: 'Your touch is needed first. Nothing was decided. Try again.', // DRAFT
+  // Notifications (push.ts; suveren-as codes lower-cased)
+  push_unsupported: 'This phone cannot show notifications from this app.', // DRAFT
+  push_denied: 'This phone blocks notifications for Suveren. Allow them in the phone\'s settings, then try again.', // DRAFT
+  push_dismissed: 'Notifications stay off. You can turn them on here at any time.', // DRAFT
+  push_subscribe_failed: 'The phone did not set up notifications. Nothing changed. Try again.', // DRAFT
+  push_not_configured: 'suveren.ai does not send notifications yet. Open the app now and then to see what waits.', // DRAFT
+  push_endpoint_not_allowed: 'suveren.ai did not accept this phone\'s notification service. Nothing changed. Tell support.', // DRAFT
 };
 
 export function errorText(code: string | undefined): string {
