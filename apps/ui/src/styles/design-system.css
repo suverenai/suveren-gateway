@@ -5166,7 +5166,9 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .recovery-code {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 1.125rem; letter-spacing: 0.04em; line-height: 1.6; text-align: center;
-  padding: 1rem; margin: 1rem 0; border: 2px solid var(--border-strong); border-radius: 6px; word-break: break-all;
+  padding: 1rem; margin: 1rem 0; border: 2px solid var(--border-strong); border-radius: 6px;
+  /* DEC-88: the code wraps only between its groups (after a hyphen), never inside one. */
+  word-break: normal; overflow-wrap: normal; hyphens: manual;
 }
 .device-check { display: flex; gap: 0.625rem; align-items: flex-start; margin: 1rem 0 1.5rem; line-height: 1.5; }
 .device-check input { margin-top: 0.25rem; }
