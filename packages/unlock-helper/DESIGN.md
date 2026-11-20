@@ -648,7 +648,9 @@ wrapped key, account id; nothing secret). The password header is never touched b
   password only (plan 7: the password stands in only there).
 - `POST /auth/unlock/platform` (no session; the vault is locked): one touch, then the key must open the vault's
   verifier (`wrap_mismatch` otherwise: a stale wrap, another vault), the header must be unchanged, and the vault
-  must still be locked; only then it is adopted. **It opens the vault, not a page session**
+  must still be locked; only then it is adopted. **Since DEC-92 (2026-11-20, the maintainer) it also opens a page session**
+  (`PLATFORM_UNLOCK_OPENS_PAGE_SESSION = true`), with the limits of a password session; the risk below was accepted.
+  Until then: **it opened the vault, not a page session**
   (`PLATFORM_UNLOCK_OPENS_PAGE_SESSION = false`, `routes/platform.ts`): after a restart the agents continue, and the
   page needs the unlock password. Why: a session is what an AI that drives the page uses, and "unlock the Suveren
   vault" is a prompt a person confirms without reading what the page does next; until the gateway runs apart from the

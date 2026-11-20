@@ -4,7 +4,7 @@
  * was given the native helper (lib/platform-helper.ts):
  *
  *   GET  /auth/platform/status         is unlock by Touch ID enabled (no page session, starts nothing)
- *   POST /auth/unlock/platform         unlock the VAULT with a touch (no page session: PLATFORM_UNLOCK_OPENS_PAGE_SESSION)
+ *   POST /auth/unlock/platform         unlock the vault with a touch and open a page session (PLATFORM_UNLOCK_OPENS_PAGE_SESSION, DEC-92)
  *   GET  /auth/platform/capabilities   what this computer can do (page session; starts the helper, no touch)
  *   POST /auth/platform/enable         { password } turn unlock by Touch ID on (page session; the password, a fresh check where there is
  *                                      a check key, and one touch for the test unwrap)
@@ -30,16 +30,17 @@ import type { PlatformHelper } from '../lib/platform-helper';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from '../lib/platform-checks';
 
 /**
- * Does a Touch ID unlock also open a PAGE SESSION (the browser's way into the gateway's own routes)? NO, until S1.
+ * Does a Touch ID unlock also open a PAGE SESSION (the browser's way into the gateway's own routes)? YES.
  *
- * Why: the page session is what an AI that drives the page would use, and a Touch ID prompt that says "unlock the
- * Suveren vault" is something a person confirms without reading what the page does next. The vault opening lets the
- * agents continue after a restart (the point of DEC-38); a session lets whoever holds the page change mandates and
- * logins. Until the gateway runs apart from the AI's own OS user (plan section 21, S1 to S3, O29), opening a session
- * stays with the unlock password. the maintainer decides; flip this constant only with that decision. With `true`, a
- * touch on an already unlocked vault also opens a session (the way the password does).
+ * Decided by the maintainer on 2026-11-20 (DEC-92, after testing on the dev lane): Touch ID opens the gateway page
+ * too, not only the vault. Risk accepted: the page session is what an AI that drives the page would use, and a Touch
+ * ID prompt can be confirmed out of habit by a person while an AI-driven page asks for it. Until then (S1 to S3,
+ * O29) the password was the only way to a session. A session opened by a touch has exactly the limits of a password
+ * session (DEC-47: one hour without use, 12 hours after the last check, restart, lock, sleep, user switch). On an
+ * already unlocked vault a touch verifies the key and opens a session, the way the password does.
+ * With `false` (tests only, through `opensPageSession`) a touch opens the vault and the page needs the password.
  */
-export const PLATFORM_UNLOCK_OPENS_PAGE_SESSION = false;
+export const PLATFORM_UNLOCK_OPENS_PAGE_SESSION = true;
 
 /** Placeholder messages, by code. Wording is the maintainer's (O19). */
 export const PLATFORM_MESSAGES: Record<string, string> = {

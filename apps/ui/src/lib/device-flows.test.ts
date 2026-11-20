@@ -213,7 +213,7 @@ describe('unlock (screen 4)', () => {
     expect(log).toEqual(['session:TT', 'in']);
   });
 
-  it('Touch ID today (PLATFORM_UNLOCK_OPENS_PAGE_SESSION false): the vault opens, the page asks for the password', async () => {
+  it('a control plane with PLATFORM_UNLOCK_OPENS_PAGE_SESSION off (tests only since DEC-92): the vault opens, the page asks for the password', async () => {
     const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: true } }, '/auth/unlock/platform': { body: { ok: true, unlocked: true, sessionOpened: false } } });
     const { d, log } = deps(client);
     const u = new UnlockDriver(d);

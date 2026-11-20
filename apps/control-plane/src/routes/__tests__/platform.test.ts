@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { verifyChain, entryHash, type ChainEntry } from '@hap/core/device-keys';
 import { UnlockHelperClient } from '@suveren/unlock-helper';
 import { StubAs } from '../../__tests__/helpers/stub-as';
-import { bootGateway, call, sessionHeaders, tmpDir, FAST, PW, type Reply, type GatewayRig } from '../../__tests__/helpers/device-rig';
+import { bootGateway, call, sessionHeaders, sessionOf, tmpDir, FAST, PW, type Reply, type GatewayRig } from '../../__tests__/helpers/device-rig';
 import { PlatformHelper, locateHelper, sha256File, unlockKeyService, type HelperSpec, type Located } from '../../lib/platform-helper';
 import { PlatformChecks, CheckKeyStore } from '../../lib/platform-checks';
 import { ChangeConfirmations, CONFIRMATION_HEADER, canonicalJson } from '../../lib/change-confirmation';
@@ -114,10 +114,10 @@ soft('unlock by Touch ID: the second wrap of the vault key (SOFT helper)', () =>
     expect((await call(gw2.port, 'GET', '/auth/platform/status')).body).toMatchObject({ unlockEnabled: true });
     const un = await call(gw2.port, 'POST', '/auth/unlock/platform', { body: {} });
     expect(un.status).toBe(200);
-    // the VAULT is open (the agents continue), but no page session: that needs the unlock password (PLATFORM_UNLOCK_OPENS_PAGE_SESSION)
-    expect(un.body).toMatchObject({ ok: true, unlocked: true, sessionOpened: false });
-    expect(un.headers['set-cookie']).toBeUndefined();
-    expect(un.body.sessionToken).toBeUndefined();
+    // the vault is open (the agents continue) AND the page has its session (PLATFORM_UNLOCK_OPENS_PAGE_SESSION, DEC-92)
+    expect(un.body).toMatchObject({ ok: true, unlocked: true, sessionOpened: true });
+    expect(un.headers['set-cookie']?.[0]).toMatch(/HttpOnly/);
+    expect(un.body.sessionToken).toBeTruthy();
     expect(gw2.vault.isUnlocked()).toBe(true);
     expect(gw2.vault.getVaultKeyHex()).toBe(keyHex);
     expect(gw2.vault.getCredential('gmail')).toEqual({ token: 'secret-token-1' });
@@ -775,16 +775,19 @@ soft('no secret leaves: responses and logs carry no vault key, wrap or key blob 
 // ═════════════════════════════════════════════════════════════════════════════
 // Review round: items 2 to 7 and 9 of the coordinator's list.
 
-describe('item 2: Touch ID opens the vault, not a page session (constant PLATFORM_UNLOCK_OPENS_PAGE_SESSION)', () => {
-  it('the constant is false', () => {
-    expect(PLATFORM_UNLOCK_OPENS_PAGE_SESSION).toBe(false);
+describe('item 2 / DEC-92: Touch ID opens the vault and the page (constant PLATFORM_UNLOCK_OPENS_PAGE_SESSION)', () => {
+  it('the constant is true (DEC-92)', () => {
+    expect(PLATFORM_UNLOCK_OPENS_PAGE_SESSION).toBe(true);
   });
 
-  it('after a restart a touch opens the vault and every page route still needs the password; an unlocked vault refuses a second touch (item 7)', async () => {
+  it('with the constant false (tests only): a touch opens the vault and every page route still needs the password; an unlocked vault refuses a second touch (item 7)', async () => {
     const w = await world({ platform: fakeHost() });
     w.gw.vault.setCredential('gmail', { token: 't' });
     await w.post('/auth/platform/enable', { password: PW });
-    const gw2 = await restart(w, fakeHost());
+    await w.gw.close();
+    open.splice(open.indexOf(w.gw), 1);
+    const gw2 = await bootGateway({ as: w.as, dir: w.gw.dir, fresh: false, platform: fakeHost(), opensPageSession: false });
+    open.push(gw2);
     const un = await call(gw2.port, 'POST', '/auth/unlock/platform', { body: {} });
     expect(un.body).toMatchObject({ ok: true, unlocked: true, sessionOpened: false });
     expect(gw2.vault.isUnlocked()).toBe(true);
@@ -802,10 +805,10 @@ describe('item 2: Touch ID opens the vault, not a page session (constant PLATFOR
     expect((await call(gw2.port, 'GET', '/api/x', { headers: sessionHeaders(session) })).status).toBe(200);
   });
 
-  it('with the constant true (the other branch): the touch opens a session, and on an unlocked vault a touch verifies the key and opens one', async () => {
+  it('by default (the constant true): the touch opens a session, and on an unlocked vault a touch verifies the key and opens one', async () => {
     const as = await new StubAs().listen();
     open.push(as);
-    const gw = await bootGateway({ as, platform: fakeHost(), opensPageSession: true });
+    const gw = await bootGateway({ as, platform: fakeHost() });
     open.push(gw);
     const s = sessionHeaders(await gw.unlock());
     await call(gw.port, 'POST', '/auth/platform/enable', { headers: s, body: { password: PW } });
@@ -813,7 +816,7 @@ describe('item 2: Touch ID opens the vault, not a page session (constant PLATFOR
     // (the rig was booted with the default for the restart: set it on the new one through a fresh boot)
     await gw2.close();
     open.splice(open.indexOf(gw2), 1);
-    const gw3 = await bootGateway({ as, dir: gw.dir, fresh: false, platform: fakeHost(), opensPageSession: true });
+    const gw3 = await bootGateway({ as, dir: gw.dir, fresh: false, platform: fakeHost() });
     open.push(gw3);
     const un = await call(gw3.port, 'POST', '/auth/unlock/platform', { body: {} });
     expect(un.body).toMatchObject({ ok: true, unlocked: true, sessionOpened: true });
@@ -829,6 +832,29 @@ describe('item 2: Touch ID opens the vault, not a page session (constant PLATFOR
     const bad = await call(gw3.port, 'POST', '/auth/unlock/platform', { body: {} });
     expect(bad.status).toBe(409);
     expect(bad.headers['set-cookie']).toBeUndefined();
+  });
+});
+
+describe('DEC-92: a session opened by a touch has the limits of a password session', () => {
+  it('it is a page session like any other: the page routes accept it, and ending all sessions (lock, sleep, user switch, restart) ends it', async () => {
+    const w = await world({ platform: fakeHost() });
+    await w.post('/auth/platform/enable', { password: PW });
+    const gw2 = await restart(w, fakeHost());
+    const un = await call(gw2.port, 'POST', '/auth/unlock/platform', { body: {} });
+    expect(un.body).toMatchObject({ sessionOpened: true });
+    const s = sessionHeaders(sessionOf(un));
+    expect((await call(gw2.port, 'GET', '/api/x', { headers: s })).status).toBe(200);
+    gw2.sessions.endAll();
+    const after = await call(gw2.port, 'GET', '/api/x', { headers: s });
+    expect(after.status).toBe(401);
+  });
+
+  it('the password stays the fallback: with Touch ID on, the unlock password still opens a session after a restart', async () => {
+    const w = await world({ platform: fakeHost() });
+    await w.post('/auth/platform/enable', { password: PW });
+    const gw2 = await restart(w, fakeHost());
+    const session = await gw2.unlock();
+    expect((await call(gw2.port, 'GET', '/api/x', { headers: sessionHeaders(session) })).status).toBe(200);
   });
 });
 

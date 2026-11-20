@@ -119,6 +119,8 @@ export class DeviceClient {
   unlock(password: string) { return this.go<UnlockAnswer>('/auth/unlock', json({ password })); }
   unlockPlatform() { return this.go<PlatformUnlockAnswer>('/auth/unlock/platform', json({})); }
   platformCapabilities() { return this.go<PlatformCapabilities>('/auth/platform/capabilities'); }
+  /** Turn unlock by Touch ID on (page session; the unlock password, and the touches the helper asks for). */
+  enablePlatform(password: string) { return this.go<{ backend: string; policy: string }>('/auth/platform/enable', json({ password })); }
 
   // Device status and sign-in
   status() { return this.go<DeviceStatus>('/auth/device/status'); }

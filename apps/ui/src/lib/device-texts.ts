@@ -155,6 +155,14 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  * changed" only where it is true). Every one is listed in the hand-over report for the maintainer to confirm.
  */
 export const DRAFT = {
+  // DEC-92: Touch ID opens the gateway page; turned on at set-up where this computer has Touch ID, or later in Settings.
+  touchSetupWaiting: 'Turning on Touch ID for this gateway. Touch the sensor when your Mac asks.', // DRAFT
+  touchSetupSkipped: 'Touch ID was not turned on. You can turn it on later under Settings.', // DRAFT
+  touchCardTitle: 'Unlock with Touch ID', // DRAFT
+  touchCardBody: 'Open this gateway with your fingerprint instead of typing the unlock password. The password still works.', // DRAFT
+  touchCardOn: 'Touch ID is on for this gateway.', // DRAFT
+  touchCardButton: 'Turn on Touch ID', // DRAFT
+  touchCardDone: 'Touch ID is on. Next time, unlock with your fingerprint.', // DRAFT
   // Item 15 says "Your recovery code gets you back in" after a forgotten password. #217 has no route that
   // does that (recovery needs an unlocked gateway), so the line is not shown on the unlock screen.
   unlockForgot: 'Forgot your password? Your recovery code gets you back in. You will have to type your connector logins again.', // 15, NOT SHOWN
