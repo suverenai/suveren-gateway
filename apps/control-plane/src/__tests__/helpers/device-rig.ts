@@ -225,6 +225,8 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
       }),
       deliverGateContent: async a => { delivered.push({ authorizationId: a.authorizationId }); await o.mandate!.deliver?.(a); },
       resyncGates: async () => { resynced.count++; },
+      // as production wires it (index.ts): the MCP server's copy of a held mandate, here the test's `reads.signedMandate`
+      signedMandate: async (authorizationId: string) => { const r = await o.mandate!.reads?.signedMandate?.(authorizationId); return r && 'old' in r ? r.old : null; },
       ...(grants ? { grants } : {}),
     });
     app.use('/api/mandate', json, guard, createMandateRouter(ceremonyDeps, o.mandate.reads));

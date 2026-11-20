@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, prepareMandate, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, prepareMandate, planMandateChange, changeMandate, giveOnPhone, pollPhoneGive, cancelPhoneGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 
@@ -139,6 +139,36 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       }
       const { authorizationId, revokeError } = await createMandate(request, d);
       res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}) });
+    } catch (err) { answerRefusal(res, err); }
+  });
+  // Give on the phone (plan 4.4 "Transport", DEC-86): the same prepared plan as /sign, sealed to the person's devices; the phone grants it.
+  router.post('/give-on-phone', async (req, res) => {
+    const request = (req.body ?? {}) as MandateRequest;
+    try {
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
+      const echoed = (req.body as { planHash?: unknown } | undefined)?.planHash;
+      if (typeof echoed !== 'string') { res.status(422).json({ error: 'mandate_refused', code: 'prepare_required', message: 'The mandate was not prepared on this page; nothing was sent.' }); return; }
+      const now = await prepareMandate(request, d);
+      if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was sent. Look at it again.' }); return; }
+      res.json({ ok: true, ...(await giveOnPhone(request, d)) });
+    } catch (err) { answerRefusal(res, err); }
+  });
+  router.get('/give-on-phone/:mandateId', async (req, res) => {
+    try {
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
+      const id = req.params.mandateId;
+      if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
+      const r = await pollPhoneGive(id, d);
+      if (r.state === 'done') void d.resyncGates?.().catch(() => {});
+      res.json(r);
+    } catch (err) { answerRefusal(res, err); }
+  });
+  router.delete('/give-on-phone/:mandateId', (req, res) => {
+    try {
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+      res.json({ ok: cancelPhoneGive(req.params.mandateId, d) });
     } catch (err) { answerRefusal(res, err); }
   });
   // End a mandate on a gateway with a device chain: signed by this computer's device key, final (plan 4.4).

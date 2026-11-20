@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { ApprovalCard, type DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
@@ -19,6 +20,8 @@ export interface RequestsScreenProps {
   /** A computer's change requests waiting for this phone (stage D3), shown above the requests. */
   changes?: ChangeItem[];
   onOpenChange?: (requestId: string) => void;
+  /** Mandates to give, the person's own mandates and notices (D3); drawn above the requests. */
+  extra?: ReactNode;
   error?: string;
   nowMs: number;
   onOpen: (id: string) => void;
@@ -44,6 +47,7 @@ export function RequestsScreen(p: RequestsScreenProps) {
           <button type="button" className="btn btn-ghost btn-full" onClick={p.pushOffer.onNotNow} disabled={p.pushOffer.busy}>{P.pushNotNow}</button>
         </div>
       )}
+      {p.extra}
       {p.proposals !== null && p.proposals.length === 0 && (p.changes ?? []).length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
       {!!p.missed && <p className="form-hint" data-testid="push-missed">{P.pushMissed(p.missed)}</p>}
       <div className="dash-rows" data-testid="request-list">

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkCard, routeFor, toolDisplayOf, type CardReason } from './card-checks';
 import { argRows } from '@suveren/approval-card/lib/approval-view';
-import { cardWorld, AUTHZ, PROFILE, PROPOSAL_ID, MANDATE_ID, MAPPING, ARGS } from './card-world';
+import { cardWorld, signGrant, AUTHZ, PROFILE, PROPOSAL_ID, MANDATE_ID, MAPPING, ARGS } from './card-world';
 import { didKeyOf } from './mandate-check';
 import { BLOCKED_REASONS, blockedText } from '../texts';
 
@@ -131,6 +131,59 @@ describe('the checks before a decision is offered (plan 8; step 12)', () => {
 
   it('a mandate of another owner is not decided on this phone (it needs the owner\'s chain)', async () => {
     expect(await reason(await cardWorld({ ownerDid: 'did:key:z6Mkcolleague' }))).toBe('owner_not_you');
+  });
+
+  it('the owner\'s grant (plan 4.4): without one that verifies for exactly this mandate, nothing is offered', async () => {
+    // none at all: the server signed a mandate its owner never confirmed
+    expect(await reason(await cardWorld({ grant: { none: true } }))).toBe('mandate_not_granted');
+    // signed by this phone's key but without the check over it
+    expect(await reason(await cardWorld({ grant: { noCheck: true } }))).toBe('mandate_not_granted');
+    // signed by another key that is not a device of this chain
+    expect(await reason(await cardWorld({ grant: { signWith: 'other' } }))).toBe('mandate_not_granted');
+    // a member differs from the signed mandate (the grant was for other bounds)
+    expect(await reason(await cardWorld({ grant: { over: { bounds_hash: 'sha256:' + 'd'.repeat(64) } } }))).toBe('mandate_not_granted');
+    // a grant of another authorization
+    expect(await reason(await cardWorld({ grant: { authorizationId: 'authz_00000000-0000-4000-8000-000000000999' } }))).toBe('mandate_not_granted');
+  });
+
+  it('the grant follows the mandate: a mandate changed after the grant (the server serves new bounds) is not granted', async () => {
+    const w = await cardWorld();
+    // the server re-signs the mandate with other bounds; the owner's grant is still the one for the old bounds
+    w.as.mandates.set(AUTHZ, { blobs: [await w.as.mandateBlob({ ...w.payload, bounds_hash: 'sha256:' + 'e'.repeat(64) })] });
+    expect(await reason(w)).toBe('mandate_not_granted');
+  });
+
+  it('a revoke the owner\'s device signed ends the mandate; one that does not verify is ignored', async () => {
+    const w = await cardWorld();
+    w.as.grants.get(MANDATE_ID)!.push(await signGrant(w.rt, w.payload as never, { revoke: true, signWith: 'other' }));
+    expect(await reason(w)).toBe('ok');
+    w.as.grants.get(MANDATE_ID)!.push(await signGrant(w.rt, w.payload as never, { revoke: true }));
+    expect(await reason(w)).toBe('mandate_ended');
+  });
+
+  it('a newer grant that does not verify does not hide an older one that does', async () => {
+    const w = await cardWorld();
+    w.as.grants.get(MANDATE_ID)!.push(await signGrant(w.rt, w.payload as never, { op: 'change', noCheck: true }, 2));
+    expect(await reason(w)).toBe('ok');
+  });
+
+  it('grants that cannot be read are a failed read, not a pass', async () => {
+    const w = await cardWorld();
+    const orig = w.as.grants;
+    w.as.grants = { get: () => 'not a list' } as never;
+    expect(await reason(w)).toBe('reads_failed');
+    w.as.grants = orig;
+  });
+
+  it('without WebCrypto the card says it cannot check here, before any check could call a genuine request forged', async () => {
+    const w = await cardWorld();
+    const real = Object.getOwnPropertyDescriptor(globalThis, 'crypto')!;
+    Object.defineProperty(globalThis, 'crypto', { value: undefined, configurable: true, writable: true });
+    let r: CardReason | 'ok';
+    try { r = await reason(w); } finally { Object.defineProperty(globalThis, 'crypto', real); }
+    expect(r).toBe('crypto_unavailable');
+    expect(blockedText('crypto_unavailable')).toMatch(/cannot check mandates here/);
+    expect(await reason(w)).toBe('ok');
   });
 
   it('a request without an action type, or one the profile does not know, offers nothing', async () => {

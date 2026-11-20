@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
-  computeProfileHash, decodeMandateBlob, encodeDidKey, signMandate, verifyMandateSignature, wireExecutionContext, boundReadFields as coreBoundReadFields,
+  computeProfileHash, decodeMandateBlob, encodeDidKey, signMandate, verifyMandateSignature, wireExecutionContext,
   type AgentProfile, type MandatePayload,
 } from '@hap/core';
-import { didKeyOf, profileHashOf, verifyMandateBlob, wireFilter, boundReadFields, CLOCK_SKEW_SECONDS } from './mandate-check';
+import { didKeyOf, profileHashOf, verifyMandateBlob, wireFilter } from './mandate-check';
 
 /**
- * The phone cannot load hap-core's main entry in a browser (it imports Node's crypto), so it carries four small rules of its own.
- * Every one of them is run here against hap-core's real function: a drift shows up as a red test, not as a wrong card.
+ * The phone's mandate checks are hap-core's own functions from its browser-safe entry (hap-core 0.17.0). These tests pin the phone's
+ * reading of them: the pinned key decides, the reason codes, and that nothing throws. The Node entry is used to sign the fixtures.
  */
+const CLOCK_SKEW_SECONDS = 300; // hap-core's mandate skew (Mandate rule 9)
 
 const PROFILE = {
   id: 'test/purchase@0.1',
@@ -77,6 +78,12 @@ describe('the mandate signature (plan 8: the AS signature on the mandate with th
     expect(await verifyMandateBlob(blob, pinned.hex, 1_800_000_100)).toEqual({ ok: false, code: 'mandate_signature' });
   });
 
+  it('refuses a mandate with two owners (hap-core\'s owner rule), as invalid', async () => {
+    const k = await asKey();
+    const blob = Buffer.from(JSON.stringify(await signMandate(payloadFor(encodeDidKey(k.raw), { mandate_owners: [{ did: 'did:key:z6Mka' }, { did: 'did:key:z6Mkb' }] } as Partial<MandatePayload>), k.seed))).toString('base64url');
+    expect(await verifyMandateBlob(blob, k.hex, 1_800_000_100)).toEqual({ ok: false, code: 'mandate_invalid' });
+  });
+
   it('refuses a payload changed after signing', async () => {
     const k = await asKey();
     const m = await signMandate(payloadFor(encodeDidKey(k.raw)), k.seed);
@@ -90,6 +97,19 @@ describe('the mandate signature (plan 8: the AS signature on the mandate with th
     const end = 1_800_100_000;
     expect((await verifyMandateBlob(blob, k.hex, end + CLOCK_SKEW_SECONDS)).ok).toBe(true);
     expect(await verifyMandateBlob(blob, k.hex, end + CLOCK_SKEW_SECONDS + 1)).toEqual({ ok: false, code: 'mandate_expired' });
+  });
+
+  it('without WebCrypto a genuine mandate is "cannot check here", never "forged"', async () => {
+    const k = await asKey();
+    const blob = Buffer.from(JSON.stringify(await signMandate(payloadFor(encodeDidKey(k.raw)), k.seed))).toString('base64url');
+    const real = Object.getOwnPropertyDescriptor(globalThis, 'crypto')!;
+    Object.defineProperty(globalThis, 'crypto', { value: undefined, configurable: true, writable: true });
+    try {
+      expect(await verifyMandateBlob(blob, k.hex, 1_800_000_100)).toEqual({ ok: false, code: 'crypto_unavailable' });
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', real);
+    }
+    expect((await verifyMandateBlob(blob, k.hex, 1_800_000_100)).ok).toBe(true);
   });
 
   it('garbage is "invalid", never a throw', async () => {
@@ -116,7 +136,6 @@ describe('the wire execution context', () => {
     const execution = { amount: 12.5, spend: 3, region: 'AT', _hint: 1, extra: 'x', amount_none: null };
     expect(wireFilter(execution, PROFILE)).toEqual(wireExecutionContext(execution, PROFILE));
     expect(wireFilter({ amount: null, spend: undefined }, PROFILE)).toEqual(wireExecutionContext({ amount: null, spend: undefined }, PROFILE));
-    expect([...boundReadFields(PROFILE)].sort()).toEqual([...coreBoundReadFields(PROFILE)].sort());
     // a profile without bounds reads nothing
     expect(wireFilter({ amount: 1 }, {})).toEqual({});
   });

@@ -9,3 +9,4 @@ export { JoinCompare, ColleagueList, joinErrorText, type JoinState, type JoinFac
 export * from './give-view';
 export { GiveApprovers, giveBlocked } from './GiveApprovers';
 export { TeamChangesPanel, type TeamChangesPanelProps, type TeamChangesActions } from './TeamChangesPanel';
+export { GivePhoneFooter, givePhoneRefusalText, type GivePhoneView } from './GivePhone';

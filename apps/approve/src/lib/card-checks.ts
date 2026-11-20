@@ -4,6 +4,7 @@
  * One call per card, run when the person opens a request and run again by the decider just before it signs. Every check is
  * made on this phone, from the bytes it holds, and the first one that fails names its reason and the card shows NO buttons:
  *
+ *   0. crypto        this browser has WebCrypto; without it nothing can be checked, and the card says so (never "forged")
  *   1. pending       the request is still waiting
  *   2. content       the content opens with this phone's own key and hashes to the proposal's fingerprint (rule 8)
  *   3. context       the card context the gateway sealed opens, and belongs to this very proposal (its fingerprint is in the sealed data)
@@ -11,6 +12,8 @@
  *                    is not revoked or expired, and is the mandate the request names (profile)
  *   5. profile       the profile bytes the server gives hash to the mandate's `profile_hash`
  *   6. owner         the mandate's owner is this person's own identity (a colleague's mandate needs the owner's chain: stage B)
+ *   6a. grant        the owner's device granted exactly this mandate (plan 4.4): a grant that verifies against this phone's own
+ *                    verified chain, every member rebuilt from the signed mandate with hap-core (grant-check.ts); a verified revoke ends it
  *   7. action type   the request carries its action type, and the profile's registry (when it has one) contains it
  *   8. execution     the execution context rebuilt from the decrypted arguments with the mapping in the sealed context (numeric strings of
  *                    declared numeric fields parsed as the gateway parses them), reduced to the fields a bound reads, equals what the
@@ -18,8 +21,7 @@
  *                    never the server's copy.
  *
  * KNOWN GAPS (not checked here; decided, listed so nobody assumes them):
- *   - the owner's grant of the mandate (plan 4.4): needs a browser-safe hap-core. The gateway that runs the action checks it (step 13).
- *   - a pin of the highest grant version (a rollback to an older grant is not noticed here).
+ *   - a pin of the highest grant version (a rollback to an older grant that still verifies is not noticed here; the gateway pins it).
  *   - M3: the proposal's profile id is compared with the mandate's, but nothing ties the request's `path`/`pendingDomains` to the mandate.
  *   - L2: the newest mandate is chosen by `issued_at` among those that verify, as the AS does; an older still-valid one is not asked about.
  *   - L3: a bound-read field produced by the manifest's STATIC execution (not by an argument) cannot be rebuilt: the sealed context
@@ -39,12 +41,14 @@ import type { DeviceKeyStore } from './key-store';
 import type { DeviceSession } from './session';
 import { openContent, openContext, NoWrapError, ContentMismatchError, type CardContext, type ContentWire } from './content';
 import { verifyMandateBlob, profileHashOf, wireFilter, type MandatePayloadView } from './mandate-check';
+import { checkGrant, grantRowsOf } from './grant-check';
+import type { MandatePayload } from '@hap/core/browser';
 
 export type CardReason =
   | 'not_pending' | 'content_not_here' | 'content_unreadable' | 'content_mismatch'
   | 'context_missing' | 'context_unreadable' | 'context_mismatch'
-  | 'mandate_unavailable' | 'mandate_invalid' | 'mandate_signature' | 'mandate_expired' | 'mandate_ended'
-  | 'profile_unavailable' | 'profile_mismatch' | 'owner_not_you' | 'action_type_missing' | 'action_type_unknown'
+  | 'crypto_unavailable' | 'mandate_unavailable' | 'mandate_invalid' | 'mandate_signature' | 'mandate_expired' | 'mandate_ended'
+  | 'profile_unavailable' | 'profile_mismatch' | 'owner_not_you' | 'mandate_not_granted' | 'action_type_missing' | 'action_type_unknown'
   | 'session_ended' | 'reads_failed' | 'proposal_invalid';
 
 /** Which of the Authority Server's routes carries this decision. */
@@ -129,6 +133,8 @@ export function routeFor(proposal: Proposal, userId: string): DecisionRoute | nu
 }
 
 export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardCheck> {
+  // 0. without WebCrypto no signature, content or grant can be checked here: one clear reason, before any check could read it as a forgery
+  if (!(globalThis as { crypto?: { subtle?: unknown } }).crypto?.subtle) return no('crypto_unavailable');
   const bearer = d.session.bearer();
   const open = d.session.current();
   const account = await d.accounts.read();
@@ -168,13 +174,14 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
     .map((m) => (isObj(m) && typeof m.blob === 'string' ? m.blob : null)).filter((b): b is string => b !== null);
   if (blobs.length === 0) return no('mandate_unavailable');
   let payload: MandatePayloadView | null = null;
+  let full: MandatePayload | null = null;
   let firstFailure: CardReason = 'mandate_invalid';
   let failed = false;
   for (const blob of blobs) {
     const v = await verifyMandateBlob(blob, account.as_key, d.now());
     if (!v.ok) { if (!failed) { firstFailure = v.code; failed = true; } continue; }
     // The AS checks a decision against the most recently issued mandate: so does this phone.
-    if (!payload || v.payload.issued_at > payload.issued_at) payload = v.payload;
+    if (!payload || v.payload.issued_at > payload.issued_at) { payload = v.payload; full = v.full; }
   }
   if (!payload) return no(firstFailure);
   if (payload.profile_id !== proposal.profileId) return no('mandate_invalid');
@@ -186,6 +193,19 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
 
   // 6. the owner is this person (the decider set: the owner; a colleague's mandate needs the owner's chain, stage B)
   if (payload.mandate_owners[0].did !== account.root_did) return no('owner_not_you');
+
+  // 6a. the owner's grant of exactly this mandate, against this phone's own verified chain
+  const grants = await d.api.grants(payload.mandate_id, bearer);
+  if (!grants.ok) return no(readFailure(grants, d.session));
+  const rows = grantRowsOf(grants.data);
+  if (!rows || !full) return no('reads_failed');
+  let granted: Awaited<ReturnType<typeof checkGrant>>;
+  try {
+    granted = await checkGrant({ payload: full, authorizationId: proposal.authorizationId, chain: open.chain, rows });
+  } catch {
+    return no('mandate_not_granted');
+  }
+  if (!granted.ok) return no(granted.code === 'mandate_revoked' ? 'mandate_ended' : 'mandate_not_granted');
 
   // 7. the action type
   const actionType = head.head.actionType;

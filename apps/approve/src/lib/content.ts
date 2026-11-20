@@ -135,3 +135,28 @@ export async function openContext(wire: ContentWire, ownKeyId: string, keys: Dev
     cek?.fill(0);
   }
 }
+
+/**
+ * Open a sealed mandate body or a give prepared for this phone (plan 4.4 "Transport"): the same AES-256-GCM sealing as proposal
+ * content, under this phone's own wrap. A body carries no fingerprint: what the phone shows is bound by the hashes it recomputes from
+ * the plaintext and signs (mandate-give.ts). Throws {@link NoWrapError} without a wrap, an `Error` for anything that does not open as an
+ * object; no error text carries content, and nothing is stored.
+ */
+export async function openSealedObject(ciphertext: unknown, wrap: unknown, keys: DeviceKeyStore): Promise<Record<string, unknown>> {
+  const w = wrap as Partial<Wrap> | null | undefined;
+  if (!w || typeof w !== 'object') throw new NoWrapError();
+  if (typeof ciphertext !== 'string' || ![ciphertext, w.ct, w.enc].every((x) => typeof x === 'string' && STRICT_B64URL.test(x))) {
+    throw new Error('This content could not be opened on this device.');
+  }
+  let cek: Uint8Array | null = null;
+  try {
+    cek = await keys.openContentKey({ ct: w.ct as string, enc: w.enc as string });
+    const obj = JSON.parse(utf8Decode(await aesOpen(cek, b64uDecode(ciphertext)))) as unknown;
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) throw new Error('not an object');
+    return obj as Record<string, unknown>;
+  } catch {
+    throw new Error('This content could not be opened on this device.');
+  } finally {
+    cek?.fill(0);
+  }
+}

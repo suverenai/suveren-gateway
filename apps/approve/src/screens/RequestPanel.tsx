@@ -26,7 +26,7 @@ export interface RequestPanelProps {
   locked?: boolean;
   /** The approval on screen; null while it is read. */
   shown: { proposal: Proposal; card: Omit<RequestCardProps, 'proposal'> } | null;
-  /** Instead of a proposal: another kind of waiting item drawn by its own card (a computer's change request, stage D3). */
+  /** Instead of a proposal: another kind of waiting item drawn by its own card (a computer's change request, or a mandate to give, stage D3). */
   other?: { key: string; node: ReactNode } | null;
   error?: string;
 }
@@ -50,7 +50,7 @@ export function RequestPanel(p: RequestPanelProps) {
         {p.error && <Notice kind="error">{p.error}</Notice>}
         {!p.shown && !p.other && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
         {!p.shown && p.other && (
-          <div className="apr-stage" key={p.other.key} data-change-id={p.other.key}>
+          <div className="apr-stage" key={p.other.key} data-item-key={p.other.key}>
             {p.other.node}
           </div>
         )}

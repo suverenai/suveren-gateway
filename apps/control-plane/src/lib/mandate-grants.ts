@@ -32,6 +32,7 @@ import { isBearerCredential } from './as-credential';
 import { loadDeviceSigningKey, loadOrGenerateKeyPair } from './e2e-key-manager';
 import { PinRefusedError, type DevicePinStore } from './device-pin-store';
 import { MandateGrantStore } from './mandate-grant-store';
+import { PhoneGiveStore } from './phone-give-store';
 import type { TeamTrustStore, TeamTrustCode, VerifiedTeam } from './team-trust-store';
 import { ensureTeamTrust, refreshTeamTrust, honouredTeam, teamTrustFresh, type TeamTrustEnv } from './team-trust';
 import { CheckError, type CheckKeyStore, type PlatformChecks } from './platform-checks';
@@ -119,6 +120,8 @@ export interface PreparedGrant {
   approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean; name?: string }>;
   chainDids: string[];
   blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string; name?: string }> } | null;
+  /** The person's phone (another active device with a check key) can give this mandate instead: `/give-on-phone`. */
+  onPhone: boolean;
 }
 
 export interface Issued {
@@ -128,6 +131,27 @@ export interface Issued {
   /** The members of the mandate request that the grant covers: the ceremony adds them to its own request. */
   request: Record<string, unknown>;
   /** The approvers' identities shown for the grant (user id, DID, identity code). */
+  approvers: Array<{ userId: string; did: string; identityCode: string }>;
+}
+
+/** The version a change continues, as this computer holds it (plaintext); the phone checks it against that version's grant. */
+export interface PhonePrevious {
+  profile: AgentProfile;
+  bounds: Record<string, string | number>;
+  scope: Record<string, string | number>;
+  intent: string;
+  expires_at: number;
+}
+
+/** A give prepared for the person's phone (`sendToPhone`): what the grant must cover, and what the ceremony then requests. */
+export interface PhoneGive {
+  mandateId: string;
+  mandateVersion: number;
+  expiresAt: number;
+  op: 'grant' | 'change';
+  /** The members planned here: the phone's grant must carry exactly these. */
+  members: Record<string, unknown>;
+  request: Record<string, unknown>;
   approvers: Array<{ userId: string; did: string; identityCode: string }>;
 }
 
@@ -155,6 +179,12 @@ export class MandateGrants {
   constructor(private readonly d: GrantDeps) {
     this.now = d.now ?? (() => Math.floor(Date.now() / 1000));
   }
+
+  /** Gives waiting on the person's phone, sealed in this gateway's vault (kept across a restart). */
+  get phoneGives(): PhoneGiveStore {
+    return (this.phoneGiveStore ??= new PhoneGiveStore(this.d.vault, this.now));
+  }
+  private phoneGiveStore?: PhoneGiveStore;
 
   /** Does this gateway have a device chain (and so grant mandates itself)? Fails closed on an unreadable slot. */
   active(): boolean {
@@ -377,24 +407,28 @@ export class MandateGrants {
     const { d } = this;
     const dk = await deviceKeys();
     const s = await this.session();
-    const empty = (blocked: PreparedGrant['blocked']): PreparedGrant => ({ mode: i.mode, expiresAt: this.now() + i.ttlSeconds, caps: null, approvals: null, approvers: [], chainDids: [], blocked });
+    // Another active device of this chain that names a check key can give it instead (the person's phone, plan 4.4 "Transport").
+    const onPhone = dk.activeDevices(s.own).some(x => x.key_id !== s.stored.keyId && !!x.check);
+    const empty = (blocked: PreparedGrant['blocked']): PreparedGrant => ({ mode: i.mode, expiresAt: this.now() + i.ttlSeconds, caps: null, approvals: null, approvers: [], chainDids: [], blocked, onPhone: false });
     try {
-      if (!d.checks || !d.checkStore) return empty({ code: 'no_check_key', message: 'This computer has no check key, so it cannot grant a mandate.' });
+      if ((!d.checks || !d.checkStore) && !onPhone) return empty({ code: 'no_check_key', message: 'This computer has no check key, so it cannot grant a mandate.' });
       const plan = await this.planGrant(i, s, dk, true);
       let blocked: PreparedGrant['blocked'] = null;
       if (plan.notListed.length > 0) {
         blocked = { code: plan.listCode, message: plan.listCode === 'team_list_unavailable' ? 'Your team\'s member list could not be checked.' : 'An approver is not in your team\'s member list.', approvers: plan.notListed.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode })) };
       } else {
         let checkKey;
-        try { checkKey = d.checkStore.read(); } catch { checkKey = undefined; }
+        try { checkKey = d.checkStore?.read(); } catch { checkKey = undefined; }
         const device = s.own.devices[s.stored.keyId];
-        if (!checkKey || !device?.check || !dk.checkKeysEqual(device.check, platformCheckKey(checkKey.publicKey))) blocked = { code: 'no_check_key', message: 'This computer has no check key that its chain names, so it cannot grant a mandate.' };
+        if (!d.checks || !checkKey || !device?.check || !dk.checkKeysEqual(device.check, platformCheckKey(checkKey.publicKey))) blocked = { code: 'no_check_key', message: 'This computer has no check key that its chain names, so it cannot grant a mandate.' };
       }
       const t = plan.team;
       return {
         mode: t.mode, expiresAt: plan.expiresAt, caps: t.caps ?? null, approvals: t.approvals ?? null, chainDids: t.chainDids,
         approvers: t.identities.map(a => ({ userId: a.userId, did: a.did, identityCode: a.identityCode, isYou: a.did === s.stored.rootDid, confirmed: a.did === s.stored.rootDid || plan.listed.has(a.did), ...(plan.listed.get(a.did) !== undefined ? { name: plan.listed.get(a.did) } : {}) })),
         blocked,
+        // Only the missing check key here can be helped by the phone; a team-list refusal blocks the phone's give the same way.
+        onPhone: onPhone && (blocked === null || blocked.code === 'no_check_key'),
       };
     } catch (e) {
       if (e instanceof GrantRefusal) return empty({ code: e.code, message: e.message, ...(Array.isArray(e.extra.approvers) ? { approvers: e.extra.approvers as never } : {}) });
@@ -477,7 +511,7 @@ export class MandateGrants {
       }
     }
 
-    return { mandateId, version, op, replaces, authorizationId, team, members, expiresAt, now, carries, notListed, listCode, listed };
+    return { mandateId, version, op, replaces, authorizationId, team, members, expiresAt, now, carries, notListed, listCode, listed, payload };
   }
 
   /**
@@ -536,15 +570,91 @@ export class MandateGrants {
       return refuse(asErrorCode(bodyReply.body) ?? 'body_refused', asMessage(bodyReply.body) || 'The Authority Server did not take the sealed mandate body.');
     }
 
-    // 8. what the ceremony adds to its request
-    const request: Record<string, unknown> = {
-      mandate_id: mandateId, mandate_version: version, expires_at: expiresAt, commitment_mode: team.mode,
-      mandate_owners: [{ did: i.ownDid }],
-      ...(carries ? { above_cap_caps: team.caps, above_cap_approvers: team.approvers, ...(team.approvals !== undefined ? { above_cap_approvals: team.approvals } : {}) } : {}),
-      // A renewal names `replaces` as the grant before it did: the Authority Server checks the grant against the request's.
-      ...(i.renewal ? { renew: true, ...(replaces ? { replaces } : {}) } : {}),
-    };
+    // 8. what the ceremony adds to its request (a renewal names `replaces` as the grant before it did: the AS checks the grant against it)
+    const request = this.requestOf(i, { mandateId, version, expiresAt, team, carries, replaces });
     return { mandateId, mandateVersion: version, expiresAt, request, approvers: team.identities };
+  }
+
+  /** What the ceremony adds to its mandate request for a planned give (step 8 of `issue`). */
+  private requestOf(i: IssueInput, plan: { mandateId: string; version: number; expiresAt: number; team: { mode: string; caps?: unknown; approvers?: unknown; approvals?: number }; carries: boolean; replaces: string | null }): Record<string, unknown> {
+    const { team } = plan;
+    return {
+      mandate_id: plan.mandateId, mandate_version: plan.version, expires_at: plan.expiresAt, commitment_mode: team.mode,
+      mandate_owners: [{ did: i.ownDid }],
+      ...(plan.carries ? { above_cap_caps: team.caps, above_cap_approvers: team.approvers, ...(team.approvals !== undefined ? { above_cap_approvals: team.approvals } : {}) } : {}),
+      ...(i.renewal ? { renew: true, ...(plan.replaces ? { replaces: plan.replaces } : {}) } : {}),
+    };
+  }
+
+  // ─── give on the phone (plan 4.4 "Transport", DEC-86) ─────────────────────
+
+  /**
+   * Prepare a give for another granting device of this person (their phone) instead of granting here: the same plan as `issue`, then the
+   * whole request sealed to every ACTIVE device of the chain this gateway verified and stored at `POST /api/mandates/prepared`. Nothing is
+   * signed here and nothing is requested from the Authority Server yet. The phone shows the request, computes every hash it signs from the
+   * plaintext it shows, and stores the grant; `phoneGrant` then accepts only a grant whose members are EXACTLY the ones planned here.
+   *
+   * The sealed request (`v: 2`) is a superset of a body (`v: 1`: scope and intent), so the row stays the mandate's body after the grant.
+   */
+  /**
+   * `previous`: for a change, the version it continues, in plaintext (limits, scope, intent, end, profile). The phone shows the crossed-out
+   * diff from it and checks it first against the previous grant's hashes, so a wrong value here only gets the give refused there.
+   */
+  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious }): Promise<PhoneGive> {
+    const dk = await deviceKeys();
+    const s = await this.session();
+    const plan = await this.planGrant(i, s, dk, false);
+    // Some OTHER active device of this chain must be able to grant (its check key named in the chain): otherwise nobody can.
+    const granters = dk.activeDevices(s.own).filter(x => x.key_id !== s.stored.keyId && !!x.check);
+    if (granters.length === 0) return refuse('no_granting_phone', 'None of your other devices can give a mandate.');
+    if (plan.op === 'change' && !i.renewal && !shown.previous) return refuse('previous_unknown', 'The mandate this change continues could not be read on this computer.');
+    const place = { authorization_id: plan.authorizationId, group_id: i.groupId, replaces: plan.replaces, chain_dids: [...plan.team.chainDids] };
+    const give = {
+      op: plan.op, profile: i.profile, bounds: i.bounds, payload: plan.payload, place, title: shown.title.slice(0, 200),
+      prepared_at: plan.now, ...(i.renewal ? { renewal: true } : {}),
+      ...(plan.op === 'change' && shown.previous ? { previous: { ...shown.previous, mandate_version: plan.version - 1 } } : {}),
+    };
+    const readers = dk.activeDevices(s.own).map(x => ({ did: x.key_id, publicKey: dk.b64uDecode(x.read_pub) }));
+    const sealed = await encryptProposalContent({ v: 2, mandate_id: plan.mandateId, mandate_version: plan.version, scope: i.scope, intent: i.intent, give }, readers);
+    const reply = await this.call('POST', '/api/mandates/prepared', s.credential, {
+      mandate_id: plan.mandateId, mandate_version: plan.version, ciphertext: sealed.content.ciphertext, device_keys: sealed.content.encrypted_keys,
+    });
+    if (reply.status !== 201) return refuse(asErrorCode(reply.body) ?? 'body_refused', asMessage(reply.body) || 'The Authority Server did not take the prepared mandate.');
+    return {
+      mandateId: plan.mandateId, mandateVersion: plan.version, expiresAt: plan.expiresAt, op: plan.op, members: plan.members,
+      request: this.requestOf(i, plan), approvers: plan.team.identities,
+    };
+  }
+
+  /**
+   * Has the phone given the mandate `sendToPhone` prepared? `null` while no grant of that version is stored. A grant is accepted only when
+   * it verifies against THIS gateway's own verified chain (a granting device's signature and its check over exactly that grant) with every
+   * member equal to the members planned here; anything else is refused and never used.
+   */
+  async phoneGrant(p: PhoneGive): Promise<Issued | null> {
+    const { d } = this;
+    const dk = await deviceKeys();
+    const s = await this.session();
+    const g = await this.call('GET', `/api/mandates/${encodeURIComponent(p.mandateId)}/grants`, s.credential);
+    if (g.status === 404) return null;
+    if (g.status !== 200 || !isObj(g.body) || !Array.isArray(g.body.grants)) return refuse('as_answer_invalid', 'The Authority Server answered with something unexpected.');
+    const rows = (g.body.grants as unknown[]).filter((e): e is Record<string, unknown> => isObj(e) && isObj(e.grant) && e.mandate_version === p.mandateVersion);
+    if (rows.some(r => r.op === 'revoke')) return refuse('mandate_revoked', 'This mandate was ended.');
+    const row = rows.find(r => r.op === p.op);
+    if (!row) return null;
+    const grant = row.grant as MandateGrant;
+    if (grant.owner_did !== s.stored.rootDid) return refuse('grant_invalid', 'The grant is not this person\'s.');
+    try {
+      await dk.verifyGrant({ grant, sig: row.sig, check: row.check ?? undefined }, {
+        chain: s.own, mandateFields: p.members, expect: { ops: [p.op], mandate_id: p.mandateId, mandate_version: p.mandateVersion },
+      });
+    } catch (e) {
+      if (isDeviceKeysError(e)) return refuse('grant_invalid', `The grant from your phone does not match what was prepared (${e.code}).`);
+      throw e;
+    }
+    const hash = await dk.grantHash(grant);
+    try { d.grants.observe(p.mandateId, p.mandateVersion, hash, p.op); } catch { return refuse('grant_not_recorded', 'This computer could not record the grant.'); }
+    return { mandateId: p.mandateId, mandateVersion: p.mandateVersion, expiresAt: p.expiresAt, request: p.request, approvers: p.approvers };
   }
 
   // ─── revoke: device-signed and final ─────────────────────────────────────
@@ -828,8 +938,11 @@ export class MandateGrants {
     } catch {
       return refuse('body_unreadable', 'The sealed mandate cannot be opened with this computer\'s key.');
     }
-    if (!isObj(content) || Object.keys(content).sort().join() !== 'intent,mandate_id,mandate_version,scope,v'
-      || content.v !== 1 || content.mandate_id !== input.mandateId || content.mandate_version !== input.version) {
+    // v1: the body. v2: a give prepared for the phone (`sendToPhone`), which stays the body after the grant: the same members plus `give`.
+    const shape = isObj(content) ? Object.keys(content).sort().join() : '';
+    const v1 = shape === 'intent,mandate_id,mandate_version,scope,v' && isObj(content) && content.v === 1;
+    const v2 = shape === 'give,intent,mandate_id,mandate_version,scope,v' && isObj(content) && content.v === 2 && isObj(content.give);
+    if (!isObj(content) || !(v1 || v2) || content.mandate_id !== input.mandateId || content.mandate_version !== input.version) {
       return refuse('body_invalid', 'The sealed mandate does not name this mandate and version.');
     }
     const { scope, intent } = content;

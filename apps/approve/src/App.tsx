@@ -40,6 +40,10 @@ import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card
 import { OpenSessionScreen } from './screens/OpenSession';
 import { ChangeConfirmDriver, ChangeRequestReader, type ChangeItem } from './lib/change-requests';
 import { ChangeCard, changeTitle, useNowSeconds } from './screens/ChangeCard';
+import { GiveDriver, readGives, type GiveItem } from './lib/mandate-give';
+import { EndDriver, readOwnMandates, type OwnMandate, type EndedElsewhere } from './lib/mandate-end';
+import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
+import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
 import { requestFromHash, type PushState } from './lib/push';
 
@@ -292,7 +296,23 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   const [cards, setCards] = useState<Record<string, OpenCard>>({});
   const [busy, setBusy] = useState(false);
   const timers = useRef<number[]>([]);
+  // D3: mandates to give (prepared on a computer), this person's own mandates (End), and notices of gives made on other devices.
+  const [gives, setGives] = useState<GiveItem[]>([]);
+  const [own, setOwn] = useState<OwnMandate[]>([]);
+  const [endedElsewhere, setEndedElsewhere] = useState<EndedElsewhere[]>([]);
+  const giver = useMemo(() => new GiveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const giving = useDriver(giver);
+  const ender = useMemo(() => new EndDriver({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
+  const ending = useDriver(ender);
+  const giveBusy = giving.step === 'checking' || giving.step === 'sending';
   useEffect(() => () => { timers.current.forEach((t) => window.clearTimeout(t)); }, []);
+
+  const loadMandates = useCallback(async () => {
+    const g = await readGives(rt);
+    if (g.ok) setGives(g.items); else if (g.code === 'session_ended') { onEnded(); return; }
+    const m = await readOwnMandates(rt);
+    if (m.ok) { setOwn(m.items); setEndedElsewhere(m.ended); }
+  }, [rt, onEnded]);
 
   // A computer's change requests waiting for this phone (stage D3): read and checked beside the proposals, in the same panel.
   const changeReader = useMemo(() => new ChangeRequestReader({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
@@ -301,6 +321,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   changesRef.current = changes;
 
   const load = useCallback(async (byPerson: boolean) => {
+    void loadMandates();
     const [r, c] = await Promise.all([rt.reader.list(byPerson), changeReader.list()]);
     if (c.ok) setChanges(c.items);
     if (r.ok) {
@@ -333,11 +354,15 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     void load(true);
   }, [openRequest, onOpened, load]);
 
-  // The panel's order is the gateway's: oldest first. The list screen shows newest first. A change request is `chg:<request id>`.
+  // The panel's order is the gateway's: oldest first. The list screen shows newest first. A change request is `chg:<request id>`;
+  // mandates to give (`give:<key>`) come first, as on the D3 mockup.
   const ids = useMemo(() => [
-    ...(proposals ?? []).map((p) => ({ id: p.id, at: p.createdAt })),
-    ...changes.map((c) => ({ id: `${CHG}${c.requestId}`, at: c.createdAt })),
-  ].sort((a, b) => a.at - b.at).map((x) => x.id), [proposals, changes]);
+    ...gives.map((g) => g.key),
+    ...[
+      ...(proposals ?? []).map((p) => ({ id: p.id, at: p.createdAt })),
+      ...changes.map((c) => ({ id: `${CHG}${c.requestId}`, at: c.createdAt })),
+    ].sort((a, b) => a.at - b.at).map((x) => x.id),
+  ], [proposals, changes, gives]);
   const idsRef = useRef(ids);
   idsRef.current = ids;
   const hold = settling !== null;
@@ -362,15 +387,35 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     setCards((c) => (c[id] ? { ...c, [id]: { proposal: c[id].proposal, check } } : c));
   }, [rt, onEnded]);
 
-  const shownCard = shownId && !shownId.startsWith(CHG) ? cards[shownId] : undefined;
+  const shownCard = shownId && !shownId.startsWith(CHG) && !shownId.startsWith(GIVE) ? cards[shownId] : undefined;
   // A change request stays on screen while it settles, even after it left the list.
   const [heldChange, setHeldChange] = useState<ChangeItem | null>(null);
   const shownChange = shownId && shownId.startsWith(CHG)
     ? changes.find((c) => `${CHG}${c.requestId}` === shownId) ?? (heldChange && `${CHG}${heldChange.requestId}` === shownId ? heldChange : null)
     : null;
   useEffect(() => {
-    if (chrome.panel && shownId && !shownId.startsWith(CHG) && !cards[shownId]) void openCard(shownId);
+    if (chrome.panel && shownId && !shownId.startsWith(CHG) && !shownId.startsWith(GIVE) && !cards[shownId]) void openCard(shownId);
   }, [chrome.panel, shownId, cards, openCard]);
+
+  const shownGive = shownId && shownId.startsWith(GIVE) ? gives.find((g) => g.key === shownId) ?? null : null;
+  useEffect(() => {
+    const cur = giving.step !== 'idle' ? giving.item : null;
+    if (shownGive && (!cur || cur.key !== shownGive.key) && !settling) giver.open(shownGive);
+  }, [shownGive, giving, giver, settling]);
+  // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
+  useEffect(() => {
+    if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
+      settlingRef.current = { id: giving.item.key, before: idsRef.current };
+      setSettling({ id: giving.item.key, before: idsRef.current, stay: false });
+      const key = giving.item.key;
+      timers.current.push(window.setTimeout(() => { finishSettlingRef.current(key); void loadMandates(); }, RESULT_SHOW_MS));
+    }
+    if (giving.step === 'not_received' && settlingRef.current?.id !== giving.item.key) {
+      settlingRef.current = { id: giving.item.key, before: idsRef.current };
+      setSettling({ id: giving.item.key, before: idsRef.current, stay: true });
+    }
+  }, [giving, loadMandates]);
+  useEffect(() => { setBusy(giveBusy); }, [giveBusy]);
 
   const later = useCallback(() => {
     setPanel((p) => ({ ...p, open: false }));
@@ -388,6 +433,9 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     else setPanel((p) => ({ ...p, open: false }));
     setSettling(null);
   }, []);
+
+  const finishSettlingRef = useRef(finishSettling);
+  finishSettlingRef.current = finishSettling;
 
   const handleDecided = useCallback((id: string) => {
     settlingRef.current = { id, before: idsRef.current };
@@ -445,7 +493,18 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
         onToggleAuto={toggleAuto}
         locked={busy}
         error={error}
-        other={shownId && shownChange ? {
+        other={shownId && shownId.startsWith(GIVE) && giving.step !== 'idle' && giving.item?.key === shownId ? {
+          key: shownId,
+          node: (
+            <GiveCard
+              state={giving} nowSeconds={rt.now()}
+              onGive={() => void giver.give()} onLater={later} onCancelTouch={() => giver.cancelTouch()}
+              onCheckAgain={() => void giver.checkAgain()}
+              onDone={() => { const k = shownId; giver.close(); finishSettling(k); void loadMandates(); }}
+              dismissLabel={resultDismissLabel(afterDecision(settling ? settling.before : ids, shownId).next !== null)}
+            />
+          ),
+        } : shownId && shownChange ? {
           key: shownId,
           node: (
             <ChangeSlot
@@ -476,8 +535,32 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
       />
     );
   }
+  if (ending.step !== 'idle') {
+    return (
+      <EndScreen
+        state={ending} onEnd={() => void ender.end()} onKeep={() => ender.close()}
+        onDone={() => { ender.close(); void loadMandates(); }}
+      />
+    );
+  }
+  const now = rt.now();
+  const notices = [
+    ...own.filter((m) => m.givenOn && m.givenAt !== null && now - (m.givenAt ?? 0) < 14 * 86400).map((m) => P.noticeGiven(m.title, m.givenOn!)),
+    ...endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by)),
+  ];
   return (
     <RequestsScreen
+      extra={(
+        <>
+          {notices.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
+          {gives.length > 0 && (
+            <div className="dash-rows" data-testid="give-list">
+              {gives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
+            </div>
+          )}
+          <OwnMandates items={own} nowSeconds={now} onEnd={(m) => ender.open(m)} />
+        </>
+      )}
       proposals={proposals} error={error} nowMs={Date.now()}
       changes={changes}
       onOpenChange={(rid) => { setCurrentId(`${CHG}${rid}`); setPanel((p) => ({ ...p, open: true, owed: false })); }}
@@ -491,6 +574,8 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
 
 /** The panel's id of a change request: kept apart from proposal ids. */
 const CHG = 'chg:';
+/** The panel's id of a mandate to give (GiveItem.key starts with it). */
+const GIVE = 'give:';
 
 /** One change request's card with its driver (stage D3). Locks the panel's head while the touch, the sending and the stamp are on. */
 function ChangeSlot({ rt, item, onBusyChange, onSettled, dismissLabel, onDismiss, nextTitle }: {

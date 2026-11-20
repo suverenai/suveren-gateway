@@ -148,6 +148,31 @@ export class AsApi {
     return this.go<{ grants?: unknown[] }>('GET', `/api/mandates/${encodeURIComponent(mandateId)}/grants`, { bearer });
   }
 
+  /** Gives prepared for this person's devices that hold no grant yet (`GET /api/mandates/prepared`), each with this phone's own wrap. */
+  prepared(bearer: string) {
+    return this.go<{ prepared?: unknown[] }>('GET', '/api/mandates/prepared', { bearer });
+  }
+
+  /** This person's own authorizations (`GET /api/mandates/mine`; a phone session may since D3, device keys on): the gateway's list. */
+  mine(bearer: string) {
+    return this.go<{ mandates?: unknown[] }>('GET', '/api/mandates/mine', { bearer });
+  }
+
+  /** The sealed bodies of a mandate's versions (`GET /api/mandates/:id/body`), each with this phone's own wrap. */
+  mandateBodies(mandateId: string, bearer: string) {
+    return this.go<{ bodies?: unknown[] }>('GET', `/api/mandates/${encodeURIComponent(mandateId)}/body`, { bearer });
+  }
+
+  /** Store this phone's grant (`POST /api/mandates/:id/grants`, plan 4.4): `{ grant, sig, check }`. The AS verifies it against the chain. */
+  postGrant(mandateId: string, body: unknown, bearer: string) {
+    return this.go<{ grant_hash?: unknown; mandate_version?: unknown }>('POST', `/api/mandates/${encodeURIComponent(mandateId)}/grants`, { body, bearer });
+  }
+
+  /** The gateways' signed receipts of a mandate's grants (`GET /api/mandates/:id/receipts`, DEC-23). The phone verifies each. */
+  receipts(mandateId: string, bearer: string) {
+    return this.go<{ receipts?: unknown[] }>('GET', `/api/mandates/${encodeURIComponent(mandateId)}/receipts`, { bearer });
+  }
+
   /** A profile by id (`GET /api/profiles/:id`): public, no session needed, so none is sent. The phone checks its hash against the signed mandate. */
   profile(profileId: string) {
     return this.go<unknown>('GET', `/api/profiles/${encodeURIComponent(profileId)}`);

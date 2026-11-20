@@ -579,6 +579,7 @@ const mandateCeremonyDeps = (): Omit<CeremonyDeps, 'newAuthorizationId'> => ({
   encrypt: encryptIntentForRecipients,
   deliverGateContent: (args) => pushGateContent(args),
   resyncGates: () => resyncGates(),
+  signedMandate: async (authorizationId) => { const r = await getSignedMandate(authorizationId); return 'old' in r ? r.old : null; },
   // A gateway with a device chain grants the mandate on this computer first (step 13); undefined with the switch off.
   ...(deviceGrants ? { grants: deviceGrants } : {}),
 });

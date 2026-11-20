@@ -547,6 +547,8 @@ export interface PreparedMandate {
   intent: string;
   team: { approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>; approvals: number | null; caps: Array<{ field: string; label: string; value: string | number; unit?: string }> } | null;
   blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+  /** Another active device of the person's chain can grant it (DEC-90): the page offers "Give on your phone" when this computer cannot. */
+  onPhone?: boolean;
 }
 
 /** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
@@ -2462,6 +2464,36 @@ class SPClient {
       throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason);
     }
     return body as { authorizationId: string; revokeError?: string };
+  }
+
+  /**
+   * Give on the phone (DEC-90): the same prepared plan as `signMandate` (echo `planHash`), sealed to the person's devices; nothing is granted
+   * here. A refusal throws {@link MandateSignError} like a give.
+   */
+  async giveOnPhone(request: Record<string, unknown> & { planHash: string }): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+    const res = await this.fetch('/api/mandate/give-on-phone', { method: 'POST', body: JSON.stringify(request) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+    }
+    return body as { mandateId: string; mandateVersion: number; expiresAt: number };
+  }
+
+  /** Has the phone given it? `waiting`, `unknown` (nothing waits under this id), or `done` once the mandate is issued. A refusal throws. */
+  async pollGiveOnPhone(mandateId: string): Promise<{ state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+    const res = await this.fetch(`/api/mandate/give-on-phone/${encodeURIComponent(mandateId)}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Checking your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+    }
+    return body as { state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string };
+  }
+
+  /** Stop waiting for the phone on this page. The prepared request runs out at the Authority Server by itself. */
+  async cancelGiveOnPhone(mandateId: string): Promise<void> {
+    await this.fetch(`/api/mandate/give-on-phone/${encodeURIComponent(mandateId)}`, { method: 'DELETE' }).catch(() => {});
   }
 
   /** Extend a mandate: only its expiry moves. */
