@@ -33,7 +33,7 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
-import type { MandateGrants, Issued, PreparedGrant, PhoneGive, PhonePrevious } from './mandate-grants';
+import type { MandateGrants, Issued, IssueInput, PreparedGrant, PhoneGive, PhonePrevious } from './mandate-grants';
 import { createHash } from 'node:crypto';
 import { canonicalize } from '@hap/core';
 import { GrantRefusal } from './mandate-grants';
@@ -629,7 +629,10 @@ async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise
   } catch (err) { store.drop(mandateId); return grantRefused(err); }
   if (!issued) return { state: 'waiting' };
   store.drop(mandateId);
-  const r = await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
+  const rc = p.ctx as { kind?: unknown; req?: RenewRequest; asBody?: Record<string, unknown>; boundsHash?: string; scopeHash?: string };
+  const r: { authorizationId: string; revokeError?: string } = rc.kind === 'renew'
+    ? await requestRenewal(rc.req!, rc.asBody!, rc.boundsHash!, rc.scopeHash!, issued, deps)
+    : await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
   phoneGiveDone.set(mandateId, { at: Date.now(), authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) });
   for (const [id, d] of phoneGiveDone) if (Date.now() - d.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveDone.delete(id);
   return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
@@ -843,10 +846,14 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
 }
 
 
-/** Extend = a `change` of the same mandate under the same authorization: granted again on this computer, only the expiry moves. */
-async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+/** What a renewal grants: the issue input for the grant and the request it then makes (shared by this computer and the phone path). */
+interface RenewPlan {
+  input: IssueInput;
+  asBody: Record<string, unknown>;
+}
+
+async function planRenewal(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<RenewPlan> {
   const user = deps.user!;
-  const grants = deps.grants!;
   const groups = ((await deps.as('GET', '/api/groups')).body?.groups ?? []) as Array<{ id: string; isPersonal?: boolean }>;
   const group = groups.find(g => g.id === req.groupId);
   if (!group) refuse('This mandate belongs to a workspace you are not in.');
@@ -864,31 +871,34 @@ async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash
   const intentHash = computeIntentHash(req.intent);
   const ecHash = computeExecutionContextHash(profile);
   const profileHash = computeProfileHash(profile);
-  let issued: Issued;
-  try {
-    issued = await grants.issue({
+  return {
+    input: {
       ownUserId: user.id, ownDid: user.did, groupId: req.groupId, isPersonal: !!group.isPersonal, profile,
       bounds: req.bounds, scope: req.context, intent: req.intent, mode: req.mode, ttlSeconds: req.ttlSeconds,
       authorizationId: req.authorizationId, renewal: true,
       hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
       subjectsDisclosed: false, team, as: deps.as,
-    });
-  } catch (err) { return grantRefused(err); }
-  const res = await deps.as('POST', '/api/as/mandate', {
-    authorization_id: req.authorizationId,
-    profile_id: profile.id,
-    profile_hash: profileHash,
-    supported_versions: [...SUPPORTED_VERSIONS],
-    bounds: req.bounds,
-    bounds_hash: boundsHash,
-    scope_hash: scopeHash,
-    domain: req.domain,
-    did: user.did,
-    gate_content_hashes: { intent: intentHash },
-    execution_context_hash: ecHash,
-    group_id: req.groupId,
-    ...issued.request,
-  });
+    },
+    asBody: {
+      authorization_id: req.authorizationId,
+      profile_id: profile.id,
+      profile_hash: profileHash,
+      supported_versions: [...SUPPORTED_VERSIONS],
+      bounds: req.bounds,
+      bounds_hash: boundsHash,
+      scope_hash: scopeHash,
+      domain: req.domain,
+      did: user.did,
+      gate_content_hashes: { intent: intentHash },
+      execution_context_hash: ecHash,
+      group_id: req.groupId,
+    },
+  };
+}
+
+/** Request the renewed version and deliver its gate content (after the grant, here or from the phone). */
+async function requestRenewal(req: RenewRequest, asBody: Record<string, unknown>, boundsHash: string, scopeHash: string, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const res = await deps.as('POST', '/api/as/mandate', { ...asBody, ...issued.request });
   if (res.status >= 300) refuse(`The Authority Server refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
   await deps.deliverGateContent({
     authorizationId: req.authorizationId,
@@ -899,6 +909,40 @@ async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash
     ...(req.path ? { path: req.path } : {}),
   });
   return { authorizationId: req.authorizationId };
+}
+
+/** Extend = a `change` of the same mandate under the same authorization: granted again on this computer, only the expiry moves. */
+async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const plan = await planRenewal(req, profile, boundsHash, scopeHash, deps);
+  let issued: Issued;
+  try {
+    issued = await deps.grants!.issue(plan.input);
+  } catch (err) { return grantRefused(err); }
+  return requestRenewal(req, plan.asBody, boundsHash, scopeHash, issued, deps);
+}
+
+/**
+ * Extend on the phone (a computer without a check key, DEC-90): the same renewal plan, sent to the phone with the version it continues
+ * (this computer's own copy), so the phone shows "lasts until" old → new and checks the rest is unchanged against the previous grant.
+ */
+export async function renewOnPhone(req: RenewRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to extend the mandate on.');
+  if (!deps.user) refuse('The gateway is not signed in.');
+  const profile = await resolveProfile(deps.as, req.profileId);
+  const boundsHash = computeBoundsHash(req.bounds as never, profile);
+  const scopeHash = computeScopeHash(req.context as never, profile);
+  const plan = await planRenewal(req, profile, boundsHash, scopeHash, deps);
+  const previous = await previousOf(req.authorizationId, deps);
+  if (!previous) refuse('The mandate being extended could not be read on this computer, so it was not sent to your phone.');
+  let give: PhoneGive;
+  try {
+    give = await deps.grants!.sendToPhone(plan.input, { title: profile.name ?? profile.id, previous });
+  } catch (err) { return grantRefused(err); }
+  deps.grants!.phoneGives.hold(give.mandateId, {
+    give: give as unknown as Record<string, unknown>,
+    ctx: { kind: 'renew', req, asBody: plan.asBody, boundsHash, scopeHash } as unknown as Record<string, unknown>,
+  });
+  return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
 }
 
 // ─── Changing a mandate ─────────────────────────────────────────────────────

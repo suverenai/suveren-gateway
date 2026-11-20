@@ -243,6 +243,7 @@ export const P = {
   // Mandates on the phone (stage D3; mockup A1–A6, B2, F2). DRAFT texts.
   giveRowKind: 'Mandate to give', // DRAFT new (mockup A1)
   giveTitle: (title: string) => `Give the mandate for ${title}`, // = S13 screen 1 title
+  renewTitle: (title: string) => `Extend the mandate for ${title}`, // DRAFT new (DEC-90: a renewal on the phone)
   giveFrom: (device: string, when: string) => `Prepared on ${device}, ${when}.`, // DRAFT new
   giveRead: 'This is what you sign with your touch. Read it first.', // DRAFT
   giveMay: 'What your AI may do', // = S13
@@ -408,6 +409,7 @@ const ERRORS: Record<string, string> = {
   // Confirming a computer's change (stage D3)
   change_answered: 'This change was already answered on another of your devices. Nothing changed here.', // DRAFT new
   // Giving a mandate on the phone (stage D3, mockup A2–A6)
+  give_renewal_is_a_change: 'This extension would change more than the end date. Nothing was signed. Extend it again on your computer.', // DRAFT new (DEC-90)
   give_expired: 'This mandate was waiting too long and has run out. Nothing was signed. Prepare it again on your computer.', // DRAFT new (mockup A6)
   grant_version_refused: 'This phone already has a newer version of this mandate. Nothing was signed.', // DRAFT new (mockup A6)
   mandate_expired_grant: 'This mandate was waiting too long and has run out. Nothing was signed. Prepare it again on your computer.', // DRAFT new

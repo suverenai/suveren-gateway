@@ -69,11 +69,13 @@ export interface GiveItem {
   /** A change: the version it continues, as checked against that version's grant, and the diff shown (old values crossed out). */
   previous?: { bounds: Record<string, string | number>; scope: Record<string, string | number>; intent: string; expiresAt: number; profile: AgentProfile };
   diff?: MandateDiff;
+  /** A renewal: only the end date moves (checked); shown as "Extend the mandate for …". */
+  renewal?: boolean;
 }
 
 export type GiveCode =
   | 'give_unreadable' | 'give_not_own' | 'give_from_unknown_device' | 'give_hash_mismatch' | 'give_place_invalid'
-  | 'give_expired' | 'give_version_invalid' | 'give_change_unsupported' | 'give_previous_mismatch';
+  | 'give_expired' | 'give_version_invalid' | 'give_change_unsupported' | 'give_previous_mismatch' | 'give_renewal_is_a_change';
 export type GiveCheck = { ok: true; item: GiveItem } | { ok: false; code: GiveCode; mandateId?: string };
 
 /** A row of `GET /api/mandates/prepared`, as far as the phone reads it. */
@@ -136,7 +138,8 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
   } else {
     // A change: shown only with the version it continues, and only when that version's grant verifies against THIS phone's chain
     // and carries exactly the hashes recomputed here from the previous values the computer sent (what is crossed out is what was signed).
-    if (g.renewal === true) return bad('give_change_unsupported');
+    // A renewal (DEC-90) is a change that moves only the end date: checked the same way, then everything but the end must be unchanged.
+    const renewal = g.renewal === true;
     const pv = g.previous;
     if (!isObj(pv) || !isObj(pv.profile) || !isScalars(pv.bounds) || !isScalars(pv.scope) || typeof pv.intent !== 'string' || pv.intent.length > 20_000
       || typeof pv.expires_at !== 'number' || pv.mandate_version !== version - 1) return bad('give_previous_mismatch');
@@ -158,8 +161,16 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
     const gch = isObj(pg.gate_content_hashes) ? pg.gate_content_hashes : {};
     if (pg.profile_id !== (pv.profile as { id?: unknown }).id || pg.profile_hash !== ph.profile || pg.bounds_hash !== ph.bounds || pg.scope_hash !== ph.scope
       || gch.intent !== ph.intent || pg.expires_at !== pv.expires_at) return bad('give_previous_mismatch');
-    // The change takes over from the authorization the previous version lives under.
-    if (place.replaces !== pg.authorization_id) return bad('give_place_invalid');
+    if (renewal) {
+      // The same authorization, `replaces` as it was; the same profile, limits, scope and intent as the version it continues; a later end.
+      if (place.authorization_id !== pg.authorization_id || place.replaces !== (typeof pg.replaces === 'string' ? pg.replaces : null)) return bad('give_place_invalid');
+      if (payload.profile_hash !== pg.profile_hash || payload.bounds_hash !== pg.bounds_hash || payload.scope_hash !== pg.scope_hash
+        || payload.gate_content_hashes?.intent !== gch.intent || payload.commitment_mode !== pg.commitment_mode) return bad('give_renewal_is_a_change');
+      if (payload.expires_at <= (pg.expires_at as number)) return bad('give_renewal_is_a_change');
+    } else if (place.replaces !== pg.authorization_id) {
+      // The change takes over from the authorization the previous version lives under.
+      return bad('give_place_invalid');
+    }
     previous = { bounds: pv.bounds, scope: pv.scope, intent: pv.intent, expiresAt: pv.expires_at, profile: pv.profile as unknown as AgentProfile };
     try {
       diff = computeMandateDiff({
@@ -180,7 +191,7 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
       title: (g.title as string).trim() || profile.name || profile.id, profile, bounds: g.bounds as Record<string, string | number>,
       scope: content.scope as Record<string, string | number>, intent: content.intent, payload, members,
       expiresAt: payload.expires_at, lastsSeconds: Math.max(0, payload.expires_at - ctx.now),
-      ...(previous ? { previous } : {}), ...(diff ? { diff } : {}),
+      ...(previous ? { previous } : {}), ...(diff ? { diff } : {}), ...(g.op === 'change' && g.renewal === true ? { renewal: true } : {}),
     },
   };
 }

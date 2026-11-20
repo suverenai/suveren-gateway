@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { MandateDiff } from '@hap/core/mandate-change';
-import { ChangeMandate, S13, teamDiff, changeErrorText, type ChangeState, type TeamTerms } from '@suveren/approval-card/mandate-screens';
-import { spClient } from '../../lib/sp-client';
+import { ChangeMandate, S13, teamDiff, changeErrorText, GivePhoneFooter, givePhoneRefusalText, type ChangeState, type TeamTerms } from '@suveren/approval-card/mandate-screens';
+import { spClient, MandateSignError } from '../../lib/sp-client';
+import { afterPoll, afterRefusal, waitExpired, GIVE_PHONE_POLL_MS, type GivePhoneState } from '../../lib/give-on-phone-flow';
 
 /**
  * Screen 5 on the gateway page: loads the gateway's prepared change (diff and team terms, computed from the signed mandate),
@@ -23,12 +24,39 @@ export function ChangeMandateHost({ authorizationId, changes, onChanged, onClose
     return () => { live = false; };
   }, [authorizationId, changes]);
 
+  // DEC-90: a computer without Touch ID cannot sign the change; the person's phone can. The same footer as the give page.
+  const [phone, setPhone] = useState<GivePhoneState | null>(null);
   const change = async () => {
     if (!prepared) return;
     setState({ phase: 'busy' });
     const r = await spClient.changeMandate(authorizationId, changes, prepared.diff);
-    if (r.ok) { setState({ phase: 'done' }); onChanged(); } else setState({ phase: 'error', code: r.code });
+    if (r.ok) { setState({ phase: 'done' }); onChanged(); return; }
+    if (r.code === 'no_check_key') { setState({ phase: 'review' }); setPhone({ s: 'offered' }); return; }
+    setState({ phase: 'error', code: r.code });
   };
+  const sendToPhone = async () => {
+    if (!prepared) return;
+    setPhone({ s: 'sending' });
+    try {
+      const g = await spClient.changeOnPhone(authorizationId, changes, prepared.diff);
+      setPhone({ s: 'waiting', mandateId: g.mandateId, expiresAt: g.expiresAt });
+    } catch (e) {
+      setPhone((cur) => afterRefusal(cur ?? { s: 'sending' }, e instanceof MandateSignError ? e.code : undefined, givePhoneRefusalText(e instanceof MandateSignError ? e.code : undefined, e instanceof Error ? e.message : String(e))));
+    }
+  };
+  useEffect(() => {
+    if (!phone || phone.s !== 'waiting') return undefined;
+    const id = phone.mandateId;
+    const t = window.setInterval(() => {
+      if (waitExpired(phone, Date.now())) { setPhone({ s: 'stopped' }); return; }
+      void spClient.pollGiveOnPhone(id).then(
+        (a) => setPhone((cur) => (cur ? afterPoll(cur, a) : cur)),
+        (e) => setPhone((cur) => (cur ? afterRefusal(cur, e instanceof MandateSignError ? e.code : undefined, givePhoneRefusalText(e instanceof MandateSignError ? e.code : undefined, e instanceof Error ? e.message : String(e))) : cur)),
+      );
+    }, GIVE_PHONE_POLL_MS);
+    return () => window.clearInterval(t);
+  }, [phone]);
+  useEffect(() => { if (phone?.s === 'given') onChanged(); }, [phone?.s]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'color-mix(in srgb, var(--bg-main) 70%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem', overflowY: 'auto' }}>
       <div style={{ maxWidth: 560, width: '100%' }}>
@@ -37,7 +65,17 @@ export function ChangeMandateHost({ authorizationId, changes, onChanged, onClose
           : state.phase === 'error'
             ? <div className="card"><p role="alert" className="msg-error">{changeErrorText(state.code)}</p><button type="button" className="btn btn-ghost" onClick={onClose}>{S13.changeCancel}</button></div>
             : <p>…</p>}
-        {state.phase === 'done' && <button type="button" className="btn btn-ghost btn-full" onClick={onClose}>{S13.endClose}</button>}
+        {phone && (
+          <div className="card" data-testid="change-on-phone">
+            <GivePhoneFooter
+              view={phone.s === 'waiting' ? { s: 'waiting' } : phone.s === 'refused' ? { s: 'refused', message: phone.message } : phone.s === 'given' ? { s: 'given' } : { s: phone.s }}
+              onGive={() => void sendToPhone()}
+              onStop={() => { if (phone.s === 'waiting') { void spClient.cancelGiveOnPhone(phone.mandateId); setPhone({ s: 'stopped' }); } }}
+              onClose={onClose}
+            />
+          </div>
+        )}
+        {(state.phase === 'done' || phone?.s === 'given') && <button type="button" className="btn btn-ghost btn-full" onClick={onClose}>{S13.endClose}</button>}
       </div>
     </div>
   );

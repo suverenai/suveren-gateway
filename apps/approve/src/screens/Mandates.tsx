@@ -22,7 +22,7 @@ export function GiveRow({ item, nowSeconds, onOpen }: { item: GiveItem; nowSecon
     <div className="av3-row" data-testid="give-row" data-key={item.key}>
       <button type="button" className="appr-item-head av3-row-head" onClick={onOpen}>
         <span className="av3-type"><b>{item.op === 'change' ? P.changeRowKind : P.giveRowKind}</b><span className="av3-area">{item.title}</span><span>{whenText(item.preparedAt, nowSeconds)}</span></span>
-        <span className="av3-row-title">{item.op === 'change' ? S13.changeTitle(item.title) : P.giveTitle(item.title)}</span>
+        <span className="av3-row-title">{item.renewal ? P.renewTitle(item.title) : item.op === 'change' ? S13.changeTitle(item.title) : P.giveTitle(item.title)}</span>
       </button>
     </div>
   );
@@ -34,7 +34,7 @@ function ChangeBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }
   return (
     <>
       <div className="av3-type"><b>{P.changeRowKind}</b><span className="av3-area">{item.title}</span></div>
-      <h2 className="av3-title" data-testid="give-title">{S13.changeTitle(item.title)}</h2>
+      <h2 className="av3-title" data-testid="give-title">{item.renewal ? P.renewTitle(item.title) : S13.changeTitle(item.title)}</h2>
       {summary && <p className="sum-line" data-testid="mandate-summary">{summary}</p>}
       <p className="from" data-testid="give-from">{P.giveFrom(item.preparedBy, whenText(item.preparedAt, nowSeconds))}</p>
       <p>{S13.changeOnlyListed}</p>

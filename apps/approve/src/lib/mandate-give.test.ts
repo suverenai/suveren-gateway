@@ -347,3 +347,53 @@ describe('a change on the phone (mockup B1): the previous version is checked aga
     expect(await refusedCode(w)).toBeDefined();
   });
 });
+
+describe('a renewal on the phone (DEC-90): only the end date moves, checked against the previous grant', () => {
+  /** The phone gives v1, then the computer prepares v2 as an extension: the same authorization, a later end, everything else equal. */
+  async function renewWorld(edit: (c: Record<string, any>, v1: Record<string, unknown>) => void = () => {}) {
+    const w = await world();
+    await w.prepare();
+    const d = new GiveDriver(w.deps);
+    d.open(await onlyItem(w));
+    await d.give();
+    const v1 = w.as.postedGrants[0].grant as unknown as Record<string, unknown>;
+    await w.prepare((c) => {
+      c.mandate_version = 2;
+      c.give.op = 'change';
+      c.give.renewal = true;
+      c.give.payload.expires_at = (v1.expires_at as number) + 7 * 86400;
+      c.give.previous = { profile: SALES, bounds: { ...BOUNDS }, scope: { ...SCOPE }, intent: INTENT, expires_at: v1.expires_at, mandate_version: 1 };
+      edit(c, v1);
+    });
+    return { w, v1 };
+  }
+
+  it('shows it as an extension (only "lasts until" changes) and grants version 2 under the same authorization with one touch', async () => {
+    const { w } = await renewWorld();
+    const item = await onlyItem(w);
+    expect(item).toMatchObject({ op: 'change', version: 2, renewal: true });
+    expect(item.diff!.rows.map((r) => r.field)).not.toContain('value_max');
+    const d = new GiveDriver(w.deps);
+    d.open(item);
+    await d.give();
+    expect(['signed', 'not_received']).toContain(d.get().step);
+    const posted = w.as.postedGrants.at(-1)!;
+    expect(posted.op).toBe('change');
+    await verifyGrant({ grant: posted.grant, sig: posted.sig, check: posted.check }, { chain: await w.as.state(), mandateFields: item.members, expect: { ops: ['change'], mandate_id: MID, mandate_version: 2 } });
+    expect((posted.grant as unknown as Record<string, unknown>).authorization_id).toBe(AUTHZ);
+  });
+
+  const changes: Array<[string, (c: Record<string, any>, v1: Record<string, unknown>) => void, string]> = [
+    ['other limits under the name of an extension', (c) => { c.give.bounds = { ...BOUNDS, value_max: 9999 }; c.give.payload.bounds_hash = computeBoundsHash(c.give.bounds as never, SALES); }, 'give_renewal_is_a_change'],
+    ['another intent', (c) => { c.intent = 'Something else.'; c.give.payload.gate_content_hashes = { intent: computeIntentHash('Something else.') }; }, 'give_renewal_is_a_change'],
+    ['an end that is not later', (c, v1) => { c.give.payload.expires_at = v1.expires_at; }, 'give_renewal_is_a_change'],
+    ['another authorization', (c) => { c.give.place.authorization_id = 'authz_00000000-0000-4000-8000-0000000000bb'; }, 'give_place_invalid'],
+    ['other "old" values than were signed', (c) => { c.give.previous.bounds = { ...BOUNDS, value_max: 50 }; }, 'give_previous_mismatch'],
+  ];
+  for (const [name, edit, code] of changes) {
+    it(`refuses ${name} (${code}): no card, nothing to sign`, async () => {
+      const { w } = await renewWorld(edit);
+      expect(await refusedCode(w)).toBe(code);
+    });
+  }
+});

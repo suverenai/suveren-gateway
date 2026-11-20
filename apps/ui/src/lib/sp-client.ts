@@ -1191,14 +1191,26 @@ class SPClient {
   }
 
   /** Sign the change with this computer's check (Touch ID). `sealedDiff` is the diff that was shown: a different change is refused. */
-  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'other' }> {
+  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'no_check_key' | 'other' }> {
     let res: Response;
     try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) }); } catch { return { ok: false, code: 'other' }; }
     if (res.ok) return { ok: true };
     const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
     if (body.grantCode === 'check_failed') return { ok: false, code: 'cancelled' };
+    if (body.grantCode === 'no_check_key') return { ok: false, code: 'no_check_key' };
     const c = body.code;
     return { ok: false, code: c === 'changed_since_proposal' || c === 'no_change' || c === 'not_your_mandate' || c === 'mandate_not_active' ? c : 'other' };
+  }
+
+  /** The same change sent to the phone (DEC-90): this computer has no Touch ID. Then wait with `pollGiveOnPhone`. A refusal throws. */
+  async changeOnPhone(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+    const res = await this.fetch('/api/mandate/change-on-phone', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+    }
+    return body as { mandateId: string; mandateVersion: number; expiresAt: number };
   }
 
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {

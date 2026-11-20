@@ -184,8 +184,9 @@ describe('give on the phone', () => {
     expect(w.mandates.issued).toHaveLength(1);
     expect(decodeMandateBlob(w.mandates.issued[0].blob).payload.mandate_id).toBe(mandateId);
     expect(w.delivered).toHaveLength(1);
-    // asked again: nothing waits under that id any more
-    expect((await w.get(`/api/mandate/give-on-phone/${mandateId}`)).body).toEqual({ state: 'unknown' });
+    // asked again (the page after the background completion, or the reverse): the same answer, and nothing is requested a second time
+    expect((await w.get(`/api/mandate/give-on-phone/${mandateId}`)).body).toEqual({ state: 'done', authorizationId: done.body.authorizationId });
+    expect(w.mandates.issued).toHaveLength(1);
   });
 
   it('a phone grant over other members (a longer expiry) is refused here and the mandate is never requested', async () => {
@@ -305,4 +306,75 @@ describe('give on the phone', () => {
     expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'previous_unknown' });
     expect(w.mandates.bodies).toHaveLength(before);
   });
+
+  it('an extension on the phone (DEC-90): only the end moves, under the same authorization; requested as a renewal once the phone gives it', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const first = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, first.c)).status).toBe(201);
+    const done = await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`);
+    const authz1 = String(done.body.authorizationId);
+    const v1Grant = (w.mandates.rows.at(-1)! as unknown as { grant: Record<string, unknown> }).grant;
+    const groupId = String(first.c.give.place.group_id);
+    w.held.set(authz1, { authorizationId: authz1, profileId: SALES.id, groupId, ownerDid: w.rootDid, bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', expiresAt: v1Grant.expires_at });
+
+    const RENEW = { authorizationId: authz1, profileId: SALES.id, groupId, bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', domain: 'sales', ttlSeconds: 7 * 86400 };
+    const r = await w.post('/api/mandate/renew-on-phone', RENEW);
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ mandateVersion: 2 });
+    const issuedBefore = w.mandates.issued.length;
+    const { c } = await phoneOpens(w, phone);
+    expect(c.give).toMatchObject({ op: 'change', renewal: true });
+    expect(c.give.place.authorization_id).toBe(authz1);
+    expect(c.give.previous).toMatchObject({ mandate_version: 1, expires_at: v1Grant.expires_at });
+    expect(c.give.payload.bounds_hash).toBe(v1Grant.bounds_hash);
+    expect(c.give.payload.expires_at).toBeGreaterThan(v1Grant.expires_at as number);
+    expect(w.mandates.issued.length).toBe(issuedBefore);
+    expect((await phoneSigns(w, phone, c)).status).toBe(201);
+    const fin = await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`);
+    expect(fin.body).toMatchObject({ state: 'done', authorizationId: authz1 });
+    expect(w.mandates.posts.at(-1)!.body).toMatchObject({ authorization_id: authz1, renew: true });
+  });
+
+  it('an extension whose previous version this computer cannot read is not sent to the phone', async () => {
+    const w = await world();
+    await w.addPhone(await makePhone());
+    const r = await w.post('/api/mandate/renew-on-phone', { authorizationId: 'authz_00000000-0000-4000-8000-0000000000aa', profileId: SALES.id, groupId: 'personal', bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', domain: 'sales', ttlSeconds: 3600 });
+    expect(r.status).toBe(422);
+    expect(w.mandates.bodies).toHaveLength(0);
+  });
+
+  it('the Change screen (and Extend) on a computer without Touch ID: the change it showed goes to the phone, a different one is refused', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const first = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, first.c)).status).toBe(201);
+    const authz1 = String((await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`)).body.authorizationId);
+    const v1Grant = (w.mandates.rows.at(-1)! as unknown as { grant: Record<string, unknown> }).grant;
+    w.held.set(authz1, { authorizationId: authz1, profileId: SALES.id, groupId: String(first.c.give.place.group_id), ownerDid: w.rootDid, bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', expiresAt: v1Grant.expires_at, title: 'Quotes' });
+    const changes = { durationHours: 5 };
+    const prev = await w.get(`/api/mandate/change-preview?authorizationId=${authz1}&changes=${encodeURIComponent(JSON.stringify(changes))}`);
+    expect(prev.status, prev.text).toBe(200);
+    // this computer cannot sign it itself
+    const here = await w.post('/api/mandate/change', { authorizationId: authz1, changes, sealedDiff: prev.body.diff });
+    expect(here.body).toMatchObject({ grantCode: 'no_check_key' });
+    // a different change than the one shown is not sent
+    const other = await w.post('/api/mandate/change-on-phone', { authorizationId: authz1, changes: { limits: { value_max: 5 } }, sealedDiff: prev.body.diff });
+    expect([other.status, other.body.code]).toEqual([422, 'changed_since_proposal']);
+    const bodies = w.mandates.bodies.length;
+    const r = await w.post('/api/mandate/change-on-phone', { authorizationId: authz1, changes, sealedDiff: prev.body.diff });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body).toMatchObject({ mandateVersion: 2 });
+    expect(w.mandates.bodies.length).toBe(bodies + 1);
+    const { c } = await phoneOpens(w, phone);
+    expect(c.give.op).toBe('change');
+    expect(c.give.previous).toMatchObject({ mandate_version: 1, expires_at: v1Grant.expires_at });
+    expect((await phoneSigns(w, phone, c)).status).toBe(201);
+    expect((await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`)).body).toMatchObject({ state: 'done' });
+  });
 });
+

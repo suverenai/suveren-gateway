@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, prepareMandate, planMandateChange, changeMandate, giveOnPhone, pollPhoneGive, cancelPhoneGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 
@@ -116,6 +116,22 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     } catch (err) { answerRefusal(res, err); }
   });
 
+  // The same change sent to the phone (DEC-90, a computer without Touch ID; the Extend button lands here too): the diff shown is checked
+  // like /change, then it waits as a give does (GET /give-on-phone/:mandateId).
+  router.post('/change-on-phone', async (req, res) => {
+    try {
+      const d = deps();
+      if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const b = (req.body ?? {}) as { authorizationId?: unknown; changes?: unknown; sealedDiff?: unknown };
+      const changes = parseChanges(b.changes ?? {});
+      const got = await readOld(b.authorizationId);
+      if (!changes || 'bad' in got || !b.sealedDiff || typeof b.sealedDiff !== 'object') { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
+      if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
+      const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
+      res.json({ ok: true, ...(await changeOnPhone({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full)) });
+    } catch (err) { answerRefusal(res, err); }
+  });
+
   // A dry run of the give (chain gateways): exactly what would be granted and what the give would refuse before the touch. No touch, no write.
   router.post('/prepare', async (req, res) => {
     try {
@@ -221,6 +237,15 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if (!d.grants?.active()) { res.status(409).json({ error: 'not_set_up', message: 'Device keys are not set up.', code: 'not_set_up' }); return; }
       d.grants.forgetIdentity((req.body as { did?: unknown } | undefined)?.did);
       res.json({ ok: true });
+    } catch (err) { answerRefusal(res, err); }
+  });
+  // Extend on the phone (DEC-90): a computer without a check key sends the renewal to the phone; the page then waits as for a give.
+  router.post('/renew-on-phone', async (req, res) => {
+    const request = (req.body ?? {}) as RenewRequest;
+    try {
+      const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => request.authorizationId };
+      if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
+      res.json({ ok: true, ...(await renewOnPhone(request, d)) });
     } catch (err) { answerRefusal(res, err); }
   });
   router.post('/renew', async (req, res) => {
