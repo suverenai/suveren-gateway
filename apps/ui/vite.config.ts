@@ -15,6 +15,11 @@ export default defineConfig({
     // so both can run in parallel. CP proxy targets stay at 3402 (dev CP).
     port: 3401,
     proxy: {
+      // Device-key routes of the control plane (signed decisions, recovery, Connect) — missing here meant the page
+      // got index.html for /device-decision/status and fell back to unsigned decisions.
+      '/device-decision': { target: 'http://localhost:3402', changeOrigin: false },
+      '/recover': { target: 'http://localhost:3402', changeOrigin: false },
+      '/connect': { target: 'http://localhost:3402', changeOrigin: false },
       '/api': {
         target: 'http://localhost:3402',
         changeOrigin: false,
