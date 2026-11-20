@@ -40,6 +40,7 @@ export function DeviceKeysCard() {
   }
   return (
     <div className="card">
+      <AddCheckKeySection />
       <TouchUnlockSection />
       {setUp && (
         <>
@@ -98,5 +99,21 @@ function TouchUnlockSection() {
       </div>
       <button className="btn btn-primary" onClick={() => void turnOn()} disabled={busy || !password}>{DRAFT.touchCardButton}</button>
     </>
+  );
+}
+
+/** A computer set up without Touch ID cannot give mandates: offer to turn Touch ID on for approvals (recovery code + email link). */
+function AddCheckKeySection() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    void deviceClient.platformCapabilities().then(r => setShow(r.ok && r.data.available === true && r.data.checkKey === false));
+  }, []);
+  if (!show) return null;
+  return (
+    <div style={{ marginBottom: '1.5rem' }} data-testid="addcheck-section">
+      <h3 className="card-title">{DRAFT.addCheckTitle}</h3>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.addCheckCardBody}</p>
+      <Link className="btn btn-primary" to="/device-check-key" style={{ textDecoration: 'none' }}>{DRAFT.addCheckButton}</Link>
+    </div>
   );
 }

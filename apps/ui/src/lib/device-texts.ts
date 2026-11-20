@@ -170,6 +170,14 @@ export const DRAFT = {
   startUseAccountKey: 'Sign in with an account key instead', // DRAFT
 
   touchSetupSkipped: 'Touch ID was not turned on. You can turn it on later under Settings.', // DRAFT
+  // Turn on Touch ID for approvals on a computer set up without it (a root-signed `set`): recovery code + email link, then two touches.
+  addCheckTitle: 'Turn on Touch ID for approvals', // DRAFT
+  addCheckWhy: 'This computer was set up without Touch ID, so it cannot give mandates or confirm changes. Turn it on with your recovery code and an email link.', // DRAFT
+  addCheckPasswordHint: 'Your unlock password turns on unlocking with Touch ID in the same step.', // DRAFT
+  addCheckButton: 'Turn on Touch ID', // DRAFT
+  addCheckDone: 'Touch ID is on. This computer can now give mandates and confirm changes, and you open the gateway with Touch ID.', // DRAFT
+  addCheckDoneNoUnlock: 'Touch ID is on for approvals. Unlocking with Touch ID did not turn on; you can turn it on below.', // DRAFT
+  addCheckCardBody: 'This computer cannot give mandates yet: it was set up without Touch ID.', // DRAFT
   touchCardTitle: 'Unlock with Touch ID', // DRAFT
   touchCardBody: 'Open this gateway with your fingerprint instead of typing the unlock password. The password still works.', // DRAFT
   touchCardOn: 'Touch ID is on for this gateway.', // DRAFT
@@ -237,6 +245,7 @@ const DRAFT_CODES: Record<string, string> = {
   rotate_expired: 'The new code was not used in time. Make another.',
   new_code_mismatch: 'The new code you typed is not the one shown. Check it and try again.',
   granting_device_required: 'This computer needs Touch ID to replace the recovery code.',
+  check_key_present: 'Touch ID is already on for approvals on this computer.', // DRAFT
   check_unavailable: 'Touch ID is not available on this computer. Nothing changed.',
   not_signed_in: 'This computer is not signed in to your account. Unlock the gateway again.',
   reset_unknown: 'This request no longer exists. Nothing changed.',
