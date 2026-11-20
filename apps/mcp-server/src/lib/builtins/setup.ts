@@ -53,6 +53,17 @@ import { classifyEnumSwitches, type BoundsSchemaLike } from '../read-gate';
 import { newestProfileOf } from '../guidance-runtime';
 
 /**
+ * The fingerprint the person approved: of the arguments as proposed. The committed executor adds `ticket_id` (these tools declare
+ * it, commitments.ts `attachTicketId`) before the handler runs; that field is the gateway's, never part of what was approved, so it is
+ * left out here. Hashing it made the fingerprint differ from the signed approval and refused every AI-proposed mandate on a
+ * gateway with a device chain (control-plane lib/device-approvals.ts).
+ */
+export function approvedFingerprint(args: Record<string, unknown>): string {
+  const { ticket_id: _ticket, ...approved } = args;
+  return computeProposalContentHash(approved);
+}
+
+/**
  * A proposal that leaves out the target profile's read switch (the enum bound of exactly
  * unlimited|none) gets the profile's declared default, so the person sees on the card what
  * the AI did not say. A value the AI did set, `none` included, is never changed.
@@ -642,7 +653,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           const fixed = proposalTargetRefusal(args);
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
           // `approvalHash`: the fingerprint of the approved arguments. A gateway with a device chain runs only for what was approved under it.
-          const r = await controlPlaneMandate(false, { ...mandateRequest(args), approvalHash: computeProposalContentHash(args) });
+          const r = await controlPlaneMandate(false, { ...mandateRequest(args), approvalHash: approvedFingerprint(args) });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           if (r.onPhone) return builtinText(onPhoneText('create', r.onPhone));
           return builtinText(
@@ -662,7 +673,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if ('refusal' in read) return { ...builtinText(`Refused: ${read.refusal}`), isError: true };
           const fixed = proposalTargetRefusal({ profile: read.short });
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
-          const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change }, approvalHash: computeProposalContentHash(args) });
+          const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change }, approvalHash: approvedFingerprint(args) });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           if (r.onPhone) return builtinText(onPhoneText('change', r.onPhone));
           if (r.revokeError && r.oldStoppedLocally) {
