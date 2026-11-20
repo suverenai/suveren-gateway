@@ -9,6 +9,9 @@ import { DeviceScreen, Notice } from './DeviceScreen';
 import { PasswordScreen } from './PasswordScreen';
 import { BrandMark } from '../BrandMark';
 
+/** `/login?account-key`: the ordinary sign-in, without the move to /start (DEC-93's way back to today's sign-in). */
+export const ACCOUNT_KEY_PARAM = 'account-key';
+
 type Step =
   | { step: 'connect'; busy: boolean; error?: string }
   | { step: 'waiting' }
@@ -98,6 +101,8 @@ export function StartPage() {
       <p>{T.connectHow}</p>
       {st.error && <Notice kind="error">{st.error}</Notice>}
       <button className="btn btn-primary btn-full btn-lg" onClick={() => void connect()} disabled={st.busy}>{T.connectButton}</button>
+      {/* The ordinary sign-in stays reachable (a gateway being moved over, or a set-up that was cut short). */}
+      <button className="btn btn-ghost btn-full" onClick={() => navigate(`/login?${ACCOUNT_KEY_PARAM}`, { replace: true })} disabled={st.busy}>{DRAFT.startUseAccountKey}</button>
     </DeviceScreen>
   );
 }
@@ -110,9 +115,11 @@ export function StartPage() {
  */
 export function LoginOrStart({ switchOn, children }: { switchOn: boolean; children: ReactNode }) {
   const navigate = useNavigate();
-  const [decided, setDecided] = useState(!switchOn);
+  // `/login?account-key` (the start page's "Sign in with an account key instead") stays on the ordinary sign-in.
+  const wantsAccountKey = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has(ACCOUNT_KEY_PARAM);
+  const [decided, setDecided] = useState(!switchOn || wantsAccountKey);
   useEffect(() => {
-    if (!switchOn) { setDecided(true); return; }
+    if (!switchOn || wantsAccountKey) { setDecided(true); return; }
     let live = true;
     void deviceClient.startStatus().then(r => {
       if (!live) return;
@@ -120,7 +127,7 @@ export function LoginOrStart({ switchOn, children }: { switchOn: boolean; childr
       else setDecided(true);
     }, () => { if (live) setDecided(true); });
     return () => { live = false; };
-  }, [switchOn, navigate]);
+  }, [switchOn, wantsAccountKey, navigate]);
   return decided ? <>{children}</> : <PageLoading />;
 }
 
