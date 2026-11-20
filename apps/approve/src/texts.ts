@@ -98,7 +98,11 @@ export const P = {
   reviewNotMine: SP.reviewNotMine, // shared (approval-card pairing-texts)
   reviewButton: 'Add this phone to it', // DRAFT
   compareTitle: SP.compareTitle, // shared (approval-card pairing-texts)
-  compareBody: (label: string): string => `Check that ${label} shows the same six digits. Then confirm on ${label}.`, // DRAFT
+  compareBody: (label: string): string => `Check that ${label} shows the same six digits. Then confirm on ${label}.`, // DRAFT (replaced by showTitle/tapThis on the compare screen, DEC-96)
+  showTitle: SP.showOnComputerTitle, // shared (DEC-96)
+  tapThis: SP.tapThisNumber, // shared (DEC-96)
+  otherReady: SP.otherReadyComputer, // shared (DEC-96): the phone admits a computer
+  rotateWhy: SP.rotateWhy, // shared (DEC-96)
   compareWaiting: SP.compareWaiting, // shared (approval-card pairing-texts)
   joinDoneTitle: 'This phone was added', // DRAFT
 

@@ -44,6 +44,7 @@ export function AdmitScreen(p: AdmitScreenProps) {
       return (
         <Screen title={P.admitChooseTitle(st.choice.label)}>
           {st.error && <Notice kind="error">{st.error}</Notice>}
+          <div data-testid="other-ready"><Notice kind="success">{P.otherReady}</Notice></div>
           <p>{P.admitChooseBody}</p>
           <CodeChoices codes={st.choice.codes} onChoose={p.onChoose} />
           <p>{P.admitListTitle}</p>

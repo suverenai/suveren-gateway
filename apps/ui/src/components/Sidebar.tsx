@@ -20,6 +20,8 @@ export interface NavItem {
   label: string;
   statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report' | 'tickets';
   teamOnly?: boolean;
+  /** Only with device keys on (SUVEREN_DEVICE_KEYS): the Devices page exists only there. */
+  deviceKeysOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
   /** The count is information, not an action: the outlined "setup" pill
@@ -40,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/reports', icon: 'reports', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
   { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: 'team', label: 'Team', teamOnly: true, group: 'setup' },
+  { to: '/devices', icon: 'devices', label: 'Devices', deviceKeysOnly: true, group: 'setup' },
   { to: '/agent-brief', icon: 'brief', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
   { to: '/integrations', icon: 'integrations', label: 'Connectors', statusKey: 'integrations', group: 'setup' },
   { to: '/settings', icon: 'settings', label: 'Settings', statusKey: 'assistant', group: 'setup' },
@@ -172,13 +175,13 @@ const TOAST_STYLE: React.CSSProperties = {
 };
 
 export function Sidebar() {
-  const { mode, activeTeam } = useAuth();
+  const { mode, activeTeam, deviceKeysSwitch } = useAuth();
   const other = useOtherNavStatus();
   const { attentionCount } = useIntegrationStatus();
   const counts: Record<string, number> = { ...other };
   if (attentionCount > 0) counts.integrations = attentionCount;
 
-  const visibleItems = NAV_ITEMS.filter(item => !item.teamOnly || mode === 'team');
+  const visibleItems = NAV_ITEMS.filter(item => (!item.teamOnly || mode === 'team') && (!item.deviceKeysOnly || deviceKeysSwitch));
 
   // Mode-flip toast — fires when mode changes after the initial render.
   // Dismissed automatically on next navigation (location change).

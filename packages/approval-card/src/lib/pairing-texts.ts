@@ -34,6 +34,14 @@ export const SP = {
   reviewDevices: 'Devices in this account:', // DRAFT
   reviewNotMine: 'This is not my account', // DRAFT
   compareTitle: 'Check the code', // DRAFT
+  // DEC-96: the side that SHOWS the number says plainly that the next step is on the other device.
+  showOnComputerTitle: 'Now on your computer', // DRAFT
+  showOnPhoneTitle: 'Now on your phone', // DRAFT
+  tapThisNumber: (label: string): string => `On ${label}, tap this number.`, // DRAFT
+  // DEC-96: the side that CHOOSES says the other device is ready.
+  otherReadyPhone: 'Your phone is ready. Tap the number it shows.', // DRAFT
+  otherReadyComputer: 'Your computer is ready. Tap the number it shows.', // DRAFT
+  rotateWhy: 'Replace it if anyone could have seen your screen when you set up.', // DRAFT (DEC-96)
   compareWaiting: (label: string): string => `Waiting for ${label}...`, // DRAFT
   sending: 'Sending to suveren.ai...', // DRAFT
   // Buttons

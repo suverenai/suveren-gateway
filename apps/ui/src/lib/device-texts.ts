@@ -193,7 +193,7 @@ export const DRAFT = {
   recoverPendingClosed: 'Your request for a new identity is closed by this recovery.', // DRAFT
   // Replace the recovery code
   rotateTitle: 'Replace your recovery code', // DRAFT
-  rotateWhy: 'Do this if the old code was seen by someone else or got lost. The old code stops working.', // DRAFT
+  rotateWhy: 'Replace it if anyone could have seen your screen when you set up. The old code stops working.', // DRAFT (DEC-96)
   rotateStart: 'Make a new code', // DRAFT
   rotateNewTitle: 'Your new recovery code', // DRAFT
   rotateOldLabel: 'Old recovery code', // DRAFT
@@ -204,6 +204,7 @@ export const DRAFT = {
   // Pending identity reset (item 99/100), cancelling
   cancelling: 'Cancelling...', // DRAFT
   // Settings entry
+  deviceKeysCardTitle: 'Devices and recovery code', // DRAFT (DEC-96)
   deviceCardTitle: 'Recovery code', // DRAFT
   deviceCardBody: 'This code gets you back in if you lose this computer.', // DRAFT
   // Waiting-state messages (neutral)

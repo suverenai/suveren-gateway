@@ -55,11 +55,12 @@ export function RecoveryCodeBox({ code, testid = 'recovery-code', children }: { 
 }
 
 /** A labelled code in a monospaced line (identity codes, comparison codes). Digits are shown in groups of four. */
-export function CodeBlock({ label, code, testid, grouped = true }: { label?: string; code: string; testid: string; grouped?: boolean }) {
+export function CodeBlock({ label, code, testid, grouped = true, big = false }: { label?: string; code: string; testid: string; grouped?: boolean; big?: boolean }) {
+  // `big`: the number the person has to find on their OTHER device (DEC-96) — large and centred, read from arm's length.
   return (
-    <div style={{ margin: '0.75rem 0' }}>
+    <div style={{ margin: big ? '1.25rem 0' : '0.75rem 0', ...(big ? { textAlign: 'center' as const } : {}) }}>
       {label && <div style={{ color: 'var(--text-secondary)' }}>{label}</div>}
-      <div data-testid={testid} style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '1.25rem', letterSpacing: '0.05em', overflowWrap: 'anywhere' }}>{grouped ? groupCode(code) : code}</div>
+      <div data-testid={testid} style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: big ? '2.75rem' : '1.25rem', fontWeight: big ? 600 : undefined, letterSpacing: big ? '0.12em' : '0.05em', overflowWrap: 'anywhere' }}>{grouped ? groupCode(code) : code}</div>
     </div>
   );
 }

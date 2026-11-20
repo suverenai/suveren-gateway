@@ -118,10 +118,14 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(t).toContain(P.reviewNotMine);
     });
 
-    it('compare shows the six digits and who to compare them with', () => {
+    it('compare (DEC-96): says first that the next step is on the computer, and shows the number large', () => {
       const m = html(<JoinScreen {...joinProps} state={{ step: 'compare', code: '042517', admitterLabel: 'Office Mac' }} />);
       expect(m).toContain('042517');
-      expect(text(m)).toContain(P.compareBody('Office Mac'));
+      expect(text(m)).toContain(P.showTitle);
+      expect(text(m)).toContain(P.tapThis('Office Mac'));
+      // the instruction comes before the number, and the number is the big variant
+      expect(m.indexOf('compare-next')).toBeLessThan(m.indexOf('compare-code'));
+      expect(m).toContain('2.75rem');
     });
 
     it('the failed and done screens', () => {
@@ -134,6 +138,10 @@ describe('the phone screens (both widths use the same markup and the same tokens
       const m = html(<AdmitScreen state={{ step: 'choose', choice }} nowSeconds={NOW} onScanned={noop} onChoose={noop} onCancel={noop} onDone={noop} />);
       expect((m.match(/data-testid="code-choice"/g) ?? []).length).toBe(3);
       expect(text(m)).toContain(P.admitChooseTitle('New Mac'));
+      // DEC-96: the computer is ready — said above the choices, and the first choice takes the focus
+      expect(m).toContain('data-testid="other-ready"');
+      expect(text(m)).toContain(P.otherReady);
+      expect(m.indexOf('other-ready')).toBeLessThan(m.indexOf('code-choices'));
       expect(text(m)).toContain(P.admitChooseBody);
       expect(text(m)).toContain(P.admitNew);
     });
@@ -388,17 +396,19 @@ describe('the phone screens (both widths use the same markup and the same tokens
   describe('replacing the recovery code (DEC-85, mockup D1–D5)', () => {
     const rot = (state: Parameters<typeof RotateScreen>[0]['state']) => html(<RotateScreen state={state} onOld={noop} onNew={noop} onCancel={noop} onCancelTouch={noop} onRetryTouch={noop} onDone={noop} />);
 
-    it('the join\'s done screen offers it, with Later', () => {
-      const t = text(html(<JoinScreen state={{ step: 'done' }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} onRotate={noop} />));
-      expect(t).toContain(P.rotateOfferTitle);
-      expect(t).toContain(P.rotateStart);
-      expect(t).toContain(P.rotateLater);
+    it('DEC-96: the join\'s done screen offers nothing about the recovery code, only Continue', () => {
+      const m = html(<JoinScreen state={{ step: 'done' }} nowSeconds={NOW} onScanned={noop} onReviewConfirm={noop} onName={noop} onCancel={noop} onDone={noop} />);
+      expect(m).not.toContain('rotate-offer');
+      expect(text(m)).not.toContain(P.rotateStart);
+      expect(text(m)).toContain(P.continue);
     });
 
-    it('the devices screen keeps offering it, naming where the code was made', () => {
-      const t = text(html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} rotateOffer="Office Mac" onRotate={noop} />));
-      expect(t).toContain(P.rotateOfferBody('Office Mac'));
-      expect(t).toContain(P.rotateStart);
+    it('DEC-96: the devices screen keeps replacing reachable as a plain section with the one-sentence why', () => {
+      const m = html(<DevicesScreen rows={rows} identityCode={null} nowSeconds={NOW} persistent={null} updated={false} version="0" build="x" onAddComputer={noop} onRefresh={noop} onRotate={noop} />);
+      expect(m).toContain('rotate-section');
+      expect(text(m)).toContain(P.rotateWhy);
+      expect(P.rotateWhy).toBe('Replace it if anyone could have seen your screen when you set up.');
+      expect(text(m)).toContain(P.rotateStart);
     });
 
     it('the old code: scan or type, never shown back', () => {

@@ -39,18 +39,20 @@ export function DeviceKeysCard() {
     );
   }
   return (
-    <div className="card">
-      <TouchUnlockSection />
+    <div className="card" data-testid="device-keys-card">
+      {/* DEC-96: the card is about devices first (it was titled only "Recovery code"); Devices also has its own menu entry. */}
+      <h3 className="card-title">{DRAFT.deviceKeysCardTitle}</h3>
       {setUp && (
         <>
-          <h3 className="card-title" style={{ marginTop: '1.5rem' }}>{DRAFT.deviceCardTitle}</h3>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.deviceCardBody}</p>
-          <Link className="btn btn-secondary" to="/device-recovery-code" style={{ textDecoration: 'none' }}>{DRAFT.rotateTitle}</Link>
-          <h3 className="card-title" style={{ marginTop: '1.5rem' }}>{PT.devicesTitle}</h3>
           <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{PT.devSettingsBody}</p>
           <Link className="btn btn-secondary" to="/devices" style={{ textDecoration: 'none' }}>{PT.devSettingsLink}</Link>
+          <h3 className="card-title" style={{ marginTop: '1.5rem' }}>{DRAFT.deviceCardTitle}</h3>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>{DRAFT.deviceCardBody}</p>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.rotateWhy}</p>
+          <Link className="btn btn-secondary" to="/device-recovery-code" style={{ textDecoration: 'none' }}>{DRAFT.rotateTitle}</Link>
         </>
       )}
+      <div style={{ marginTop: '1.5rem' }}><TouchUnlockSection /></div>
     </div>
   );
 }
