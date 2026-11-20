@@ -5191,3 +5191,46 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .device-choices .btn { font-family: var(--font-mono); font-size: var(--text-lead); padding: var(--space-4) var(--space-2); }
 /* `.device-screen .btn + .btn` (above) puts a gap between stacked buttons; in a row of three it would push buttons two and three down. */
 .device-screen .device-choices .btn + .btn { margin-top: 0; }
+
+/* ── UI review (DEC-88, mockup phone-d3-live.html v6): one look on the gateway page and the phone ── */
+/* Mandate cards: a one-line summary of the numbers under the title. */
+.sum-line { font-size: var(--text-body-sm); color: var(--text-secondary); font-weight: 600; margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* "More below": a fade at the bottom of a scrolling card while there is more; gone at the end. */
+.more-cue {
+  position: sticky; bottom: 0; margin: calc(-1 * var(--space-10)) 0 0; padding: var(--space-10) 0 var(--space-2);
+  text-align: center; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary);
+  background: linear-gradient(to bottom, transparent, var(--bg-elevated) 60%); pointer-events: none;
+}
+/* A warning that carries a destructive step (End a mandate, Remove a device). */
+.warn-box { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--text-primary); border-radius: var(--radius-lg); padding: var(--space-4); margin: 0 0 var(--space-4); }
+.warn-box svg { width: 24px; height: 24px; flex: none; stroke: var(--text-primary); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.warn-box p { margin: 0 0 var(--space-1); }
+.warn-box p:last-child { margin-bottom: 0; }
+/* The safe option above the destructive one, both full width. */
+.btns-stack { display: grid; grid-template-columns: 1fr; gap: var(--space-2); }
+.btns-stack .btn { width: 100%; min-height: 44px; }
+/* Device rows: name and tag on line one, kind and date on line two; a warning on the row it is about. */
+.su-m.su-dev { flex-wrap: wrap; }
+.su-m.su-dev .su-who b { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.su-m.su-dev .su-who b .su-role { margin: 0; }
+/* The name keeps the row's bold line (the detail rule above styles every span in .su-who). */
+.su-m .su-who b > .su-name { font-size: inherit; color: inherit; }
+.su-m.su-dev .su-rm { min-height: 44px; min-width: 72px; }
+.su-warn { flex-basis: 100%; margin: 0 0 0 calc(32px + var(--space-3)); font-size: var(--text-caption); font-weight: 600; color: var(--text-primary); border-left: 3px solid var(--text-primary); padding-left: var(--space-2); }
+.su-top { background: var(--bg-sunken); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
+/* Panel head: Previous and Next carry the same weight (only the decision button is primary); disabled is clearly fainter. */
+.apr-nav .av3-btn.apr-o { background: transparent; color: var(--text-primary); box-shadow: inset 0 0 0 1.5px var(--text-primary); }
+.apr-nav .av3-btn.apr-o:disabled { box-shadow: inset 0 0 0 1px var(--border); color: var(--text-muted); opacity: 0.45; }
+@media (max-width: 430px) { .apr-title .t-rest { display: none; } }
+/* The result: what opens next, while it waits to open. */
+.stamp-next { font-size: var(--text-body-sm); color: var(--text-secondary); margin-top: var(--space-3); }
+/* A result that stays (refused, not known): on top of the card, the card below, one full-width button pinned at the bottom. */
+.res-top { margin-bottom: var(--space-4); }
+.res-top .refusal-result { margin: 0; }
+.res-check { font-size: var(--text-caption); color: var(--text-muted); margin: 0 0 var(--space-2); text-align: center; }
+.av3-btns-stack { display: grid; grid-template-columns: 1fr; gap: var(--space-2); }
+.av3-btns-stack .av3-btn { width: 100%; }
+/* The change card inside the panel: no inner "Waiting for you" bar (the panel already says it). */
+.mc-card.mc-flat { border: 0; background: transparent; }
+.mc-card.mc-flat .mc-in { padding: 0; }
+.av3-spin-inline { display: inline-block; vertical-align: middle; margin-right: var(--space-2); }

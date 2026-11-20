@@ -192,3 +192,23 @@ export function staysLines(diff: MandateDiff, manifests?: ChangeNames): string[]
     return [`${s.label}: ${s.value}`];
   });
 }
+
+/**
+ * The one-line summary under a change's title (UI review, DEC-88): the new values only, in the card's order, from the gateway's
+ * diff (never the AI's words). A changed value shows its new value; a list shows "+ added" and "− removed"; how it runs and
+ * the end date come last. "3,000 EUR · + Switzerland · until 18 Dec 2026". Empty when nothing but the intent changes.
+ */
+export function changeSummaryLine(diff: Pick<MandateDiff, 'rows' | 'mode' | 'lastsUntil'>, manifests: ChangeNames): string {
+  const parts: string[] = [];
+  for (const row of diff.rows) {
+    if (row.added || row.removed) {
+      for (const v of row.added ?? []) parts.push(`+ ${valueName(row, v, manifests)}`);
+      for (const v of row.removed ?? []) parts.push(`− ${valueName(row, v, manifests)}`);
+    } else {
+      parts.push(rowValue(row, row.after));
+    }
+  }
+  if (diff.mode) parts.push(modeWord(diff.mode.after));
+  if (diff.lastsUntil) parts.push(`until ${dateText(diff.lastsUntil.after)}`);
+  return parts.join(' · ');
+}

@@ -8,33 +8,14 @@ import { useState } from 'react';
 import { CodeBlock, DeviceFrame, Notice } from '@suveren/approval-card/components/DeviceFrame';
 import { CodeChoices } from '@suveren/approval-card/components/CodeChoices';
 import { QrCode } from '@suveren/approval-card/components/QrCode';
-import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
+import { DeviceRows } from '@suveren/approval-card/components/DeviceRows';
 import type { DevicesAnswer, PairingDeviceRow } from '../../lib/device-client';
 import type { PairingUiState } from '../../lib/pairing-driver';
 import { PT, pairingErrorText, whenText } from '../../lib/pairing-texts';
 
-/** The list of devices, from a chain this computer verified itself: the Team page's member rows, one per device. Labels are plain text. */
+/** The list of devices, from a chain this computer verified itself: the shared device rows (one implementation with the phone app). */
 export function DeviceList({ rows, nowSeconds }: { rows: PairingDeviceRow[]; nowSeconds: number }) {
-  return (
-    <TileList testid="device-list">
-      {rows.map(r => (
-        <TileRow
-          key={r.keyId}
-          testid="device-row"
-          mark={(r.label.trim()[0] ?? '?').toUpperCase()}
-          name={r.label}
-          detail={[
-            r.kind === 'gateway' ? PT.devKindComputer : PT.devKindPhone,
-            r.canGrant ? PT.devCanConfirm : null,
-            r.adding ? null : PT.devAdded(whenText(r.addedAt, nowSeconds)),
-            r.recent && !r.adding ? PT.devRecent : null,
-          ].filter(Boolean).join(' · ')}
-          tag={r.adding ? PT.addPhoneNew : r.thisDevice ? PT.devThisComputer : undefined}
-          strongTag
-        />
-      ))}
-    </TileList>
-  );
+  return <DeviceRows rows={rows} nowSeconds={nowSeconds} thisDeviceTag={PT.devThisComputer} />;
 }
 
 // ─── The Devices page ──────────────────────────────────────────────────────────

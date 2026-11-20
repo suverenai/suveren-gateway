@@ -48,8 +48,14 @@ describe('screen 4: End a mandate', () => {
   const r = (state: Parameters<typeof EndMandate>[0]['state']) => text(<EndMandate facts={facts} state={state} onEnd={noop} onKeep={noop} />);
   it('confirm', () => {
     const s = r({ phase: 'confirm' });
-    for (const x of [S13.endTitle, 'The mandate for Sales', S13.endAtOnce, S13.endFinal, 'up to 500 EUR', '3 Dec 2026, 14:20', S13.endNoTouch, S13.endButton, S13.endKeep]) expect(s).toContain(x);
+    for (const x of [S13.endTitle, 'The mandate for Sales', S13.endAtOnce, S13.endFinal, 'up to 500 EUR', '3 Dec 2026, 14:20', S13.endNoTouch, S13.endButtonNamed('Sales'), S13.endKeep]) expect(s).toContain(x);
     expect(s).not.toContain('Touch ID to give');
+  });
+  it('UI review (DEC-88): the effect in a warning box, the safe option above, the destructive one in the outline style and naming what ends', () => {
+    const html = renderToStaticMarkup(<EndMandate facts={facts} state={{ phase: 'confirm' }} onEnd={noop} onKeep={noop} />);
+    expect(html).toMatch(/class="warn-box"[^]*Your AI stops using it at once/);
+    expect(html.indexOf('data-testid="end-keep"')).toBeLessThan(html.indexOf('data-testid="end-confirm"'));
+    expect(html).toMatch(/class="btn btn-outline-strong"[^>]*data-testid="end-confirm"[^>]*>End the mandate for Sales</);
   });
   it('busy disables both buttons', () => expect(renderToStaticMarkup(<EndMandate facts={facts} state={{ phase: 'busy' }} onEnd={noop} onKeep={noop} />).match(/disabled/g)?.length).toBe(2));
   it('result and errors', () => {

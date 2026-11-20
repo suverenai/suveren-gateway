@@ -423,6 +423,11 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     handleOutcome(id, outcome === 'done' ? 'done' : 'refused');
   }, [handleDecided, handleOutcome]);
 
+  // What opens after a decided card: named on its result while it waits (UI review, DEC-88; the gateway's rule).
+  const nextProposalOf = (before: string[], id: string) => {
+    const n = afterDecision(before, id).next;
+    return n ? (proposals ?? []).find((p) => p.id === n) ?? null : null;
+  };
   if (chrome.panel) {
     const before = settling ? settling.before : ids;
     const pos = positionOf(before, shownId);
@@ -461,6 +466,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
             onDecided: () => handleDecided(shownId),
             onBusyChange: setBusy,
             onOutcome: (o) => handleOutcome(shownId, o),
+            nextProposal: settling && settling.id === shownId ? nextProposalOf(settling.before, shownId) : null,
             ...(settling?.stay && settling.id === shownId ? {
               dismissLabel: resultDismissLabel(afterDecision(settling.before, shownId).next !== null),
               onDismissResult: () => finishSettling(shownId),

@@ -187,6 +187,11 @@ export function ApprovalPanelHost() {
   const [busy, setBusy] = useState(false);
   const noAuto = useCallback(() => { goLater(); void q.setAutoOpen(false); }, [goLater, q]);
 
+  // What opens after a decided card: named on its result while it waits (UI review, DEC-88).
+  const nextEntryOf = (before: string[], id: string) => {
+    const n = afterDecision(before, id).next;
+    return n ? q.entries.find((e) => e.id === n)?.proposal ?? null : null;
+  };
   const listForCount = settling ? settling.before : q.ids;
   const pos = positionOf(listForCount, settling ? settling.entry.id : showId);
   const total = listForCount.length;
@@ -235,6 +240,7 @@ export function ApprovalPanelHost() {
                     onDecided={handleDecided}
                     onBusyChange={setBusy}
                     onOutcome={handleOutcome}
+                    nextProposal={settling && settling.entry.id === shown.id ? nextEntryOf(settling.before, shown.id) : null}
                     {...(settling?.stay && settling.entry.id === shown.id ? {
                       dismissLabel: resultDismissLabel(afterDecision(settling.before, shown.id).next !== null),
                       onDismissResult: () => finishSettling(shown.id),

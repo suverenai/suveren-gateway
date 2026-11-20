@@ -8,6 +8,7 @@ import { ReviewApprovalCard } from './ActionCard';
 import { ApproverProposalCard } from './ApproverProposalCard';
 import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import type { QueueEntry } from '../lib/approval-queue';
+import type { Proposal } from '../lib/sp-client';
 import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 
@@ -20,9 +21,11 @@ interface Props {
   onOutcome?: (proposalId: string, outcome: ApprovalOutcome) => void;
   dismissLabel?: string;
   onDismissResult?: () => void;
+  /** What opens after this one (named on the result). */
+  nextProposal?: Proposal | null;
 }
 
-export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: Props) {
+export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal }: Props) {
   const { manifests, toolDisplay, titles, userId } = useApprovalQueue();
   const { proposal } = entry;
   // The tool is namespaced `<integrationId>__<tool>`, the only link back to the connector that produced it.
@@ -43,6 +46,7 @@ export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange, onOut
       onOutcome={onOutcome ? (o) => onOutcome(proposal.id, o) : undefined}
       dismissLabel={dismissLabel}
       onDismissResult={onDismissResult}
+      nextProposal={nextProposal}
     />
   ) : (
     <ApproverProposalCard
@@ -59,6 +63,7 @@ export function QueueCard({ entry, onDecided, nextLabelText, onBusyChange, onOut
       onOutcome={onOutcome ? (o) => onOutcome(proposal.id, o) : undefined}
       dismissLabel={dismissLabel}
       onDismissResult={onDismissResult}
+      nextProposal={nextProposal}
     />
   );
 }

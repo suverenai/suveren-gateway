@@ -65,3 +65,25 @@ export interface ApproverLine { userId: string; name: string; state: 'unknown' |
 export function approverLines(approvers: Array<{ userId: string; name: string }>, unconfirmedIds: ReadonlySet<string> | null): ApproverLine[] {
   return approvers.map(a => ({ ...a, state: unconfirmedIds === null ? 'unknown' : unconfirmedIds.has(a.userId) ? 'unconfirmed' : 'confirmed' }));
 }
+
+/**
+ * The one-line summary under a mandate's title (UI review, DEC-88): the numbers the person signs, before the detail blocks —
+ * every shown limit with its unit, every scope value, then how long. "2,000 EUR · 10 · Austria, Germany · 14 days".
+ * Driven by the profile's schema, never by a field name. Empty parts are left out; an empty result means no line.
+ */
+export function giveSummaryLine(input: {
+  limits?: Record<string, string | number> | null;
+  scope?: Record<string, unknown> | null;
+  durationSeconds?: number | null;
+  boundsSchema?: SchemaLike;
+  hidden?: ReadonlySet<string>;
+}): string {
+  const parts: string[] = limitRows(input.limits ?? {}, input.boundsSchema, input.hidden).map(r => r.value);
+  for (const [k, v] of Object.entries(input.scope ?? {})) {
+    if (k === 'profile' || k === 'path') continue;
+    const text = Array.isArray(v) ? v.filter(x => typeof x === 'string' || typeof x === 'number').join(', ') : (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
+    if (text) parts.push(text);
+  }
+  if (input.durationSeconds && input.durationSeconds > 0) parts.push(durationText(input.durationSeconds));
+  return parts.join(' · ');
+}

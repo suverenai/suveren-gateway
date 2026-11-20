@@ -21,3 +21,7 @@ body.ap-blank #root { visibility: hidden; }
    the phone has neither, only the notch and the home bar. The card's buttons stay above the home bar. */
 .ap-panel.apr-panel { left: 0; top: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .ap-panel .av3-foot { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
+
+/* Touch targets (UI review, DEC-88): every control a thumb taps is at least 44 px (tabs, Remove, small buttons, the panel head). */
+.ap-shell .ftab, .ap-shell .btn-sm, .ap-panel .apr-btn, .ap-panel .apr-ico { min-height: 44px; min-width: 44px; }
+.ap-shell .btn, .ap-shell .av3-btn { min-height: 48px; }

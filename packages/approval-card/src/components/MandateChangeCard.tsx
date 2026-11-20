@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import type { ChangeRow, ChangeTag, MandateDiff, WordPart } from '@hap/core/mandate-change';
 import { hostData } from '../host';
 import {
-  dateText, gatewayFacts, lastsUntilMeaning, modeMeaning, modeWord, rowLabel, rowMeaning, rowValue, staysLines, tagClass, valueName, waitingWarning,
+  changeSummaryLine, dateText, gatewayFacts, lastsUntilMeaning, modeMeaning, modeWord, rowLabel, rowMeaning, rowValue, staysLines, tagClass, valueName, waitingWarning,
   type ChangeArgs, type ChangeFacts,
 } from '../lib/mandate-change-view';
 import { useSourceManifests } from '../lib/source-manifests';
@@ -135,11 +135,14 @@ export function MandateChangeBody({ proposalId, args, areaTitle, onChangeMyself,
   // Before the local read answers, say nothing: it must not flash the unknown-waiting sentence.
   const warning = factsReady ? waitingWarning(facts ? facts.waiting : null) : null;
   const stays = staysLines(diff, manifests);
+  const summary = changeSummaryLine(diff, manifests);
   return (
-    <div className="mc-card" data-testid="mandate-change-card" style={{ order: 6 }}>
-      <div className="mc-head" data-testid="change-kicker">Waiting for you · Change to a mandate</div>
+    // No inner black "Waiting for you" bar: the panel already says it (UI review, DEC-88). The kind is the card's quiet type line.
+    <div className="mc-card mc-flat" data-testid="mandate-change-card" style={{ order: 6 }}>
       <div className="mc-in">
+        <div className="av3-type" data-testid="change-type"><span className="av3-mtag">Change to a mandate</span><span className="av3-area">{areaTitle}</span></div>
         <h2 data-testid="change-title">{args.mandate_title ?? areaTitle}</h2>
+        {summary && <p className="sum-line" data-testid="mandate-summary">{summary}</p>}
         <p className="mc-sub">Your AI proposes this through your Setup mandate.</p>
         <MandateChangeDiff diff={diff} intentByAi />
         {(factLines.length > 0 || diff.versionMove) && (

@@ -6,8 +6,16 @@
  *
  * `compact`: one row (the gateway below 1100px, and the phone always) with ‹ › icons, a ⋮ menu for
  * the setting and ✕ for Later. Otherwise the wide row with words.
+ *
+ * Previous and Next carry the same weight (`apr-o`, both outline): only the card's decision button is primary (UI review, DEC-88).
  */
 import { useState } from 'react';
+
+/**
+ * "Waiting for you", shortened to "Waiting" on a narrow screen (CSS hides " for you" below 430px) so the title is never cut
+ * (UI review, DEC-88). The text in the page stays "Waiting for you".
+ */
+const Title = () => (<>Waiting<span className="t-rest"> for you</span></>);
 
 const Chevron = ({ dir }: { dir: 'left' | 'right' }) => (
   <svg className="apr-i" viewBox="0 0 16 16" aria-hidden="true"><path d={dir === 'left' ? 'M10 3 5 8l5 5' : 'm6 3 5 5-5 5'} /></svg>
@@ -43,12 +51,12 @@ export function ApprovalPanelHead({ compact, position, total, prevId: prev, next
   if (compact) {
     return (
       <header className="apr-head is-compact">
-        <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
+        <h2 className="apr-title" tabIndex={-1} data-apr-focus><Title /></h2>
         {many ? (
           <nav className="apr-nav" aria-label="Move between approvals">
-            <button type="button" className="av3-btn apr-ico" aria-label="Previous approval" disabled={!prevId} onClick={() => prevId && onMove(prevId)} data-testid="approval-prev"><Chevron dir="left" /></button>
+            <button type="button" className="av3-btn apr-o apr-ico" aria-label="Previous approval" disabled={!prevId} onClick={() => prevId && onMove(prevId)} data-testid="approval-prev"><Chevron dir="left" /></button>
             <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos}</span>
-            <button type="button" className="av3-btn av3-btn-primary apr-ico" aria-label="Next approval" disabled={!nextId} onClick={() => nextId && onMove(nextId)} data-testid="approval-next"><Chevron dir="right" /></button>
+            <button type="button" className="av3-btn apr-o apr-ico" aria-label="Next approval" disabled={!nextId} onClick={() => nextId && onMove(nextId)} data-testid="approval-next"><Chevron dir="right" /></button>
           </nav>
         ) : <span className="apr-nav-ph" />}
         <div className="apr-acts">
@@ -80,14 +88,14 @@ export function ApprovalPanelHead({ compact, position, total, prevId: prev, next
 
   return (
     <header className="apr-head">
-      <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
+      <h2 className="apr-title" tabIndex={-1} data-apr-focus><Title /></h2>
       {many ? (
         <nav className="apr-nav" aria-label="Move between approvals">
-          <button type="button" className="av3-btn" disabled={!prevId} onClick={() => prevId && onMove(prevId)} data-testid="approval-prev">
+          <button type="button" className="av3-btn apr-o" disabled={!prevId} onClick={() => prevId && onMove(prevId)} data-testid="approval-prev">
             <Chevron dir="left" /> Previous
           </button>
           <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos}</span>
-          <button type="button" className="av3-btn av3-btn-primary" disabled={!nextId} onClick={() => nextId && onMove(nextId)} data-testid="approval-next">
+          <button type="button" className="av3-btn apr-o" disabled={!nextId} onClick={() => nextId && onMove(nextId)} data-testid="approval-next">
             Next <Chevron dir="right" />
           </button>
         </nav>

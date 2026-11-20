@@ -13,21 +13,28 @@ export function TileList({ title, children, testid }: { title?: string; children
   );
 }
 
-export function TileRow({ mark, name, detail, tag, strongTag, testid, action }: {
+export function TileRow({ mark, name, detail, tag, strongTag, testid, action, tagInName, warn, className }: {
   /** One or two letters in the round mark. */
   mark: string; name: string; detail?: ReactNode; tag?: string; strongTag?: boolean; testid?: string;
   /** A small button at the end of the row (the phone's "Remove", as the Team page's member actions). */
   action?: ReactNode;
+  /** The tag sits on the name's line, so the row is two lines (UI review, DEC-88: the device list). */
+  tagInName?: boolean;
+  /** One line under the row, about this row only (a device added recently). */
+  warn?: string;
+  className?: string;
 }) {
+  const tagEl = tag ? <span className={`su-role${strongTag ? ' is-admin' : ''}`}>{tag}</span> : null;
   return (
-    <div className="su-m" data-testid={testid}>
+    <div className={`su-m${className ? ` ${className}` : ''}`} data-testid={testid}>
       <span className="su-av">{mark}</span>
       <div className="su-who">
-        <b>{name}</b>
+        <b><span className="su-name" data-testid="row-name">{name}</span>{tagInName && tagEl ? <> {tagEl}</> : null}</b>
         {detail !== undefined && <span>{detail}</span>}
       </div>
-      {tag && <span className={`su-role${strongTag ? ' is-admin' : ''}`}>{tag}</span>}
+      {!tagInName && tagEl}
       {action}
+      {warn && <p className="su-warn" data-testid="row-warn">{warn}</p>}
     </div>
   );
 }

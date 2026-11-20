@@ -23,7 +23,8 @@ import { ApprovalBody } from './ApprovalBody';
 import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
-import { RefusalResult } from './RefusalResult';
+import { RefusedTop, ResultFoot, StampNext, UnknownTop } from './ApprovalResult';
+import { ApprovalSummary } from './ApprovalSummary';
 import {
   OUTCOME_POLL_MS, OUTCOME_WAIT_MS, OUTCOME_WAITING_LINE, OUTCOME_UNKNOWN_LINE, MANDATE_ENDED_DETAIL,
   decisionAwaitsOutcome, decisionErrorWords, mandateEndedHead, outcomeOfProposal, type ApprovalOutcome,
@@ -33,6 +34,7 @@ import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResu
 
 const CREATE_MANDATE_TOOL = 'setup__create_mandate';
 const CHANGE_MANDATE_TOOL = 'setup__change_mandate';
+
 
 export interface DecideArgs {
   kind: DecisionKind;
@@ -77,6 +79,8 @@ interface Props {
   /** The action under a result that stays on screen ("Next" / "Close"); with `onDismissResult` it is offered. */
   dismissLabel?: string;
   onDismissResult?: () => void;
+  /** What opens after this one: named on the result while it waits to open ("Next: …", UI review DEC-88). */
+  nextProposal?: Proposal | null;
   className?: string;
 }
 
@@ -88,7 +92,7 @@ type Phase =
 
 export function ApprovalCard({
   proposal, currentUserId, manifests, toolDisplay, proposalLinks, mandateTitle, nameOf, topExtras,
-  canApprove = true, canAskChanges = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, className,
+  canApprove = true, canAskChanges = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal, className,
 }: Props) {
   const isChange = proposal.tool === CHANGE_MANDATE_TOOL;
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL || isChange;
@@ -213,15 +217,44 @@ export function ApprovalCard({
   useEffect(() => { onOutcome?.(outcome); }, [outcome]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const busy = phase.t === 'working' || phase.t === 'done';
+  // A result that stays (refused, or not known) is not a stamp over the card: it sits on top of the card, the card below it,
+  // and one full-width button is pinned at the bottom (UI review, DEC-88).
+  const staysOnCard = phase.t === 'done' && (outcome === 'refused' || outcome === 'unknown');
+  const [checking, setChecking] = useState(false);
+  const checkAgain = () => {
+    if (checking) return;
+    setChecking(true);
+    hostData().getProposal(proposal.id)
+      .then((p) => {
+        const o = outcomeOfProposal(p);
+        if (o === 'refused') setRefusedAfter(p);
+        else if (o === 'done') setSettled(true);
+      })
+      .catch(() => { /* still not known: the card says so */ })
+      .finally(() => { setChecking(false); setCheckedOnce(true); });
+  };
+  const [checkedOnce, setCheckedOnce] = useState(false);
+  // More below: a fade at the bottom of a mandate card while there is more to read; gone at the end (UI review, DEC-88).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !isMandate || busy) { setMoreBelow(false); return; }
+    const update = () => setMoreBelow(el.scrollTop + el.clientHeight < el.scrollHeight - 8);
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => { el.removeEventListener('scroll', update); ro?.disconnect(); };
+  }, [isMandate, busy]);
   useEffect(() => {
     onBusyChange?.(busy);
     return () => { if (busy) onBusyChange?.(false); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
   const showButtons = !alreadyDecided && !busy && decisionButtonsVisible({ loading: contentLoading, readable: contentReadable });
-  const dismiss = onDismissResult && dismissLabel ? (
-    <button type="button" className="av3-btn av3-btn-primary av3-result-act" data-testid="result-dismiss" onClick={onDismissResult}>{dismissLabel}</button>
-  ) : null;
+  const dismiss = onDismissResult && dismissLabel ? { label: dismissLabel, onDismiss: onDismissResult } : null;
   // A chain account gives a mandate with its device touch (DEC-80): same words as the review step, shared text module.
   const giveWording = (approvalHost().useGiveWording ?? (() => false))();
   const approveWord = giveWording
@@ -231,14 +264,16 @@ export function ApprovalCard({
 
   return (
     <div
-      className={`card av3-card${busy ? ' av3-busy' : ''}${className ? ` ${className}` : ''}`}
+      className={`card av3-card${busy && !staysOnCard ? ' av3-busy' : ''}${className ? ` ${className}` : ''}`}
       data-testid="approval-card"
       data-proposal-id={proposal.id}
       data-phase={phase.t}
     >
-      <div className="av3-scroll">
-        <article ref={bodyRef} className="av3-body" aria-hidden={busy || undefined}>
+      <div className="av3-scroll" ref={scrollRef}>
+        <article ref={bodyRef} className="av3-body" aria-hidden={(busy && !staysOnCard) || undefined}>
           {nextLabelText && <div className="av3-next" role="status" style={{ order: -1 }}>{nextLabelText}</div>}
+          {phase.t === 'done' && refusedAfter && <RefusedTop proposal={refusedAfter} manifests={manifests} />}
+          {outcome === 'unknown' && phase.t === 'done' && <UnknownTop word={stampWord(phase.kind, isMandate)} line={OUTCOME_UNKNOWN_LINE} />}
           <ApprovalBody
             proposal={proposal}
             currentUserId={currentUserId}
@@ -252,6 +287,7 @@ export function ApprovalCard({
             onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
           />
         </article>
+        {moreBelow && <div className="more-cue" aria-hidden="true" data-testid="more-cue">More below ↓</div>}
       </div>
 
       {/* The warning stays for assistive technology only: an AI that controls a
@@ -316,12 +352,7 @@ export function ApprovalCard({
           {workingWord(phase.kind, isMandate)}…
         </div>
       )}
-      {phase.t === 'done' && refusedAfter && (
-        <div className="av3-stamp av3-stamp-refused" data-testid="decision-refused">
-          <RefusalResult proposal={refusedAfter} manifests={manifests} />
-          {dismiss}
-        </div>
-      )}
+      {phase.t === 'done' && refusedAfter && <ResultFoot dismiss={dismiss} />}
       {outcome === 'waiting' && phase.t === 'done' && (
         <div className="av3-stamp" role="status" data-testid="decision-waiting">
           <span className="av3-spin" aria-hidden="true" />
@@ -329,18 +360,13 @@ export function ApprovalCard({
           <div className="av3-stamp-t">{OUTCOME_WAITING_LINE}</div>
         </div>
       )}
-      {outcome === 'unknown' && phase.t === 'done' && (
-        <div className="av3-stamp" role="status" data-testid="decision-unknown">
-          <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>
-          <div className="av3-stamp-t av3-stamp-note">{OUTCOME_UNKNOWN_LINE}</div>
-          {dismiss}
-        </div>
-      )}
+      {outcome === 'unknown' && phase.t === 'done' && <ResultFoot check={{ busy: checking, checkedOnce, onCheck: checkAgain }} dismiss={dismiss} />}
       {outcome === 'done' && phase.t === 'done' && (
         <div className="av3-stamp" role="status" data-testid="decision-stamp">
           <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
           <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>
           <div className="av3-stamp-t">{stampLine(phase.kind, phase.result)}</div>
+          {nextProposal && <StampNext><ApprovalSummary proposal={nextProposal} manifests={manifests} /></StampNext>}
         </div>
       )}
     </div>
