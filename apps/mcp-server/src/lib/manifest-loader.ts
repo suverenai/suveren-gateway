@@ -2001,13 +2001,15 @@ export function loadManifests(integrationsDir?: string): number {
 }
 
 /** The directory loadManifests() reads: the argument, else SUVEREN_MANIFESTS_DIR, else the gateway's own. */
-function manifestDir(integrationsDir?: string): string {
-  // Default: ../../../../content/integrations relative to this file (src/lib/ → apps/mcp-server → suveren-gateway/content/integrations)
-  return resolve(
-    integrationsDir ??
-    process.env.SUVEREN_MANIFESTS_DIR ??
-    join(import.meta.dirname ?? __dirname, '..', '..', '..', '..', 'content', 'integrations'),
-  );
+export function manifestDir(integrationsDir?: string, here: string = import.meta.dirname ?? __dirname): string {
+  if (integrationsDir) return resolve(integrationsDir);
+  if (process.env.SUVEREN_MANIFESTS_DIR) return resolve(process.env.SUVEREN_MANIFESTS_DIR);
+  // The gateway's own content/integrations. From the source this file is apps/mcp-server/src/lib (four levels up); the built
+  // server is bundled into apps/mcp-server/dist (three levels up). The released package sets SUVEREN_MANIFESTS_DIR itself
+  // (bundle/server.js); a gateway run from a checkout's build had no manifests at all without this second place.
+  const fromSource = join(here, '..', '..', '..', '..', 'content', 'integrations');
+  const fromDist = join(here, '..', '..', '..', 'content', 'integrations');
+  return resolve(existsSync(join(fromSource, 'index.json')) || !existsSync(join(fromDist, 'index.json')) ? fromSource : fromDist);
 }
 
 /**
