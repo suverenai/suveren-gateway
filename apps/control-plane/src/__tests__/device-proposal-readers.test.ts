@@ -109,6 +109,8 @@ class FakeAs {
   /** What `GET /api/proposals?...` returns, and what was posted. */
   proposals: Array<Record<string, unknown>> = [];
   posted: Array<{ path: string; body: { device_keys: Record<string, { ct: string; enc: string }> } }> = [];
+  /** The list query under which `proposals` are served; every other list answers empty. */
+  listedUnder = 'creator=me';
   down = false;
   serve(p: Person, entries: unknown[] = p.entries) { this.chains.set(p.root.did, entries); }
   readonly client = {
@@ -122,7 +124,7 @@ class FakeAs {
         const last = entries[entries.length - 1] as ChainEntry;
         return { status: 200, body: { entries, head: { seq: last.seq, hash: await entryHash(last) } } };
       }
-      if (method === 'GET' && path.startsWith('/api/proposals?')) return { status: 200, body: { proposals: path.includes('creator=me') ? this.proposals : [] } };
+      if (method === 'GET' && path.startsWith('/api/proposals?')) return { status: 200, body: { proposals: path.includes(this.listedUnder) ? this.proposals : [] } };
       if (method === 'POST' && /^\/api\/proposals\/[^/]+\/wraps$/.test(path)) {
         this.posted.push({ path, body: opts.body as never });
         return { status: 201, body: { added: Object.keys((opts.body as { device_keys: object }).device_keys), existing: [] } };
@@ -410,6 +412,27 @@ describe('device keys step 8: re-wrap for a device added later', () => {
     // The same wrap again would be a replacement: not asked for.
     expect(await rewrap.run()).toMatchObject({ checked: 0, rewrapped: 0, failed: 0 });
     expect(as.posted).toHaveLength(1);
+  });
+
+  it('finds the owner\'s own proposal that only the readable list carries (no created_by, no pending domain)', async () => {
+    const as = new FakeAs();
+    const me = await newPerson();
+    const appr = await newPerson();
+    as.serve(me); as.serve(appr);
+    const g = await boot(me, me.devs[0], as);
+    const { content } = await encryptProposalContent(ARGS, [], deps(g), { ownerDid: me.root.did, deciders: [appr.root.did] }, CONTEXT);
+    const own = me.devs[0].record.key_id;
+    // review_above_cap with another approver, filed by the MCP path: in none of the creator, approver or domain lists.
+    as.listedUnder = 'readable=me';
+    as.proposals = [{ id: 'p-own', status: 'pending', content: { ...content, device_keys: { [own]: content.device_keys![own] } } }];
+    const later = await addDevice(me);
+    as.serve(me);
+    g.store.advance(await headOf(me));
+
+    const res = await new ProposalRewrap({ vault: g.vault, client: as.client, readers: g.readers }).run();
+    expect(res).toMatchObject({ checked: 1, rewrapped: 1, failed: 0 });
+    expect(as.posted.map((x) => x.path)).toEqual(['/api/proposals/p-own/wraps']);
+    expect(Object.keys(as.posted[0].body.device_keys)).toEqual([later.record.key_id]);
   });
 
   it('does nothing without another device, on a locked gateway, or for a proposal this device holds no wrap of', async () => {
