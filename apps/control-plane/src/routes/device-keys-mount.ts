@@ -47,6 +47,8 @@ import { TeamJoin } from '../lib/team-join';
 import { TeamListChanges } from '../lib/team-changes';
 import { DevicePairing } from '../lib/device-pairing';
 import { createDevicePairingRouter } from './device-pairing';
+import { DashboardPasskeys } from '../lib/dashboard-passkeys';
+import { createDashboardPasskeyRouter } from './dashboard-passkeys';
 
 export function deviceKeysEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.SUVEREN_DEVICE_KEYS === 'on';
@@ -235,6 +237,11 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
     app.use('/auth', json, createDeviceSetupRouter({ vault: o.vault, pageSession: o.pageSession, setup: device.setup, signin: device.signin, alarm: device.alarm, recovery: device.recovery }));
     app.use('/auth', json, createDeviceRecoveryRouter({ vault: o.vault, pageSession: o.pageSession, recovery: device.recovery }));
     app.use('/auth', json, createDevicePairingRouter({ vault: o.vault, pageSession: o.pageSession, pairing: device.pairing }));
+    // A passkey for the suveren.ai dashboard, approved with this computer's key and its check (AS step 17, the device side).
+    app.use('/auth', json, createDashboardPasskeyRouter({
+      vault: o.vault, pageSession: o.pageSession,
+      passkeys: new DashboardPasskeys({ grants: device.grants, vault: o.vault, ...(checks && o.platform ? { checks, checkStore: o.platform.checkStore } : {}), now: o.device?.now }),
+    }));
     // A change to a connector login confirmed on the person's phone (plan 7 phone path): only where this computer has no check key.
     app.use('/auth', json, createConfirmPhoneRouter({
       vault: o.vault, pageSession: o.pageSession,

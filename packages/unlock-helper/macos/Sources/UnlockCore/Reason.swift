@@ -17,6 +17,7 @@ import CryptoKit
 ///     (plan section 7; `name` is added so the prompt can say which login)
 ///   - a Touch ID unlock switch: exactly typ "suveren-platform-unlock", v, action ("enable" | "disable"),
 ///     nonce, issued_at
+///   - a dashboard passkey approval: exactly typ "suveren-passkey-register" and its nine other members (no free text)
 ///   - the cancel of a request for a new identity: exactly typ "suveren-identity-cancel", v, aud, root_did,
 ///     key_id, request_id, chain_seq, chain_head, issued_at (hap-core 0.15.0, plan 6.2)
 ///   - a team anchor (`typ` "suveren-team-anchor", hap-core 0.16.0, DEC-73): "I trust this admin for this team"
@@ -44,6 +45,7 @@ public enum ReasonText {
     public static let clearCheck = "remove the check key of a device"
     public static let rotateRoot = "replace the recovery code"
     public static let cancelIdentityReset = "cancel the request for a new identity"
+    public static let registerDashboardPasskey = "add a passkey for your Suveren dashboard"
     public static let trustAdmin = "trust the admin of the team you asked to join"
     public static let clearAnchor = "stop trusting the admin of a team"
     /// The first four groups of the code tell two members of the same name apart; the whole code does not fit next to a 64-character name.
@@ -60,6 +62,8 @@ public enum ReasonText {
     static let unlockSwitchMembers: Set<String> = ["typ", "v", "action", "nonce", "issued_at"]
     static let grantFixedMembers: Set<String> = ["typ", "v", "op", "owner_did", "key_id", "chain_seq", "chain_head", "mandate_id", "mandate_version", "granted_at", "nonce"]
     static let identityCancelMembers: Set<String> = ["typ", "v", "aud", "root_did", "key_id", "request_id", "chain_seq", "chain_head", "issued_at"]
+    /// A dashboard passkey approval (`suveren-passkey-register`, AS step 17): exactly these members, no free text.
+    static let passkeyRegisterMembers: Set<String> = ["typ", "v", "root_did", "key_id", "chain_seq", "chain_head", "request_id", "cred_id", "rp_id", "issued_at"]
 
     static let anchorMembers: Set<String> = ["typ", "v", "member_did", "team_id", "admin_did", "version", "prev", "key_id", "chain_seq", "chain_head", "created_at", "nonce"]
     static let memberListMembers: Set<String> = ["typ", "v", "team_id", "version", "prev", "admin_did", "members", "handover", "key_id", "chain_seq", "chain_head", "created_at", "nonce"]
@@ -89,6 +93,9 @@ public enum ReasonText {
         }
         if o["typ"] as? String == "suveren-identity-cancel", Set(o.keys) == identityCancelMembers {
             return cancelIdentityReset
+        }
+        if o["typ"] as? String == "suveren-passkey-register", Set(o.keys) == passkeyRegisterMembers {
+            return registerDashboardPasskey
         }
         if o["typ"] as? String == "suveren-team-anchor", Set(o.keys) == anchorMembers {
             return o["admin_did"] is NSNull ? clearAnchor : trustAdmin

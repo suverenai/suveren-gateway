@@ -15,6 +15,7 @@ import { TopNav } from '../TopNav';
 import { UpdateBanner } from '../UpdateBanner';
 import { useDriver } from './DeviceScreen';
 import { AddComputerScreen, AddPhoneScreen, DevicesScreen } from './PairingScreens';
+import { DashboardPasskeyRow, DashboardPasskeyScreen, useDashboardPasskeys } from './DashboardPasskeyHost';
 
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
@@ -44,10 +45,21 @@ export function DevicesPage({ client = deviceClient }: { client?: DeviceClient }
     if (r.ok) { setDevices(r.data); setError(undefined); } else { setDevices(null); setError(pairingErrorText(r.code) === textForCode(undefined) ? textForCode(r.code) : pairingErrorText(r.code)); }
   }, [client]);
   useEffect(() => { if (deviceKeysSwitch) void load(); }, [deviceKeysSwitch, load]);
+  // A passkey for the dashboard that waits for one of this person's devices (AS step 17): a row here, the shared card full screen.
+  const passkeys = useDashboardPasskeys(client);
+  const [passkeyOpen, setPasskeyOpen] = useState(false);
   if (!deviceKeysSwitch) return <Navigate to="/" replace />;
+  if (passkeyOpen && passkeys.answer && passkeys.answer.pending.length > 0) {
+    return <DashboardPasskeyScreen answer={passkeys.answer} client={client} onDone={() => { setPasskeyOpen(false); void passkeys.reload(); }} />;
+  }
   return (
-    <DevicesScreen devices={devices} nowSeconds={nowSeconds()} error={error}
-      onAddPhone={() => navigate('/devices/add-phone')} onRefresh={() => void load()} onBack={() => navigate('/settings')} />
+    <>
+      <div style={{ maxWidth: '28rem', margin: '1rem auto 0', padding: '0 1rem' }}>
+        <DashboardPasskeyRow count={passkeys.answer?.pending.length ?? 0} onOpen={() => setPasskeyOpen(true)} />
+      </div>
+      <DevicesScreen devices={devices} nowSeconds={nowSeconds()} error={error}
+        onAddPhone={() => navigate('/devices/add-phone')} onRefresh={() => { void load(); void passkeys.reload(); }} onBack={() => navigate('/settings')} />
+    </>
   );
 }
 

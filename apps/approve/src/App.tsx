@@ -46,6 +46,8 @@ import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
 import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
 import { requestFromHash, type PushState } from './lib/push';
+import { readPendingPasskeys, approvePasskey, type PendingPasskey } from './lib/passkey-approve';
+import { DashboardPasskeyCard, PASSKEY_TEXT, passkeyRefusalText, type PasskeyCardView } from '@suveren/approval-card/components/DashboardPasskeyCard';
 
 /** How often an open list is read again (a timer; it never counts as use of the session). */
 const REFRESH_MS = 30_000;
@@ -621,6 +623,20 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
   const [push, setPush] = useState<{ state: PushState; busy: boolean; error?: string } | null>(null);
 
   useEffect(() => { void rt.push.state().then((state) => setPush({ state, busy: false })); }, [rt]);
+  // A passkey for the suveren.ai dashboard that waits for one of this person's devices (AS step 17): a row, then the shared card.
+  const [passkeys, setPasskeys] = useState<PendingPasskey[]>([]);
+  const [passkeyOpen, setPasskeyOpen] = useState(false);
+  const [passkeyView, setPasskeyView] = useState<PasskeyCardView>({ s: 'offered' });
+  const passkeyGen = useRef(0);
+  const readPasskeys = useCallback(async () => { setPasskeys(await readPendingPasskeys({ api: rt.api, session: rt.session, now: rt.now })); }, [rt]);
+  useEffect(() => { void readPasskeys(); }, [readPasskeys]);
+  const approveOne = useCallback(async (item: PendingPasskey) => {
+    const g = ++passkeyGen.current;
+    setPasskeyView({ s: 'touch' });
+    const code = await approvePasskey({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }, item);
+    if (g !== passkeyGen.current) return;
+    setPasskeyView(code === null ? { s: 'added' } : { s: 'offered', error: passkeyRefusalText(code) });
+  }, [rt]);
 
   const changePush = useCallback(async (on: boolean) => {
     const bearer = rt.session.bearer();
@@ -690,7 +706,25 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
       />
     );
   }
+  if (passkeyOpen && passkeys[0]) {
+    const item = passkeys[0];
+    return (
+      <DashboardPasskeyCard
+        request={{ code: item.code, email: item.email, credentialAt: item.credentialAt, expiresAt: item.expiresAt }}
+        view={passkeyView} canApprove
+        onApprove={() => void approveOne(item)}
+        onCancel={() => { passkeyGen.current++; setPasskeyView({ s: 'offered' }); }}
+        onClose={() => { setPasskeyOpen(false); setPasskeyView({ s: 'offered' }); void readPasskeys(); }} />
+    );
+  }
   return (
+    <>
+    {passkeys.length > 0 && (
+      <div className="alert alert-info" role="status" data-testid="passkey-waiting-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'space-between', margin: '0.75rem' }}>
+        <span>{PASSKEY_TEXT.waitingRow}</span>
+        <button type="button" className="btn btn-primary" style={{ minHeight: 44 }} onClick={() => setPasskeyOpen(true)} data-testid="passkey-open">{PASSKEY_TEXT.open}</button>
+      </div>
+    )}
     <DevicesScreen
       rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
       version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
@@ -698,6 +732,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
       rotateOffer={offer} onRotate={() => rotator.start()}
       push={push ? { ...push, onOn: () => void changePush(true), onOff: () => void changePush(false) } : undefined}
     />
+    </>
   );
 }
 
