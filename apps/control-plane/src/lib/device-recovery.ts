@@ -692,9 +692,17 @@ export class DeviceRecovery {
         keyId: stored.keyId, label: stored.label, checkKey: made, handoff: null, confirmCode: confirmCodeOf(hash), expiresAt: 0,
       };
       this.requireUnlocked();
-      const handed = await this.stage(f, input.port, input.sessionId);
-      this.requireUnlocked();
-      this.persist(f);
+      let handed;
+      try {
+        handed = await this.stage(f, input.port, input.sessionId);
+        this.requireUnlocked();
+        this.persist(f);
+      } catch (err) {
+        // L3: the new key exists only as this blob (the helper keeps no copy). A key whose entry was never staged is
+        // dropped here, and nothing of it is kept in the vault: a later attempt makes a new one.
+        delete f.checkKey;
+        throw err;
+      }
       this.flow = f;
       return { recoveryId: f.id, ...handed };
     } finally {

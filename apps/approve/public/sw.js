@@ -49,12 +49,16 @@ self.addEventListener('fetch', (event) => {
 // The Authority Server sends `{ "ids": [<request id>, ...] }`, encrypted to this phone; the browser decrypts it. The
 // text shown is fixed and generic: no name, no amount, no "Approve" action (F14). Tapping opens the app at the request
 // (one id) or at the list. Each id is recorded so the app can count requests that came without a notice.
-// The words are a copy of texts.ts (`pushTitle`, `pushOne`, `pushMany`); texts.test.ts fails when they drift.
+// The words are a copy of texts.ts (`pushTitle`, `pushOne`, `pushMany`, `pushDevicesChanged`, `pushRecoveryStarted`,
+// `pushIdentityReset`); texts.test.ts fails when they drift.
 // BEGIN PUSH TEXTS
 const PUSH_TEXT = {
   title: 'Suveren',
   one: 'A request is waiting for you.',
   many: '{n} requests are waiting for you.',
+  devicesChanged: 'Your devices changed. Open Suveren to see what changed.',
+  recoveryStarted: 'Someone started a change with your recovery code. If this was not you, open Suveren now.',
+  identityReset: 'Someone asked for a new identity for your account. If this was not you, open Suveren now.',
 };
 // END PUSH TEXTS
 const SEEN_KEY = 'push:seen';
@@ -92,7 +96,27 @@ function kvUpdate(key, fn) {
 
 const TAG = 'suveren-waiting';
 
+// A device notice (`{ "notice": <kind> }`): the device list changed, a recovery was started with the recovery code, or a
+// new identity was asked for. Its own tag and a fixed text per kind; nothing from the message is shown. A tap opens Devices.
+const NOTICE_TAG = 'suveren-devices';
+const NOTICE_TEXT = { 'devices-changed': 'devicesChanged', 'recovery-started': 'recoveryStarted', 'identity-reset': 'identityReset' };
+function noticeOf(event) {
+  try {
+    const body = event.data ? event.data.json() : null;
+    return body && typeof body.notice === 'string' && Object.prototype.hasOwnProperty.call(NOTICE_TEXT, body.notice) ? body.notice : null;
+  } catch {
+    return null;
+  }
+}
+
 self.addEventListener('push', (event) => {
+  const notice = noticeOf(event);
+  if (notice) {
+    event.waitUntil(self.registration.showNotification(PUSH_TEXT.title, {
+      body: PUSH_TEXT[NOTICE_TEXT[notice]], tag: NOTICE_TAG, renotify: true, icon: '/icons/icon-192.png', data: { devices: true },
+    }));
+    return;
+  }
   const ids = idsOf(event);
   event.waitUntil((async () => {
     // One notice at a time (one tag): a new one replaces the one still shown, so it carries that one's ids too and a
@@ -133,14 +157,15 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const devices = Boolean(event.notification.data && event.notification.data.devices);
   const ids = (event.notification.data && event.notification.data.ids) || [];
-  const target = ids.length === 1 ? `/#request=${ids[0]}` : '/';
+  const target = devices ? '/#devices' : ids.length === 1 ? `/#request=${ids[0]}` : '/';
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {
       if (new URL(w.url).origin !== self.location.origin) continue;
       await w.focus();
-      w.postMessage({ t: 'open-request', id: ids.length === 1 ? ids[0] : null });
+      w.postMessage(devices ? { t: 'open-devices' } : { t: 'open-request', id: ids.length === 1 ? ids[0] : null });
       return;
     }
     await self.clients.openWindow(target);

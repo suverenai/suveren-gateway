@@ -997,6 +997,24 @@ describe('turning on Touch ID for approvals on a computer set up without it (a r
     expect(recoveryRequests(as).filter(x => x.path.endsWith('/handoffs'))).toHaveLength(0);
   });
 
+  it('L3: a stage the Authority Server refuses keeps no key anywhere; a cancel after staging drops it from the vault', async () => {
+    const { as, w, acct } = await withoutCheckKey();
+    as.mailFails = true;
+    const failed = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    expect([failed.status, failed.body.code]).toEqual([502, 'mail_failed']);
+    expect(w.gw.vault.hasSecretSlot('deviceRecoveryPending') && w.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeFalsy();
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
+    as.mailFails = false;
+    const sub = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    expect(sub.status).toBe(200);
+    const slot = w.gw.vault.getSecretSlot<Record<string, unknown>>('deviceRecoveryPending')!;
+    expect(slot.kind).toBe('set');
+    expect(slot.checkKey).toBeTruthy(); // kept sealed while the email link is open, so a restart can finish
+    expect((await w.post('/auth/device/recover/cancel')).status).toBe(200);
+    expect(w.gw.vault.hasSecretSlot('deviceRecoveryPending') && w.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeFalsy();
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
+  });
+
   it('finish before the email link is confirmed stores nothing and says the chain does not hold it yet', async () => {
     const { w, acct } = await withoutCheckKey();
     const sub = await w.post('/auth/device/check-key/submit', { code: acct.code });

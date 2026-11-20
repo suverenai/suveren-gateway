@@ -10,12 +10,14 @@ import { RECENT_SECONDS } from './chain-view';
 export type ChainNotice =
   | { kind: 'added'; seq: number; label: string; by: string | null; at: number }
   | { kind: 'removed'; seq: number; label: string; by: string | null; at: number }
-  | { kind: 'rotated'; seq: number; by: string | null; at: number };
+  | { kind: 'rotated'; seq: number; by: string | null; at: number }
+  | { kind: 'touch-id'; seq: number; label: string; by: null; at: number };
 
 /**
  * `by`: the label of the device that signed the entry; null when the recovery code signed it (`signer: "root"`).
- * Newest first. The genesis, a `set` (a check key changed) and a `reset` are left out: a reset removes this phone, which then sees
- * "removed elsewhere" instead.
+ * Newest first. A `set` by the recovery code that ADDS a computer's Touch ID key ("touch-id") is shown: only the recovery code and
+ * the email link can make one, so the person should hear of it on every device. The genesis, a device's own `set` and a `reset`
+ * are left out: a reset removes this phone, which then sees "removed elsewhere" instead.
  */
 export function chainNotices(entries: readonly ChainEntry[], state: ChainState, ownKeyId: string, now: number): ChainNotice[] {
   const labelOf = (k: string | null): string | null => (k && state.devices[k] ? state.devices[k].label : null);
@@ -30,6 +32,9 @@ export function chainNotices(entries: readonly ChainEntry[], state: ChainState, 
       const label = labelOf(e.target);
       // A device that removed itself: "X was removed", by itself.
       if (label) out.push({ kind: 'removed', seq: e.seq, label, by, at: e.created_at });
+    } else if (e.op === 'set' && e.signer === 'root' && e.check && e.target) {
+      const label = labelOf(e.target);
+      if (label) out.push({ kind: 'touch-id', seq: e.seq, label, by: null, at: e.created_at });
     } else if (e.op === 'rotate-root') {
       const granter = e.sigs.find((s) => s.by !== 'root')?.by ?? null;
       if (granter === ownKeyId) continue;

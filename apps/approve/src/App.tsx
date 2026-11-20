@@ -95,6 +95,8 @@ function Screens() {
     if (!('serviceWorker' in navigator)) return;
     const onMsg = (e: MessageEvent) => {
       const d = e.data as { t?: unknown; id?: unknown } | null;
+      // A device notice: the list of devices is what changed (stage D4, device notices).
+      if (d && d.t === 'open-devices') { if (viewRef.current.t === 'home') setView({ t: 'home', tab: 'devices' }); return; }
       if (!d || d.t !== 'open-request') return;
       const id = typeof d.id === 'string' ? requestFromHash(`#request=${d.id}`) : null;
       setOpenRequest((cur) => (id ? { id, n: (cur?.n ?? 0) + 1 } : null));
@@ -706,6 +708,7 @@ function noticeText(n: ChainNotice, now: number): string {
   const by = n.by ?? P.noticeByCode;
   if (n.kind === 'added') return P.noticeAdded(n.label, whenText(n.at, now), by);
   if (n.kind === 'removed') return P.noticeRemoved(n.label, by);
+  if (n.kind === 'touch-id') return P.noticeTouchId(n.label, whenText(n.at, now));
   return P.noticeRotated(by);
 }
 
