@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { SkelBlock, SkelLine, SkelArea } from '@suveren/approval-card/components/LoadGate';
+import { useState, useCallback, type ReactNode } from 'react';
+import { LoadGate, Gated, SkelBlock, SkelLine, SkelArea, useNetworkSettled } from '@suveren/approval-card/components/LoadGate';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus, type IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
@@ -90,7 +90,12 @@ export function IntegrationsPage() {
       {loading || simulationOn === null ? (
         // DEC-98: the connector cards greyed out until the list and the mode are in; then all cards at once.
         <ConnectorsSkeleton />
-      ) : mcpServerUp === false ? (
+      ) : (
+      // DEC-98: the cards are mounted hidden while each reads its own state (credentials, sign-in) — that decides
+      // which cards open — and appear together once those reads are done, never opening one after the other.
+      <LoadGate parts={['connectors']}>
+      <ConnectorsGated>
+      {mcpServerUp === false ? (
         <div className="status-banner status-banner-error">
           <span className="status-banner-icon">!</span>
           <span className="status-banner-text">
@@ -154,8 +159,16 @@ export function IntegrationsPage() {
           {entries.length === 0 && <EmptyState manifestsError={manifestsError} />}
         </>
       )}
+      </ConnectorsGated>
+      </LoadGate>
+      )}
     </div>
   );
+}
+
+function ConnectorsGated({ children }: { children: ReactNode }) {
+  const settled = useNetworkSettled();
+  return <Gated part="connectors" ready={settled} skeleton={<ConnectorsSkeleton />}>{children}</Gated>;
 }
 
 function EmptyState({ manifestsError }: { manifestsError: boolean }) {

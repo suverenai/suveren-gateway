@@ -100,7 +100,11 @@ const QUIET_MS = 120;
  * True once no request has been in flight for QUIET_MS since the calling component mounted (its children's loads,
  * started in their own effects before this one runs, are included). Latches: later polling never resets it.
  */
-export function useNetworkSettled(maxWaitMs: number = GRACE_MS): boolean {
+/** The longest a page built from self-loading cards stays grey: its cards cannot show "the parts that are in" one by
+ *  one (that is the pop-in), so it waits for all of them, but never longer than this. */
+export const SETTLE_MAX_MS = 4000;
+
+export function useNetworkSettled(maxWaitMs: number = SETTLE_MAX_MS): boolean {
   const [settled, setSettled] = useState(false);
   useEffect(() => {
     patchFetch();
@@ -112,8 +116,8 @@ export function useNetworkSettled(maxWaitMs: number = GRACE_MS): boolean {
       if (timer) clearTimeout(timer);
       if (inFlight === 0) timer = setTimeout(() => { if (inFlight === 0) finish(); }, QUIET_MS);
     };
-    // A request that never ends (a long poll, a hung server) must not keep the page grey: at the grace time the page
-    // shows what it has, like any gate.
+    // A request that never ends (a long poll, a hung server) must not keep the page grey: after SETTLE_MAX_MS the page
+    // shows what it has.
     const cap = setTimeout(finish, maxWaitMs);
     listeners.add(check);
     check();
