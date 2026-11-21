@@ -1,0 +1,553 @@
+# Native unlock helper — design (step 5a, DEC-38 and DEC-47)
+
+Status: design plus a working macOS prototype. Windows is designed, not built.
+Measured on a MacBook Air M5, macOS 26.6.2, Swift 6.3.3, command-line tools only (no Xcode).
+
+The helper does two things for the Suveren gateway:
+
+1. **Unlock.** It holds a second wrap of the gateway's random vault key. The wrap opens only after the
+   person touches Touch ID (macOS) or Windows Hello (Windows). The unlock password stays as the first
+   wrap and as the fallback.
+2. **Check key.** It holds the computer's check key (`device.check` of type `platform`): a P-256 key in
+   the Secure Enclave or the TPM that signs the SHA-256 hash of one object, only after a touch, and
+   shows a reason text in the system prompt.
+
+Plan references: device-keys-dev-plan.md sections 3.1, 7 (rows "new unlock by the computer's platform
+authenticator" and "new confirmation for sensitive changes"), 12 row 5a, 12.1 line 26, 12.3, 14
+(DEC-38, DEC-47), 21.
+
+What the person needs to know: they touch the sensor, and the system says what for. Nothing else.
+
+---
+
+## 1. What is built and what is not
+
+| Part | State |
+|---|---|
+| Swift helper for macOS (`macos/`), Secure Enclave keys, wrap/unwrap, check signature, caller refusal | built, runs |
+| Node client (`src/`) and protocol types | built, tested against a fake and against the real helper |
+| Touch prompts (unwrap, sign) on the real Secure Enclave | **not run**: they need a touch. Manual checks for the maintainer: section 9 |
+| Windows helper | designed (section 8), not built, not measured |
+| The provider in `vault.ts` that calls the helper | another stream (G1). This package defines the helper side and the protocol |
+| Signing and notarisation of the helper, the installer | open points, section 10 |
+
+---
+
+## 2. Process model
+
+**The gateway starts the helper as a child process and talks to it over the child's stdin and stdout.
+One JSON object per line.**
+
+Why stdio and not a Unix socket or a named pipe:
+
+- A pipe to a child has exactly two ends. No other program can connect. A socket in the file system
+  (or a Windows named pipe) is an address that any program of the same user can open; the helper would
+  then have to tell callers apart by their process id, which is easy to get wrong.
+- The helper's life is the gateway's life: stdin closes when the gateway ends, the helper exits.
+  No daemon, no port, no file to clean up, no state between runs.
+- The same model works on Windows (anonymous pipes), so the Node client is one piece of code.
+
+How it runs:
+
+- The gateway starts it **on demand** and may keep it for a short time. The client serves one request at
+  a time: only one prompt can be on screen, and the person must know which request a touch answers.
+- The helper is **stateless**. It keeps no key and no file. The gateway stores the opaque key blobs and
+  the wrapped key in `vault.enc.json` (the same file as the password wrap). Nothing to configure, and
+  one atomic write covers everything.
+- A touch that takes too long (default 120 s in the client) ends the helper process, so a late touch
+  cannot answer a request the gateway has already given up on.
+- stderr carries one short line on refusal. No secret is ever logged.
+
+Files in this package:
+
+```
+packages/unlock-helper/
+  DESIGN.md
+  src/        Node client and protocol types (TypeScript)
+  test/       tests; fake-helper.mjs is a fake and doubles as the reference for the wrap format
+  macos/      Swift package: UnlockCore (library), suveren-unlock-helper (executable), tests
+    manual-check.mjs   the manual check of section 9
+    test.sh            swift test with command-line tools only
+```
+
+---
+
+## 3. Protocol (version 1)
+
+Request: `{ "id": <int|string>, "op": "<name>", …fields }`. Response: `{ "id": …, "ok": true, …fields }` or
+`{ "id": …, "ok": false, "error": { "code": "<code>", "message": "<text for a log>" } }`.
+All binary fields are base64url without padding. A request line is at most 16 KiB.
+
+### 3.1 Operations
+
+| op | Request fields | Response fields | Touch |
+|---|---|---|---|
+| `hello` | — | `helper`, `version`, `protocol` (1), `platform`, `backend`, `secureHardware`, `biometry`, `userPresence` | no |
+| `wrap.create` | `policy` | `keyBlob`, `publicKey`, `policy` | no |
+| `wrap` | `publicKey`, `vaultKey` (32 bytes), `aad` (string) | `wrapped` | no (public-key operation) |
+| `unwrap` | `keyBlob`, `wrapped`, `aad` | `vaultKey` | **yes** |
+| `check.create` | `policy` | `keyBlob`, `publicKey`, `policy` | no |
+| `check.sign` | `keyBlob`, `digest`, `reason`, optional `object` | `signature`, `publicKey` | **yes** |
+| `shutdown` | — | — | no |
+
+`policy` is `user-presence`, `biometry-current-set` or `biometry-any` (section 6.1). `publicKey` is the
+uncompressed P-256 point, 65 bytes, `0x04 || X || Y`. `keyBlob` is opaque: on macOS CryptoKit's
+`dataRepresentation` of the Secure Enclave key (the key encrypted to this computer's Secure Enclave,
+with its access control). It is useless on another computer.
+
+`hello.biometry` and `hello.userPresence` are asked of the system without a prompt.
+`hello.secureHardware` false means the helper cannot protect a key: the gateway offers only the password.
+
+### 3.2 Exact bytes
+
+**Check signature.** `digest` is `"sha256:"` plus 64 lower-case hex digits, the entry hash (or grant
+hash, or change-request hash) the verifier computes. The helper signs the **32 raw digest bytes** with
+ECDSA P-256; the SHA-256 inside ECDSA runs over those 32 bytes. This is exactly what hap-core's
+`verifyCheck` does for `type: "platform"` (`subtle.verify({name:"ECDSA", hash:"SHA-256"}, key, rs, digestBytes)`).
+`signature` is the ASN.1 DER encoding (what CryptoKit's `derRepresentation` gives, which `ecdsaDerToRaw`
+accepts). The chain entry then holds `device.check = { type: "platform", pub: <publicKey> }` and
+`checks[i].check = { signature: <signature> }` (client helpers `platformCheckKey`, `platformCheckProof`).
+
+With `object` (the exact bytes that were hashed), the helper first checks `SHA-256(object) == digest` and
+refuses with `digest_mismatch`, before any prompt. This is the hook for helper-derived reason text
+(section 5): recommended, not built.
+
+**Wrap.** 126 bytes, base64url:
+
+```
+wrapped = 0x01 || ephemeralPublicKey (65 bytes, X9.63) || nonce (12) || ciphertext (32) || tag (16)
+key     = HKDF-SHA256( ECDH(ephemeralPrivate, wrapPublicKey),
+                       salt = ephemeralPublicKey || wrapPublicKey,
+                       info = "suveren-unlock-wrap-v1", length 32 )
+AES-256-GCM, plaintext = the 32-byte vault key, authenticated data = UTF-8 of `aad`
+```
+
+`aad` is the account id, as in the password wrap of `vault.ts` (`wrapKey(kek, key, accountId)`), so a
+wrap cannot be moved to another account. Why ECIES and not "encrypt with the Secure Enclave":
+the Secure Enclave only holds EC keys for signing and key agreement. With key agreement, **wrapping
+needs no touch** (only the public key), so a vault-key rotation or a new account binding re-wraps
+silently, and only **unwrapping** asks the person. The Node reference for this format is in
+`test/fake-helper.mjs`; a test proves the Swift helper and the Node code unwrap each other's wraps.
+
+### 3.3 The reason text
+
+`check.sign` takes `reason`: 1 to 120 characters, NFC, no control, format (bidi), line or paragraph
+separator characters (the rule of hap-core's device label). `unwrap` takes **no** reason from the caller;
+the helper says "unlock the Suveren vault" itself.
+
+### 3.4 Error codes
+
+| code | meaning |
+|---|---|
+| `bad_request` | malformed field, wrong size, bad policy, reason or digest out of range |
+| `unsupported` | unknown op |
+| `no_secure_hardware` | no Secure Enclave / TPM, or no way to verify a person |
+| `no_biometry` | a fingerprint is needed and none is enrolled or Touch ID is unavailable |
+| `biometry_locked` | Touch ID locked out after failures; the login password unlocks it |
+| `user_cancelled` | the person cancelled |
+| `auth_failed` | the person was not recognised |
+| `interaction_required` | a touch is needed and prompts are switched off (`SUVEREN_HELPER_NO_PROMPT=1`, used in tests) |
+| `key_invalid` | the key blob cannot be used here: another computer, fingerprints changed under `biometry-current-set`, damaged |
+| `unwrap_failed` | the wrap does not open: other key, other account, damaged. Always after the touch |
+| `digest_mismatch` | `digest` is not the SHA-256 of `object` |
+| `caller_refused` | the helper does not serve this caller; it sends this once and exits (code 77) |
+| `internal` | anything else |
+
+The client adds `helper_missing`, `helper_exited`, `timeout`, `bad_response`. How the gateway shows them
+is wording for the screens (O19); the gateway's rule is: any error except `user_cancelled` and
+`auth_failed` leaves the password path open.
+
+---
+
+## 4. Refusing a caller that is not the gateway
+
+Three layers, all in `CallerPolicy.swift`:
+
+1. **No address to connect to** (section 2). The only program that can write to the helper's stdin is the
+   program that started it.
+2. **The helper checks its parent at start and before every request.** It reads
+   `allowed-callers.json` from the folder of its own executable (not from an argument; in a release build
+   no flag can change the file) and requires:
+   - the parent is still the process that started it (`getppid` unchanged);
+   - stdin is a pipe or a socket, not a terminal or a file;
+   - the parent's executable (resolved path, `proc_pidpath`) is one listed, e.g. the Node binary the
+     gateway runs under;
+   - the parent's `argv[1]`, resolved, lies **inside the gateway's install directory**
+     (`scriptPrefix`, compared as a path prefix after resolving `..` and links);
+   - `argv[1]` is a script, not an option: a parent started as `node --require evil.js gateway.js`
+     is refused; so is a parent with `NODE_OPTIONS` set.
+   The parent's arguments and environment come from the kernel (`sysctl KERN_PROCARGS2`), not from
+   anything the caller sends.
+3. On refusal the helper sends `caller_refused` (no id) and exits with 77. A missing or unreadable list
+   also refuses.
+
+Verified by running: real helper, real child processes (test `real helper refuses a caller that is not
+the gateway`): served for a launcher inside the allowed folder; refused for a launcher outside it, for a
+parent started with `--no-warnings`, for a parent with `NODE_OPTIONS`, for a missing list, and for the
+test process itself. Release build: `--backend software`, `--allow-any-caller` and `--allowed-callers`
+are compiled out (checked by running the release build).
+
+### Honest limits
+
+- **A program of the same user can ask for the prompt.** It can start `node <gateway>/entry.js` as its
+  own child (argv looks right), patch the gateway's files, inject code into the running gateway, or read
+  its memory. Then it can ask the helper for an unlock (the person sees "unlock the Suveren vault") or
+  for a check signature with a reason it makes up. The checks above stop a *different* program that
+  launches or talks to the helper; they do not stop a program that *is* the gateway or controls it.
+  That is plan section 21: the answer is separation (the gateway as its own OS user or service, signed
+  files in a protected folder; S1 to S3, O29).
+- **The same applies to key blobs.** The blob is not bound to the helper binary: a blob made by one
+  ad-hoc signed binary opened in another binary with another signing identity (measured, section 7).
+  Any program of this user can load a blob it can read and ask for a touch. The blob is bound to this
+  computer's Secure Enclave and to the person's touch, not to the program.
+- **What does protect:** the vault key and the check key are never usable without a touch, and an AI
+  cannot supply a fingerprint. Under `user-presence` an AI that has the login password and sees the
+  screen could type it; that is why the check key should use biometry (6.1).
+- **If the AI can run the helper and the person touches without reading,** the AI gets the vault key
+  (unlock) or a signature (check). The only help is that the prompt says what it is for, and that the
+  reason is derived from the signed object, not chosen by the caller (section 5).
+- The helper sees the vault key in plain text while it wraps it, and sends it back in plain text over the
+  pipe when it unwraps. Only the parent can read that pipe. Swift cannot guarantee that memory is wiped;
+  the process is short-lived.
+- Windows: not built; the same model applies (section 8).
+
+---
+
+## 5. What the system prompt can and cannot show
+
+Measured by the maintainer (plan 12.3 line 26, a plain command-line program): the prompt shows the program's
+icon and name, then "<program> is trying to <reason>." and "Touch ID to allow this." A 47-character
+reason was shown in full over two lines.
+
+**It can show:** one short plain-text sentence, starting with a verb in lower case, because macOS puts
+"<program> is trying to" in front. Examples that fit: "unlock the Suveren vault", "add the device
+'iPhone'", "grant the mandate: offers by email, up to 3 per day".
+
+**It cannot show:** line breaks, bold, lists, a table of limits, the object itself. The helper refuses
+control and bidi characters so a reason cannot reshape the prompt. Not measured: how macOS cuts a
+reason of 120 characters (manual check 2), what the prompt looks like over remote desktop, and whether
+the login-password fallback of `user-presence` shows the reason too.
+
+**Who writes the reason.** For `unwrap` the helper does (fixed text). For `check.sign` the caller does
+today. A caller that lies shows the person "add the device 'iPhone'" while the signed object adds
+something else; the check proves a touch, not a reading. **Recommended (not built):** the gateway always
+sends `object`, and the helper builds the reason from the object's own fields by a template per `typ`
+(chain entry: op and device label; mandate grant: the offer names and the limits it can fit). The
+helper already hashes `object` and refuses a wrong digest; the template is a small JSON read in Swift
+(no canonicalisation needed, because the bytes are already canonical). What the person reads is then
+what the signature covers, as long as the template is faithful. This needs the object formats of steps
+13 and 14 to be frozen and costs about two days on each platform. Decision for the maintainer (section 10).
+
+A touch to open a session and a touch for a change look different because the reasons differ.
+(Under DEC-47 an approval needs no check; only the unlock and *grant* touch.)
+
+---
+
+## 6. Key lifecycle
+
+Two keys, both made by the helper, both usable only after a touch:
+
+| Key | Kind | Used for |
+|---|---|---|
+| **wrap key** | Secure Enclave P-256, key agreement | unwrap the vault key (the second wrap) |
+| **check key** | Secure Enclave P-256, signing | `device.check` of type `platform` |
+
+They are separate keys (CryptoKit's key types are separate, and a key that signs changes should not also
+open the vault).
+
+### 6.1 Access control: `.userPresence` or `.biometryCurrentSet`
+
+Both keys are created with `.privateKeyUsage` plus one of:
+
+| Policy | Allows | Fingerprint change | Mac without Touch ID |
+|---|---|---|---|
+| `user-presence` (`.userPresence`) | Touch ID, or the Mac's login password | key survives | works with the login password |
+| `biometry-current-set` | Touch ID only | key becomes **invalid** when a finger is added or removed | cannot be created (`no_biometry`) |
+| `biometry-any` | Touch ID only | key survives | cannot be created |
+
+All three were created on this Mac and all refused to sign or agree without a touch
+(`interaction_required`, LocalAuthentication -1004). The prompt itself was not run.
+
+**Recommendation (the maintainer decides):**
+
+- **Wrap key: `user-presence`.** The unlock has the password as fallback anyway, a Mac without Touch ID
+  can still use the login password, and a changed fingerprint set does not lock the person out of the
+  convenient path. A touch is "the computer's own lock", which is what DEC-38 asks for.
+- **Check key: `biometry-current-set`.** The value of the check is that a person touched. A login
+  password can be typed by an AI that sees the screen; a fingerprint cannot. `biometry-current-set` also
+  stops someone who knows the login password from enrolling their own finger and then signing. The cost:
+  a fingerprint change invalidates the key, and the device then holds no valid check until another
+  granting device (or the recovery root) replaces `device.check` with a `set` entry. A person with only
+  this computer must use recovery. `biometry-any` avoids that cost and gives up the protection against a
+  newly enrolled finger. A Mac without Touch ID has no check key; its owner uses a security key through
+  the page (plan 7).
+
+`biometry-current-set` invalidation was not tested (it needs a fingerprint change). It is Apple's
+documented behaviour; the helper reports a blob that no longer loads as `key_invalid`.
+
+### 6.2 Create
+
+1. Gateway, vault unlocked by the password: `hello`; if `secureHardware` is false, stop.
+2. `wrap.create` → `keyBlob`, `publicKey`. `wrap` the vault key with `aad = accountId` → `wrapped`.
+3. **One test `unwrap` (one touch) before the password becomes optional.** Only if it returns the same
+   key does the gateway store the header. This catches a broken prompt before it matters.
+4. The gateway writes `platform: { v:1, backend, policy, keyBlob, publicKey, wrapped }` into
+   `vault.enc.json` in one atomic write, beside the password header. Nothing in it is secret: the blob
+   needs this computer's Secure Enclave and a touch.
+5. Check key: `check.create` when the person adds a granting device or asks for the computer to grant.
+   The gateway stores `keyBlob`; `publicKey` goes into the chain entry (`device.check`). One check key
+   per gateway.
+
+### 6.3 Use
+
+- After a restart: `unwrap` → vault key → the gateway adopts it (one touch). Wrong touch, cancel or any
+  error: the password dialog remains.
+- A change that needs a check: the gateway builds the object, hashes it, calls `check.sign` with
+  `digest`, `object`, `reason` (one touch), puts `signature` into `checks`.
+
+### 6.4 Rotation and re-wrap
+
+- **Vault key changes** (the rekey of `vault.ts`, with its `pending` old key): `wrap` again with the same
+  public key. No touch. Wrap the old key too while a rekey is unfinished, as the password header does.
+- **Wrap key replaced** (fingerprints changed, `key_invalid`, or the person asks): `wrap.create`, `wrap`
+  the vault key (vault unlocked by the password), test `unwrap`, replace the header, drop the old blob.
+- **Check key replaced:** `check.create`, then a chain entry (`set`) that carries the new `device.check`,
+  signed by a granting device that still works. If the old key is gone and no other granting device
+  exists, the recovery root (plan section 10).
+- **Deleting a key.** CryptoKit Secure Enclave keys are not stored anywhere by the system: the blob is
+  the key. Delete the blob and the key is gone (the Secure Enclave cannot make a new one from nothing).
+  No `SecItemDelete` is needed or possible. Keys made in probes and tests exist only in the memory of
+  the running process.
+
+### 6.5 Reinstall, update, another computer
+
+| Case | Result |
+|---|---|
+| Gateway reinstalled or updated; data folder kept | the blob is not bound to the helper binary (measured), so a new helper build opens it |
+| Helper re-signed with another identity (ad-hoc to Developer ID) | opens the same blob (measured: ad-hoc blob opened by a binary with another identifier) |
+| `vault.enc.json` and the blob copied to another computer | `key_invalid`: the Secure Enclave there cannot load it; the password works; the gateway offers to set up again. Not tested (one computer), Apple documents the binding |
+| Mac wiped, or logic board replaced, or restored to a new Mac | the same: password, then set up again |
+| Data folder deleted | nothing to unwrap; the account re-binds as a new install (plan sections 3, 11) |
+| Fingerprints changed | `user-presence` wrap key: nothing happens. `biometry-current-set` check key: `key_invalid` (6.1) |
+
+---
+
+## 7. macOS: signing, entitlements, notarisation — what was measured
+
+**Question:** can an unsigned or ad-hoc signed command-line binary create and use Secure Enclave keys
+with access control on macOS 26, or does it need a signed binary with a keychain-access-group
+entitlement?
+
+**Answer: no signing identity and no entitlement are needed, as long as the keys are CryptoKit keys that
+the helper stores itself (the `dataRepresentation` blob), not keychain items.**
+
+Measured with a minimal probe (`SecureEnclave.P256`, MacBook Air M5, macOS 26.6.2, Swift 6.3.3):
+
+| Probe | Result |
+|---|---|
+| Build with `swift build` (the linker adds an **ad-hoc** signature on arm64) | creates SE signing and key-agreement keys with `.userPresence`, `.biometryCurrentSet`, `.biometryAny` and none |
+| Use without interaction (`LAContext.interactionNotAllowed`) | the three touch policies refuse with LocalAuthentication -1004 "User interaction is required"; the key with no policy signs |
+| `codesign --force -s -` (explicit ad-hoc) | same results |
+| **No signature at all** (`codesign --remove-signature`) | **the kernel kills it** (exit 137) before main. arm64 needs at least an ad-hoc signature; SwiftPM and `swiftc` provide it |
+| Keychain-stored SE key (`SecKeyCreateRandomKey`, `kSecAttrIsPermanent`, access control) | **fails with -34018 (`errSecMissingEntitlement`)** for the ad-hoc binary: that route needs a keychain access group, i.e. a signed binary with an application identifier |
+| Keychain query for SE keys after the probe | status -25300, 0 items: nothing was left behind |
+| Blob made by one ad-hoc binary, opened by another binary in an ad-hoc signed `Suveren.app` bundle (other identifier) | opens (reaches `interaction_required`, not `key_invalid`) |
+
+So the design deliberately uses `dataRepresentation` blobs, kept in `vault.enc.json`. It avoids the
+entitlement, and it avoids keychain items, so there is nothing to clean up in the user's keychain.
+
+What this does **not** answer, and needs a person on the real prompt: whether a **Developer ID signed**
+or **notarised** build behaves the same at the prompt (it should: signing only adds identity, and
+the blob is not bound to it); and the prompt's name and icon for an `.app` bundle (below).
+
+Keys created and deleted while measuring: the probe made 4 SE signing keys and 4 SE key-agreement keys
+(one per policy), each only in memory of the running probe, and one attempt at a keychain-stored key,
+which failed, so nothing existed to delete. `swift test` makes SE keys the same way (2 policies, 2 kinds,
+in memory). The keychain query afterwards showed no items. No file with key blobs was written; the real
+helper never writes files. The probe was in the scratchpad, not in this repository.
+
+**Notarisation.** Notarisation needs a Developer ID Application certificate and the hardened runtime
+(`codesign --options runtime`). The helper needs **no entitlement** under the hardened runtime. A bare
+Mach-O binary cannot carry a stapled ticket (only an app bundle, disk image or installer package can);
+a bare binary shipped inside an npm package is not quarantined and Gatekeeper does not assess it, but
+an `.app` bundle inside the package can be stapled and also gives the prompt a name and an icon.
+
+**What the prompt calls the program.** Plan 12.3 shows the program's name and icon for a plain binary.
+Proposal: ship the helper as a minimal bundle `Suveren.app` (`Contents/MacOS/suveren-unlock-helper`,
+`Info.plist` with `CFBundleName` "Suveren", `LSUIElement` so it has no Dock icon), so the prompt reads
+"Suveren is trying to unlock the Suveren vault". Not run at the prompt: manual check 3.
+
+**Intel Macs.** Secure Enclave exists on T2 Macs. A universal build was not tried. Open point.
+
+---
+
+## 8. Windows design (not built, not measured)
+
+Same process model, same protocol, same Node client. The helper is `suveren-unlock-helper.exe`, started by
+the gateway with anonymous pipes. Everything below is **design from documentation, not run**.
+
+**Language.** Native, small, no runtime to install: C++ or Rust (the `windows` crate). .NET would add a
+runtime to the installer. To decide.
+
+**Check key (`device.check` type `platform`, ECDSA P-256).**
+- Route A: CNG with the **Microsoft Platform Crypto Provider** (`MS_PLATFORM_CRYPTO_PROVIDER`):
+  `NCryptCreatePersistedKey` with `BCRYPT_ECDSA_P256_ALGORITHM`, a key name unique to the install, the
+  key non-exportable (it lives in the TPM). The persisted key is stored by Windows under the user's
+  profile and referenced by name, so the helper's "blob" is the key name. `NCryptSignHash` over the 32
+  digest bytes gives IEEE P1363 `r || s` (64 bytes); the helper converts it to DER (hap-core's
+  `ecdsaRawToDer`), so the signature format is the same as on macOS. *Open and critical:* whether this
+  provider asks for **Windows Hello** at each signature. `NCRYPT_UI_POLICY_PROPERTY`
+  (`NCRYPT_UI_PROTECT_KEY_FLAG`) is a software-provider mechanism; for TPM keys the usual way to demand
+  a person is an authorisation value (PIN) or the **Passport / NGC provider**. To be measured.
+- Route B: the **Microsoft Passport Key Storage Provider** (`MS_NGC_KEY_STORAGE_PROVIDER`, what
+  `KeyCredentialManager` uses). Hello gates every use and shows the Hello prompt with a message the caller
+  can set. *Open and critical:* whether it can hold ECDSA P-256 on current Windows 11 builds, or only RSA
+  (the documented default for `KeyCredential`). If RSA only, Route B cannot produce a `platform` check
+  (the format is P-256) and would need a format decision.
+- Route C (fallback if A and B fail): the Windows WebAuthn API (`webauthn.dll`,
+  `WebAuthNAuthenticatorMakeCredential` / `GetAssertion`) with the platform authenticator, ES256, the
+  challenge being the digest. That is a `webauthn` check, not `platform` (rp_id fixed per install, as in
+  plan 3.1). The prompt shows the relying party, not a custom reason. Weaker for DEC-47's "prompt names
+  the change", but no custom crypto.
+
+**Unlock (the second wrap).** Windows has no key agreement with a Hello-gated key through CNG that is
+simple to use. Two designs, both to be measured:
+- With Route A and a key-agreement-capable TPM key (`BCRYPT_ECDH_P256_ALGORITHM` in the Platform provider):
+  the same ECIES wrap as on macOS, `NCryptSecretAgreement` as the touch.
+- With Route B (Hello sign): derive the wrap key from a **deterministic** Hello signature over a fixed
+  random nonce kept in the header: `key = HKDF(signature)`; RSA PKCS#1 v1.5 signatures are
+  deterministic, ECDSA ones are not, so this works only with RSA. The vault key is then AES-GCM sealed
+  under that key. The protocol (`wrap.create`, `wrap`, `unwrap`) stays the same; `wrapped` is then not 126
+  bytes of ECIES, so the version byte (`0x01` on macOS) tells the formats apart (`0x02`).
+
+**Caller refusal.** `GetNamedPipeClientProcessId` is not needed (anonymous pipes). The parent check:
+`NtQueryInformationProcess` for the parent id, `QueryFullProcessImageName` for the image path, and the
+command line from the parent's PEB (or `WMI`) for the script path, with the same list file
+(`allowed-callers.json`) next to the helper in `Program Files`, which a standard user cannot write. That
+folder protection is what makes the list trustworthy on Windows; on macOS the list sits in the user's own
+home unless the gateway is installed system-wide (O29).
+
+**The prompt.** Hello shows its own text ("Making sure it's you") and the app name; a reason text is not
+promised on every route (Route B and C: the app name; Route A: unknown). To be measured, as plan 12.1
+line 26 says.
+
+**Windows Hello absent or no TPM:** `hello` reports `secureHardware: false` and the password remains.
+
+**Build and installer.** A new project beside `macos/` (`windows/`). The helper goes into the existing MSI
+(`bundle/windows`, which IT signs) next to `allowed-callers.json`, written by the installer.
+
+To measure on one Windows 11 machine with Hello (a person with the machine, about half a day):
+Route A: does `NCryptSignHash` prompt Hello? Route B: can it hold P-256? Prompt wording and length. Remote
+desktop. A machine with Hello but without a TPM 2.0. Behaviour when the PIN is used instead of the face.
+
+---
+
+## 9. Manual checks for the maintainer (each shows a touch prompt; none runs by itself)
+
+Prepare once (builds the debug helper; about 30 seconds):
+
+```
+cd packages/unlock-helper/macos && swift build
+```
+
+The script prints PASS and FAIL lines and never a key. Keys exist only in memory during the run; nothing
+is stored and nothing needs deleting.
+
+**Check 1: unlock** (3 touches: the first succeeds, the second you cancel, the third succeeds but the
+answer must be a refusal).
+```
+node packages/unlock-helper/macos/manual-check.mjs unlock --policy user-presence
+```
+Expect: prompt names the program and says "… is trying to unlock the Suveren vault"; PASS on all four
+lines. Look at: does it ask Touch ID first and the password only after a failure? Write down how the prompt
+looks (screenshot).
+
+**Check 2: check key and reason length** (1 touch each).
+```
+node packages/unlock-helper/macos/manual-check.mjs check --policy biometry-current-set
+node packages/unlock-helper/macos/manual-check.mjs check --policy biometry-current-set --reason "grant the mandate: offers by email, up to 3 per day, only to customers in the CRM, valid until the end of March 2027"
+```
+(the second reason is 116 characters; the limit is 120. Use the second one to see whether macOS cuts long text.) Expect
+PASS including "Node verifies the DER signature". Write down: is the long reason cut off, and where?
+To also run hap-core 0.14.0's `verifyCheck` on that signature, add
+`--hap-core <path to hap-core 0.14.0>/dist/device-keys/index.mjs`.
+
+**Check 3: the name and icon in the prompt** (an app bundle; 1 touch). Makes `Suveren.app` in the scratch
+folder, ad-hoc signed, and runs check 2 through it:
+```
+B=/tmp/unlock-helper-bundle && rm -rf $B && mkdir -p $B/Suveren.app/Contents/MacOS && cp packages/unlock-helper/macos/.build/debug/suveren-unlock-helper $B/Suveren.app/Contents/MacOS/ && cat > $B/Suveren.app/Contents/Info.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>ai.suveren.unlock-helper</string>
+<key>CFBundleName</key><string>Suveren</string>
+<key>CFBundleExecutable</key><string>suveren-unlock-helper</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>0.1.0</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+EOF
+codesign --force -s - $B/Suveren.app && UNLOCK_HELPER=$B/Suveren.app/Contents/MacOS/suveren-unlock-helper node packages/unlock-helper/macos/manual-check.mjs check --policy user-presence; rm -rf $B
+```
+Expect: the prompt reads "Suveren is trying to grant the mandate: …" (with or without an icon: write it
+down). With `user-presence`, press **Use Password…** on one run and see whether the reason is also shown on
+the password dialog.
+
+**Check 4 (not scripted): fingerprint change.** After check 2 with `biometry-current-set` the key lives
+only in that run, so this cannot be tested before the gateway stores a blob. Test it with the real gateway
+in the integration round: enrol a test finger, expect `key_invalid`, expect the password to work.
+
+**Check 5 (not scripted): remote desktop and a second Mac.** Copy a stored blob and `vault.enc.json` to a
+second Mac: expect `key_invalid`, not a prompt. Needs the integration round.
+
+---
+
+## 10. Open points for the maintainer
+
+1. **Apple Developer ID.** An Apple Developer Program membership (annual fee, held by a person or
+   company) and a "Developer ID Application" certificate to sign the helper; credentials for `notarytool`
+   (App Store Connect API key or app-specific password) as secrets in the release CI on a macOS runner.
+   Who holds the account and where the certificate lives is yours to decide. Until then the helper is
+   ad-hoc signed. It works on this Mac (measured); on other Macs it should, because npm does not
+   quarantine the files it writes, but that was not run.
+2. **Bare binary or `Suveren.app` bundle.** The bundle can be notarised and stapled and shows a name
+   and icon in the prompt. Recommended; manual check 3 shows what the prompt does.
+3. **`.userPresence` or biometry.** Recommendation in 6.1: wrap key `user-presence`, check key
+   `biometry-current-set`. The cost of `biometry-current-set` is the recovery after a fingerprint change.
+   Alternative for the check key: `biometry-any`.
+4. **Helper-derived reason text** (section 5): require `object` for every `check.sign` and build the
+   reason in the helper? Recommended yes; it needs steps 13 and 14's object formats first.
+5. **Intel Macs:** support, or password only?
+6. **Windows:** a Windows machine with Hello to measure the routes in section 8; the language
+   (C++ or Rust); an Authenticode certificate (the MSI is signed by IT today; the helper `.exe` inside
+   needs its own signature or the same signing step) and SmartScreen reputation.
+7. **Where `allowed-callers.json` is written and who can change it.** In the user's own folder it is only
+   a guard against another program, not against the user's AI (section 4). A system-wide install with
+   a root-owned list is the S1/S2 answer (O29).
+8. **How the binary reaches the person:** inside the npm package per platform (CI builds and signs it),
+   or downloaded at first use with a checksum the gateway verifies. The gateway should verify the
+   helper's signature or hash before it starts it.
+9. **Which release carries 5a** (the plan lists it as open) and the wording of the screens when the helper
+   is missing, refuses, or the key is invalid (O19).
+
+---
+
+## 11. Tests and what they cover
+
+| Where | Count | Covers |
+|---|---|---|
+| `macos` `swift test` (`./macos/test.sh`) | 17 | wrap/unwrap, wrong account, wrong key, tampering, digest and reason rules, DER signature verified by CryptoKit, `interaction_required`, error codes, caller policy (pure), Secure Enclave keys made and refused without a touch |
+| `test/client.test.ts` | 15 | Node client against a **fake** helper (the real one needs a touch): framing, order, timeouts, helper death, bad answers |
+| `test/real-helper.test.ts` | 10 (one needs `HAP_CORE_DEVICE_KEYS`) | the real helper binary: software keys through the same code path (Swift and Node unwrap each other's wraps; the signature verifies in Node and in hap-core 0.14.0 `verifyCheck`, and is refused for another object or key); Secure Enclave with prompts off; the caller refusal with real processes |
+
+Limits of this evidence, in plain words:
+
+- **No touch was made.** Every test that signs or unwraps with real hardware stops at "a touch is needed".
+  The signature format was checked with a P-256 software key through the same Handler code
+  (`SoftwareBackend` replaces only the key; the signing, DER and verification code is the same). A
+  Secure Enclave signature has the same type and encoding (CryptoKit's `ECDSASignature.derRepresentation`)
+  and plan 12.1 line 26 verified one with Node; not repeated here.
+- The software backend exists only in debug builds and in tests; a release build has no such flag.
+- hap-core's `verifyCheck` ran against 0.14.0 copied from another worktree through `HAP_CORE_DEVICE_KEYS`;
+  the gateway's own dependency is still 0.13.0, which has no device-keys module.
+- Windows, Intel Macs, remote desktop, long reason text, fingerprint change: not run.
