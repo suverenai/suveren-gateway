@@ -10,8 +10,10 @@
  * of that user they add nothing: it rewrites the helper, the hashes and the callers together. They catch a
  * damaged or half-updated install and a wrong program started by mistake. See DESIGN.md section 4.
  *
- * Only macOS on Apple silicon has a helper today. Everywhere else the answer is "not available,
- * and why", and every caller falls back to the password, which is what the gateway did before.
+ * macOS on Apple silicon and 64-bit Windows (x64, arm64) have a helper. Everywhere else the answer is
+ * "not available, and why", and every caller falls back to the password, which is what the gateway did before.
+ * The Windows helper reports no secure hardware until Windows Hello is measured on real hardware
+ * (DESIGN.md section 8), so on Windows the password stays the way in for now.
  */
 
 import { createHash } from 'node:crypto';
@@ -22,8 +24,8 @@ import type { PlatformKeyService } from './vault';
 
 /** Why there is no helper, as a neutral code. The page's wording for each is the maintainer's (O19). */
 export type HelperUnavailable =
-  | 'unsupported_platform'   // not macOS (Windows is designed, not built)
-  | 'unsupported_arch'       // an Intel Mac: password only
+  | 'unsupported_platform'   // neither macOS nor Windows
+  | 'unsupported_arch'       // an Intel Mac, or 32-bit Windows: password only
   | 'helper_not_installed'   // this install carries no helper
   | 'helper_modified'        // a file of the helper is not the one this gateway was built with
   | 'helper_failed'          // it did not start or answer
@@ -61,6 +63,9 @@ export interface HelperManifest { v: 1; files: Record<string, string> }
 export const HELPER_EXECUTABLE = 'Contents/MacOS/suveren-unlock-helper';
 /** Beside the .app, not inside it: a file added to a signed bundle breaks its seal (packages/unlock-helper/DESIGN.md section 4). */
 export const HELPER_CALLERS_FILE = '../allowed-callers.json';
+/** Windows: a folder `helper/windows-<arch>` with the .exe; the helper reads allowed-callers.json beside its .exe. */
+export const WINDOWS_HELPER_EXECUTABLE = 'suveren-unlock-helper.exe';
+export const WINDOWS_HELPER_CALLERS_FILE = 'allowed-callers.json';
 
 export function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -83,10 +88,10 @@ export class HelperUnavailableError extends Error {
   }
 }
 
-function parseManifest(path: string): HelperManifest | null {
+function parseManifest(path: string, executable: string): HelperManifest | null {
   try {
     const m = JSON.parse(readFileSync(path, 'utf-8')) as HelperManifest;
-    if (m?.v !== 1 || !m.files || typeof m.files !== 'object' || !(HELPER_EXECUTABLE in m.files)) return null;
+    if (m?.v !== 1 || !m.files || typeof m.files !== 'object' || !(executable in m.files)) return null;
     for (const h of Object.values(m.files)) if (typeof h !== 'string' || !/^[0-9a-f]{64}$/.test(h)) return null;
     return m;
   } catch {
@@ -109,20 +114,33 @@ export interface LocateOptions {
  * Where the helper is, and what it must hash to. In the published package:
  *   <package>/helper/Suveren.app                      the ad-hoc signed bundle
  *   <package>/dist/control-plane/helper-manifest.json the hashes (written by bundle/build.mjs, from the same build)
- * `SUVEREN_HELPER_APP` (the dev lane, a hand test) names another Suveren.app; its hashes are then read from
- * `helper-manifest.json` beside it, which is weaker (a swap that also swaps the list is not seen) and is why it is a deliberate setting.
+ * On Windows (x64 or arm64) the same, with a folder instead of the app:
+ *   <package>/helper/windows-<arch>/suveren-unlock-helper.exe
+ *   <package>/dist/control-plane/helper-manifest-windows-<arch>.json  `{ "files": { "suveren-unlock-helper.exe": "<sha256>" } }`
+ * (one list per architecture, so one package can carry the Mac app and both Windows builds).
+ * `SUVEREN_HELPER_APP` (the dev lane, a hand test) names another Suveren.app, or on Windows another helper folder;
+ * its hashes are then read from the list of the same name beside it, which is weaker (a swap that also swaps the list is
+ * not seen) and is why it is a deliberate setting.
  */
 export function locateHelper(o: LocateOptions): Located {
   const platform = o.platform ?? process.platform;
   const arch = o.arch ?? process.arch;
-  if (platform !== 'darwin') return { unavailable: 'unsupported_platform' };
-  if (arch !== 'arm64') return { unavailable: 'unsupported_arch' };
+  let layout: { folder: string; executable: string; callersFile: string; manifest: string };
+  if (platform === 'darwin') {
+    if (arch !== 'arm64') return { unavailable: 'unsupported_arch' };
+    layout = { folder: join('helper', 'Suveren.app'), executable: HELPER_EXECUTABLE, callersFile: HELPER_CALLERS_FILE, manifest: 'helper-manifest.json' };
+  } else if (platform === 'win32') {
+    if (arch !== 'x64' && arch !== 'arm64') return { unavailable: 'unsupported_arch' };
+    layout = { folder: join('helper', `windows-${arch}`), executable: WINDOWS_HELPER_EXECUTABLE, callersFile: WINDOWS_HELPER_CALLERS_FILE, manifest: `helper-manifest-windows-${arch}.json` };
+  } else {
+    return { unavailable: 'unsupported_platform' };
+  }
   const env = o.env ?? process.env;
   const override = env.SUVEREN_HELPER_APP?.trim();
-  const app = override ? resolve(override) : resolve(o.here, '..', '..', 'helper', 'Suveren.app');
-  const manifestPath = override ? join(dirname(app), 'helper-manifest.json') : join(o.here, 'helper-manifest.json');
-  if (!existsSync(join(app, HELPER_EXECUTABLE)) || !existsSync(manifestPath)) return { unavailable: 'helper_not_installed' };
-  const manifest = parseManifest(manifestPath);
+  const app = override ? resolve(override) : resolve(o.here, '..', '..', layout.folder);
+  const manifestPath = override ? join(dirname(app), layout.manifest) : join(o.here, layout.manifest);
+  if (!existsSync(join(app, layout.executable)) || !existsSync(manifestPath)) return { unavailable: 'helper_not_installed' };
+  const manifest = parseManifest(manifestPath, layout.executable);
   if (!manifest) return { unavailable: 'helper_modified' };
   const files = Object.entries(manifest.files).map(([rel, sha256]) => ({ path: join(app, rel), sha256 }));
   // The list of callers: the Node program that runs this code, and the folder its entry script is in.
@@ -130,11 +148,11 @@ export function locateHelper(o: LocateOptions): Located {
   try {
     const exe = realpathSync(o.execPath ?? process.execPath);
     const script = realpathSync(o.scriptPath ?? process.argv[1] ?? '');
-    callers = { path: resolve(app, HELPER_CALLERS_FILE), body: JSON.stringify({ v: 1, callers: [{ exe, scriptPrefix: dirname(script) }] }) };
+    callers = { path: resolve(app, layout.callersFile), body: JSON.stringify({ v: 1, callers: [{ exe, scriptPrefix: dirname(script) }] }) };
   } catch {
     return { unavailable: 'helper_failed' };
   }
-  return { spec: { command: join(app, HELPER_EXECUTABLE), args: ['serve'], files, callers } };
+  return { spec: { command: join(app, layout.executable), args: ['serve'], files, callers } };
 }
 
 export interface HostOptions {
@@ -249,7 +267,7 @@ export class PlatformHelper {
     let c: UnlockHelperClient;
     try {
       c = await (this.o.startClient ?? ((s) => UnlockHelperClient.start({
-        command: s.command, args: s.args, env: s.env ?? minimalEnv(), quickTimeoutMs: this.o.quickTimeoutMs, touchTimeoutMs: this.o.touchTimeoutMs,
+        command: s.command, args: s.args, env: s.env ?? minimalEnv(process.platform), quickTimeoutMs: this.o.quickTimeoutMs, touchTimeoutMs: this.o.touchTimeoutMs,
       })))(spec);
     } catch (err) {
       throw new HelperUnavailableError(err instanceof HelperError && err.code === 'caller_refused' ? 'caller_refused' : 'helper_failed');
@@ -270,9 +288,16 @@ export class PlatformHelper {
 }
 
 /** The helper gets nothing of the gateway's environment (no key, no token, no NODE_OPTIONS). */
-function minimalEnv(): NodeJS.ProcessEnv {
+function minimalEnv(platform: NodeJS.Platform): NodeJS.ProcessEnv {
   // SUVEREN_HELPER_NO_PROMPT only RESTRICTS (every touch fails with interaction_required): the one setting passed on.
-  return { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '', ...(process.env.SUVEREN_HELPER_NO_PROMPT === '1' ? { SUVEREN_HELPER_NO_PROMPT: '1' } : {}) };
+  const noPrompt = process.env.SUVEREN_HELPER_NO_PROMPT === '1' ? { SUVEREN_HELPER_NO_PROMPT: '1' } : {};
+  if (platform === 'win32') {
+    // Windows needs its own folders to load its system libraries and the person's key storage; no secrets in these.
+    const pick = (k: string) => (process.env[k] ? { [k]: process.env[k] } : {});
+    const root = process.env.SystemRoot ?? 'C:\\Windows';
+    return { SystemRoot: root, PATH: `${root}\\System32`, ...pick('USERPROFILE'), ...pick('LOCALAPPDATA'), ...pick('APPDATA'), ...pick('TEMP'), ...noPrompt };
+  }
+  return { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '', ...noPrompt };
 }
 
 function unavailableCode(err: unknown): HelperUnavailable {

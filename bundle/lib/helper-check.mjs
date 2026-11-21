@@ -43,3 +43,30 @@ export function checkHelperBuild(dir) {
   }
   return problems;
 }
+
+export const WINDOWS_ARCHS = ['x64', 'arm64'];
+
+/**
+ * Checks a folder made by packages/unlock-helper/windows/build.mjs: for each architecture the .exe and its hash list
+ * are there, the .exe matches the list, and it is a release build. Returns a list of problems (empty: fine).
+ */
+export function checkWindowsHelperBuild(dir) {
+  const problems = [];
+  for (const arch of WINDOWS_ARCHS) {
+    const exe = join(dir, `windows-${arch}`, 'suveren-unlock-helper.exe');
+    const manifestPath = join(dir, `helper-manifest-windows-${arch}.json`);
+    if (!existsSync(exe) || !existsSync(manifestPath)) {
+      problems.push(`${exe} or ${manifestPath} is missing. Run node packages/unlock-helper/windows/build.mjs first.`);
+      continue;
+    }
+    const bytes = readFileSync(exe);
+    const found = debugMarkersIn(bytes);
+    if (found.length) problems.push(`${exe} is a DEBUG helper (it contains ${found.join(', ')}). Only a release build may ship: run build.mjs without CONFIG=debug.`);
+    let manifest;
+    try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { problems.push(`${manifestPath} is not readable.`); continue; }
+    const files = manifest?.files;
+    if (manifest?.v !== 1 || !files || typeof files !== 'object' || Object.keys(files).join() !== 'suveren-unlock-helper.exe') { problems.push(`${manifestPath} is not a Windows helper manifest.`); continue; }
+    if (createHash('sha256').update(bytes).digest('hex') !== files['suveren-unlock-helper.exe']) problems.push(`${exe} does not match ${manifestPath} (rebuild with build.mjs).`);
+  }
+  return problems;
+}

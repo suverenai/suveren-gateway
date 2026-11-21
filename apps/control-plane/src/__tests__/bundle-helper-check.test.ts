@@ -6,12 +6,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkHelperBuild, debugMarkersIn } from '../../../../bundle/lib/helper-check.mjs';
+import { checkHelperBuild, checkWindowsHelperBuild, debugMarkersIn } from '../../../../bundle/lib/helper-check.mjs';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const RELEASE_DIR = join(ROOT, 'packages/unlock-helper/macos/dist');
@@ -80,4 +80,40 @@ describe('a debug helper never goes into the package', () => {
       expect(problems).toMatch(/does not match/);
     }
   });
+});
+
+// The Windows helper (packages/unlock-helper/windows/build.mjs). SUVEREN_WINDOWS_HELPER_RELEASE / _DEBUG name real
+// builds (the Windows CI job sets them); without them only the synthetic cases run.
+describe('a debug Windows helper never goes into the package', () => {
+  const winBuild = (exeBytes: Buffer): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'win-helper-build-'));
+    for (const arch of ['x64', 'arm64']) {
+      mkdirSync(join(dir, `windows-${arch}`));
+      writeFileSync(join(dir, `windows-${arch}`, 'suveren-unlock-helper.exe'), exeBytes);
+      writeFileSync(join(dir, `helper-manifest-windows-${arch}.json`), JSON.stringify({ v: 1, files: { 'suveren-unlock-helper.exe': createHash('sha256').update(exeBytes).digest('hex') } }));
+    }
+    return dir;
+  };
+  const winBuildJs = (dir: string) => spawnSync(process.execPath, [join(ROOT, 'bundle/build.mjs'), '--with-windows-helper'], { env: { ...process.env, SUVEREN_WINDOWS_HELPER_BUILD_DIR: dir }, encoding: 'utf8' });
+
+  it('accepts a clean build, refuses a marker, a changed .exe and a missing architecture', () => {
+    expect(checkWindowsHelperBuild(winBuild(Buffer.from('clean release exe')))).toEqual([]);
+    expect(checkWindowsHelperBuild(winBuild(Buffer.from('serve --allow-any-caller software-test'))).join('\n')).toMatch(/DEBUG helper/);
+    const dir = winBuild(Buffer.from('clean release exe'));
+    writeFileSync(join(dir, 'windows-arm64', 'suveren-unlock-helper.exe'), 'other');
+    expect(checkWindowsHelperBuild(dir).join('\n')).toMatch(/does not match/);
+    const one = winBuild(Buffer.from('clean release exe'));
+    rmSync(join(one, 'windows-x64'), { recursive: true });
+    expect(checkWindowsHelperBuild(one).join('\n')).toMatch(/is missing/);
+  });
+
+  it('build.mjs --with-windows-helper exits 1 for a debug helper, before it cleans or builds anything', () => {
+    const r = winBuildJs(winBuild(Buffer.from('serve --backend software software-test')));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/--with-windows-helper: .*DEBUG helper/);
+  });
+
+  const REL = process.env.SUVEREN_WINDOWS_HELPER_RELEASE, DBG = process.env.SUVEREN_WINDOWS_HELPER_DEBUG;
+  it.skipIf(!REL)('the real release build passes the check', () => { expect(checkWindowsHelperBuild(REL!)).toEqual([]); });
+  it.skipIf(!DBG)('the real debug build is refused', () => { expect(checkWindowsHelperBuild(DBG!).join('\n')).toMatch(/DEBUG helper/); });
 });

@@ -27,9 +27,10 @@ import { PLATFORM_UNLOCK_OPENS_PAGE_SESSION } from '../platform';
 import { unwrapKey, wrapKey, newKey } from '../../../../../packages/unlock-helper/test/fake-helper.mjs';
 
 const PKG = '../../../../../packages/unlock-helper/';
-const SOFT = fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
+// SUVEREN_TEST_HELPER: another debug build of the helper with a software backend (the Windows helper, windows/ in Go).
+const SOFT = process.env.SUVEREN_TEST_HELPER ?? fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
 const FAKE = fileURLToPath(new URL(`${PKG}test/fake-helper.mjs`, import.meta.url));
-const haveSoft = process.platform === 'darwin' && existsSync(SOFT);
+const haveSoft = (process.env.SUVEREN_TEST_HELPER !== undefined || process.platform === 'darwin') && existsSync(SOFT);
 const soft = describe.skipIf(!haveSoft);
 /** A test that needs the real Swift helper (debug build) skips where it was not built (Linux CI). */
 const sit = it.skipIf(!haveSoft);
@@ -433,7 +434,8 @@ describe('the helper itself: found, hashed, started', () => {
     const base = { here, scriptPath: join(here, 'index.mjs'), execPath: process.execPath, env: {} };
     writeFileSync(join(here, 'index.mjs'), '');
     expect(locateHelper({ ...base, platform: 'linux', arch: 'arm64' })).toEqual({ unavailable: 'unsupported_platform' });
-    expect(locateHelper({ ...base, platform: 'win32', arch: 'x64' })).toEqual({ unavailable: 'unsupported_platform' });
+    expect(locateHelper({ ...base, platform: 'win32', arch: 'ia32' })).toEqual({ unavailable: 'unsupported_arch' });
+    expect(locateHelper({ ...base, platform: 'win32', arch: 'x64' })).toEqual({ unavailable: 'helper_not_installed' });   // no helper/windows-x64 here
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'x64' })).toEqual({ unavailable: 'unsupported_arch' });
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_not_installed' });   // no list yet
     writeFileSync(join(here, 'helper-manifest.json'), JSON.stringify(manifest));
@@ -450,6 +452,37 @@ describe('the helper itself: found, hashed, started', () => {
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_modified' });
     writeFileSync(join(here, 'helper-manifest.json'), '{ nope');
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_modified' });
+  });
+
+  it('on 64-bit Windows it is found in helper/windows-<arch>, with the hashes of the gateway\'s own list', () => {
+    for (const arch of ['x64', 'arm64']) {
+      const root = tmpDir();
+      const here = join(root, 'dist', 'control-plane');
+      const folder = join(root, 'helper', `windows-${arch}`);
+      mkdirSync(here, { recursive: true });
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'suveren-unlock-helper.exe'), 'exe');
+      writeFileSync(join(here, 'index.mjs'), '');
+      const base = { here, scriptPath: join(here, 'index.mjs'), execPath: process.execPath, env: {}, platform: 'win32' as const, arch };
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_not_installed' });   // no list yet
+      // the Mac's list does not count for Windows, and a list without the .exe is "modified"
+      writeFileSync(join(here, 'helper-manifest.json'), JSON.stringify({ v: 1, files: { 'suveren-unlock-helper.exe': createHash('sha256').update('exe').digest('hex') } }));
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_not_installed' });
+      const list = join(here, `helper-manifest-windows-${arch}.json`);
+      writeFileSync(list, JSON.stringify({ v: 1, files: { 'Contents/MacOS/suveren-unlock-helper': createHash('sha256').update('exe').digest('hex') } }));
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_modified' });
+      writeFileSync(list, JSON.stringify({ v: 1, files: { 'suveren-unlock-helper.exe': createHash('sha256').update('exe').digest('hex') } }));
+      const ok = locateHelper(base);
+      expect('spec' in ok).toBe(true);
+      if ('spec' in ok) {
+        expect(ok.spec.command).toBe(join(folder, 'suveren-unlock-helper.exe'));
+        expect(ok.spec.args).toEqual(['serve']);
+        expect(ok.spec.files).toEqual([{ path: join(folder, 'suveren-unlock-helper.exe'), sha256: createHash('sha256').update('exe').digest('hex') }]);
+        // the Windows helper reads its list of callers beside its own .exe
+        expect(ok.spec.callers!.path).toBe(join(folder, 'allowed-callers.json'));
+        expect(JSON.parse(ok.spec.callers!.body)).toMatchObject({ v: 1, callers: [{ scriptPrefix: expect.stringContaining('control-plane') }] });
+      }
+    }
   });
 
   it('a computer with no usable helper reports it, and everything else works with the password as before', async () => {
