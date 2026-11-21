@@ -24,9 +24,9 @@
  */
 import { useEffect, useState } from 'react';
 import { spClient, type ShownSnapshotResponse, type Proposal, type IntegrationManifest } from '../lib/sp-client';
-import { PreviewBoxBody } from './PreviewBox';
-import { RequestContextBoxBody } from './RequestContextBox';
-import { systemDisplayName, splitTool } from '../lib/approval-view';
+import { PreviewBoxBody } from '@suveren/approval-card/components/PreviewBox';
+import { RequestContextBoxBody } from '@suveren/approval-card/components/RequestContextBox';
+import { systemDisplayName, splitTool } from '@suveren/approval-card/lib/approval-view';
 import { matchShownHashEntry, shownStatus, otherApproversNote, formatReadAt } from '../lib/au10-shown-view';
 import { useAuth } from '../contexts/AuthContext';
 import { ObFold } from './ObjectCard';

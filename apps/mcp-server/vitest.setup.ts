@@ -31,3 +31,13 @@ process.env.SUVEREN_POLICY_REGISTRY = 'off';
 import { tmpdir as __tmpdir } from 'node:os';
 import { join as __join } from 'node:path';
 process.env.SUVEREN_INSTALL_SETTINGS_FILE ??= __join(__tmpdir(), `suveren-test-install-settings-${process.pid}.json`);
+
+/**
+ * Same reason for the data folder: without it every store here (execution log, ticket archive,
+ * denial log, gate store, agent brief, …) falls back to ~/.suveren — on a developer's Mac that is
+ * the LIVE gateway's data. Tests read the owner's real agent brief there and failed locally
+ * (2026-11-16); a store written without a folder would write into live data. One empty folder
+ * per test process; a test that needs its own still sets SUVEREN_DATA_DIR (or passes a dir).
+ */
+import { mkdtempSync as __mkdtemp } from 'node:fs';
+process.env.SUVEREN_DATA_DIR ??= __mkdtemp(__join(__tmpdir(), 'suveren-test-data-'));

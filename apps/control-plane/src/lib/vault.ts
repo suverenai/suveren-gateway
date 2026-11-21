@@ -54,6 +54,85 @@ interface VaultFile {
    * fresh key re-seals them (lib/rekey.ts walks every blob).
    */
   slots?: Record<string, EncryptedBlob>;
+  /**
+   * Present once the person has enabled unlock by the computer's own lock (Touch ID;
+   * DEC-38, packages/unlock-helper/DESIGN.md). A second wrap of the SAME random vault
+   * key, held by the native helper. The password header stays; this never replaces it.
+   */
+  platform?: PlatformHeader;
+}
+
+/** The unlock-by-Touch-ID header in vault.enc.json. Nothing in it is secret: the key blob needs this computer's Secure Enclave and a touch. */
+export interface PlatformHeader {
+  v: 1;
+  backend: string;
+  policy: string;
+  /** Opaque key blob of the wrap key (useless on another computer). */
+  keyBlob: string;
+  /** The wrap key's public half, so a re-key wraps again without a touch. */
+  publicKey: string;
+  /** The vault key under the wrap key (base64url). */
+  wrapped: string;
+  /** Part of the wrap's authenticated data, like the password wrap's. */
+  accountId: string;
+}
+
+/**
+ * What the vault needs from the native helper. The vault never starts a program itself:
+ * lib/platform-helper.ts implements this over the helper process, tests over a fake or the
+ * helper's software backend.
+ */
+export interface PlatformKeyService {
+  /** New wrap key. No touch. */
+  createWrapKey(): Promise<{ keyBlob: string; publicKey: string; policy: string; backend: string }>;
+  /** Wrap the vault key to the public key. No touch. */
+  wrap(a: { publicKey: string; vaultKey: Buffer; aad: string }): Promise<string>;
+  /** ONE touch. Returns the vault key; the caller zeroes it. */
+  unwrap(a: { keyBlob: string; wrapped: string; aad: string }): Promise<Buffer>;
+}
+
+/**
+ * What turning Touch ID unlock on or off asks besides the unlock password: where this computer has a check key,
+ * a fresh check over an object whose prompt text names the action (lib/platform-checks.ts). Set by the mount.
+ * The vault asks it itself, so no route can skip it.
+ */
+export interface PlatformGate {
+  hasCheckKey(): boolean;
+  check(action: 'enable' | 'disable'): Promise<void>;
+}
+
+/** A refusal of the platform unlock with a neutral code (and the helper's code, when it came from there). */
+export class PlatformUnlockError extends Error {
+  constructor(readonly code: string, readonly helperCode?: string) {
+    super(code);
+    this.name = 'PlatformUnlockError';
+  }
+}
+
+const PLATFORM_AAD_PREFIX = 'suveren-vault-key-platform-wrap-v1|';
+const platformAad = (accountId: string): string => PLATFORM_AAD_PREFIX + accountId;
+const B64U = /^[A-Za-z0-9_-]+$/;
+
+/** A failure from the helper as a neutral code. Only the helper's code travels, never its message (which could name a path). */
+function helperFailure(err: unknown): PlatformUnlockError {
+  if (err instanceof PlatformUnlockError) return err;
+  const e = err as { code?: unknown; helperCode?: unknown };
+  const raw = typeof e?.helperCode === 'string' ? e.helperCode : e?.code;
+  const code = typeof raw === 'string' ? raw : 'internal';
+  return new PlatformUnlockError('helper_failed', /^[a-z_]{1,40}$/.test(code) ? code : 'internal');
+}
+
+/**
+ * The third way to the vault key (after the account key and the password): the helper opens
+ * the second wrap after a touch. The salt is not used: the key is not derived, it is unwrapped.
+ */
+export class PlatformUnsealProvider implements UnsealProvider {
+  readonly id = 'platform';
+  constructor(private readonly service: PlatformKeyService, private readonly header: PlatformHeader) {}
+
+  deriveKey(_salt?: Buffer): Promise<Buffer> {
+    return this.service.unwrap({ keyBlob: this.header.keyBlob, wrapped: this.header.wrapped, aad: platformAad(this.header.accountId) });
+  }
 }
 
 /** The unlock-password header in vault.enc.json. Nothing in it is secret. */
@@ -270,6 +349,11 @@ export class Vault {
   private chain: Promise<void> = Promise.resolve();
   private rekeyFailures = 0;
   private lockListeners: Array<() => void> = [];
+  private platform: PlatformKeyService | null = null;
+  private platformGate: PlatformGate | null = null;
+  /** Counts every change of the vault key in memory (unlock, lock, re-key): a long step compares it before it writes. */
+  private keyEpoch = 0;
+  private platformBusy = false;
   private passwordCache: { stamp: string; has: boolean } | null = null;
   /**
    * When the AS session (captured at login into `spSessionCookie`) is due to
@@ -374,9 +458,10 @@ export class Vault {
       if (this.hasPassword()) throw new Error('A password is already set');
       const oldKey = this.vaultKey;
       const newKey = randomBytes(32);
-      await this.writePasswordWrap(password, newKey, accountId, oldKey);
+      await this.writePasswordWrap(password, newKey, accountId, oldKey, await this.platformAfterRekey(newKey, accountId));
       this.pendingOldKey = oldKey;
       this.vaultKey = newKey;
+      this.keyEpoch++;
       this.unsealedBy = 'password';
       this.apiKeyHash = null; // nothing in this process treats the account key as a credential any more
       return this.reconcileRekey(mcp, { countFailure: false });
@@ -515,7 +600,11 @@ export class Vault {
     }
   }
 
-  private async writePasswordWrap(password: string, vaultKey: Buffer, accountId: string, pendingOld?: Buffer): Promise<void> {
+  private async writePasswordWrap(
+    password: string, vaultKey: Buffer, accountId: string, pendingOld?: Buffer,
+    /** Only a re-key passes this: the second wrap for the NEW key (or null: drop it), written in the same atomic write. */
+    platform?: PlatformHeader | null,
+  ): Promise<void> {
     const salt = randomBytes(32);
     const kek = await scryptAsync(password, salt, this.scryptParams);
     try {
@@ -529,6 +618,8 @@ export class Vault {
         accountId,
         ...(pendingOld ? { pending: wrapKey(kek, pendingOld, accountId) } : {}),
       };
+      if (platform === null) delete data.platform;
+      else if (platform) data.platform = platform;
       this.writeVaultFileAtomic(data);
     } finally {
       kek.fill(0);
@@ -546,6 +637,209 @@ export class Vault {
   /** Called whenever the vault locks (any reason). The page session ends with it. */
   onLocked(listener: () => void): void {
     this.lockListeners.push(listener);
+  }
+
+  // ─── Unlock by the computer's own lock (PlatformUnsealProvider) ─────────
+  //
+  // A second wrap of the one random vault key, held by the native helper (Touch ID).
+  // The password stays: nothing here removes or weakens it. Everything that writes the
+  // vault file reads it strictly (an unreadable file is never turned into an empty one)
+  // and writes it by rename, in one synchronous step after the last await.
+
+  setPlatformService(service: PlatformKeyService | null, gate: PlatformGate | null = null): void {
+    this.platform = service;
+    this.platformGate = gate;
+  }
+
+  /** The header, or null when absent or not valid. Read from the file, so it holds while locked. */
+  readPlatformHeader(): PlatformHeader | null {
+    let h: PlatformHeader | undefined;
+    try { h = this.readVaultFileStrict().platform; } catch { return null; }
+    if (!h || h.v !== 1) return null;
+    for (const f of [h.keyBlob, h.publicKey, h.wrapped]) if (typeof f !== 'string' || !f || f.length > 8192 || !B64U.test(f)) return null;
+    if (typeof h.backend !== 'string' || typeof h.policy !== 'string' || typeof h.accountId !== 'string' || !h.accountId) return null;
+    return h;
+  }
+
+  /** Is unlock by Touch ID enabled on this vault? */
+  hasPlatformUnlock(): boolean {
+    return this.readPlatformHeader() !== null;
+  }
+
+  /**
+   * Turn it on. The vault is unlocked (by the password) and the person touches once: a wrap
+   * that does not open is never stored. Refused while a re-key is unfinished, and when the
+   * vault key, the account or the header changed during the touch.
+   */
+  async enablePlatformUnlock(password: string): Promise<{ backend: string; policy: string }> {
+    const service = this.platform;
+    const gate = this.platformGate;
+    if (!service || !gate) throw new PlatformUnlockError('no_helper');
+    const key = this.vaultKey;
+    if (!key) throw new PlatformUnlockError('locked');
+    const pw = this.readPasswordHeader();
+    if (!pw) throw new PlatformUnlockError('no_password');
+    if (this.pendingOldKey || pw.pending) throw new PlatformUnlockError('rekey_pending');
+    if (this.platformBusy) throw new PlatformUnlockError('busy');
+    if (this.hasPlatformUnlock()) throw new PlatformUnlockError('already_enabled');
+    this.platformBusy = true;
+    const epoch = this.keyEpoch;
+    const aad = platformAad(pw.accountId);
+    let back: Buffer | null = null;
+    try {
+      // Turning it on needs the unlock password AND, where this computer has a check key, a fresh check whose
+      // prompt says what it is for. Asked here, where the write happens, not in the route.
+      if (!(await this.verifyPassword(password))) throw new PlatformUnlockError('wrong_password');
+      if (gate.hasCheckKey()) {
+        try { await gate.check('enable'); } catch (err) { throw helperFailure(err); }
+      }
+      let info, wrapped: string;
+      try {
+        info = await service.createWrapKey();
+        wrapped = await service.wrap({ publicKey: info.publicKey, vaultKey: key, aad });
+        back = await service.unwrap({ keyBlob: info.keyBlob, wrapped, aad });   // the one touch
+      } catch (err) {
+        throw helperFailure(err);
+      }
+      const same = back.length === key.length && timingSafeEqual(back, key);
+      if (!same) throw new PlatformUnlockError('wrap_mismatch');
+      // Everything after this line is synchronous: nothing can change between the check and the write.
+      const now = this.readPasswordHeader();
+      if (this.vaultKey !== key || this.keyEpoch !== epoch || this.pendingOldKey || !now || now.accountId !== pw.accountId || now.pending
+        || this.hasPlatformUnlock()) {
+        throw new PlatformUnlockError('vault_changed');
+      }
+      const data = this.readVaultFileStrict();
+      data.platform = { v: 1, backend: info.backend, policy: info.policy, keyBlob: info.keyBlob, publicKey: info.publicKey, wrapped, accountId: pw.accountId };
+      this.writeVaultFileAtomic(data);
+      return { backend: info.backend, policy: info.policy };
+    } finally {
+      back?.fill(0);
+      this.platformBusy = false;
+    }
+  }
+
+  /**
+   * Turn it off, and REVOKE: the vault key is replaced by a fresh one and everything is re-sealed with it (the
+   * control plane's files here, the MCP server's stores through /internal/rekey, exactly as the move to a
+   * password does; an interrupted run is finished at the next unlock). What this gives: nothing sealed or
+   * written from now on opens with the old key, so a copy of vault.enc.json taken BEFORE (which still holds its
+   * own key blob) opens only what was in it then, never a credential entered later, and the MCP server's
+   * stores are not readable with it. It does NOT make the old copy itself unreadable to someone who can touch
+   * this computer's sensor: that copy is the old data, which the old key always opened.
+   * Needs the unlock password (the new password wrap is made with it) and, where this computer has a check key,
+   * a fresh check that says "turn off Touch ID unlock".
+   */
+  async disablePlatformUnlock(password: string, mcp?: McpRekeyClient): Promise<RekeyOutcome> {
+    const key = this.vaultKey;
+    if (!key) throw new PlatformUnlockError('locked');
+    const pw = this.readPasswordHeader();
+    if (!pw) throw new PlatformUnlockError('no_password');
+    if (this.pendingOldKey || pw.pending) throw new PlatformUnlockError('rekey_pending');
+    if (this.platformBusy) throw new PlatformUnlockError('busy');
+    if (!this.hasPlatformUnlock()) throw new PlatformUnlockError('not_enabled');
+    const gate = this.platformGate;
+    if (!gate) throw new PlatformUnlockError('no_helper');
+    this.platformBusy = true;
+    const epoch = this.keyEpoch;
+    try {
+      if (!(await this.verifyPassword(password))) throw new PlatformUnlockError('wrong_password');
+      if (gate.hasCheckKey()) {
+        try { await gate.check('disable'); } catch (err) { throw helperFailure(err); }
+      }
+      return await this.exclusive(async () => {
+        const stillSame = () => this.vaultKey === key && this.keyEpoch === epoch && !this.pendingOldKey && this.hasPlatformUnlock();
+        if (!stillSame()) throw new PlatformUnlockError('vault_changed');
+        const newKey = randomBytes(32);
+        // One atomic write: the password wrap of the NEW key (the old key as `pending`) and no platform header.
+        await this.writePasswordWrap(password, newKey, pw.accountId, key, null);
+        if (this.vaultKey !== key || this.keyEpoch !== epoch) {
+          // Locked or replaced during the (slow) password hash: the file already says "new key, old key pending".
+          // Memory is not moved on; the next password unlock finishes the move (it reads the pending key).
+          newKey.fill(0);
+          throw new PlatformUnlockError('vault_changed');
+        }
+        this.pendingOldKey = key;
+        this.vaultKey = newKey;
+        this.keyEpoch++;
+        return this.reconcileRekey(mcp, { countFailure: false });
+      });
+    } finally {
+      this.platformBusy = false;
+    }
+  }
+
+  /** Is this the key Touch ID opens? One touch. For the case that the vault is unlocked already and a session is asked for (see routes/platform.ts). */
+  async verifyWithPlatform(): Promise<void> {
+    const service = this.platform;
+    if (!service) throw new PlatformUnlockError('no_helper');
+    const current = this.vaultKey;
+    if (!current) throw new PlatformUnlockError('locked');
+    const header = this.readPlatformHeader();
+    if (!header) throw new PlatformUnlockError('not_enabled');
+    let key: Buffer | null = null;
+    try {
+      try { key = await new PlatformUnsealProvider(service, header).deriveKey(); } catch (err) { throw helperFailure(err); }
+      if (this.vaultKey !== current || key.length !== current.length || !timingSafeEqual(key, current)) throw new PlatformUnlockError('wrap_mismatch');
+    } finally {
+      key?.fill(0);
+    }
+  }
+
+  /**
+   * Unlock with a touch. False is never returned: a refusal is an error with a code, so the page
+   * can tell "cancelled" from "damaged"; whatever it is, the password still opens the vault.
+   * The key that comes back must open the vault's verifier, else it is dropped (a stale wrap).
+   */
+  async unlockWithPlatform(): Promise<void> {
+    const service = this.platform;
+    if (!service) throw new PlatformUnlockError('no_helper');
+    if (this.vaultKey) throw new PlatformUnlockError('already_unlocked');
+    const pw = this.readPasswordHeader();
+    const header = this.readPlatformHeader();
+    if (!pw || !header) throw new PlatformUnlockError('not_enabled');
+    if (pw.pending) throw new PlatformUnlockError('rekey_pending');   // the old key is only in the password wrap
+    if (header.accountId !== pw.accountId) throw new PlatformUnlockError('wrap_mismatch');
+    if (this.platformBusy) throw new PlatformUnlockError('busy');
+    this.platformBusy = true;
+    const epoch = this.keyEpoch;
+    let key: Buffer | null = null;
+    try {
+      try {
+        key = await new PlatformUnsealProvider(service, header).deriveKey();
+      } catch (err) {
+        throw helperFailure(err);
+      }
+      const candidate: CandidateKey = { key, providerId: 'platform', apiKeyHash: null };
+      if (this.keyMatch(candidate) !== 'match') throw new PlatformUnlockError('wrap_mismatch');
+      // Unlocked, wiped or switched off while the prompt was open: the answer is dropped.
+      const still = this.readPlatformHeader();
+      if (this.vaultKey || this.keyEpoch !== epoch || !still || still.wrapped !== header.wrapped || still.keyBlob !== header.keyBlob) {
+        throw new PlatformUnlockError('vault_changed');
+      }
+      this.adopt(candidate);
+      key = null;     // now the vault's
+    } finally {
+      key?.fill(0);
+      this.platformBusy = false;
+    }
+  }
+
+  /**
+   * A re-key (the move to a fresh vault key) wraps the new key for the helper too, with no touch,
+   * in the same write as the password wrap. Without a helper to wrap with, the stale wrap is dropped:
+   * the person unlocks with the password. Undefined: there is no second wrap, nothing changes.
+   */
+  private async platformAfterRekey(newKey: Buffer, accountId: string): Promise<PlatformHeader | null | undefined> {
+    const header = this.readPlatformHeader();
+    if (!header) return undefined;
+    if (!this.platform) return null;
+    try {
+      const wrapped = await this.platform.wrap({ publicKey: header.publicKey, vaultKey: newKey, aad: platformAad(accountId) });
+      return { ...header, wrapped, accountId };
+    } catch {
+      return null;
+    }
   }
 
   // ─── Key management ─────────────────────────────────────────────────────
@@ -639,6 +933,7 @@ export class Vault {
    * verifier under the wrong key.
    */
   adopt(candidate: CandidateKey): void {
+    this.keyEpoch++;
     this.vaultKey = candidate.key;
     this.unsealedBy = candidate.providerId;
     if (candidate.apiKeyHash) this.apiKeyHash = candidate.apiKeyHash;
@@ -682,6 +977,7 @@ export class Vault {
   }
 
   clearKey(): void {
+    this.keyEpoch++;
     this.pendingOldKey?.fill(0);
     this.pendingOldKey = null;
     this.vaultKey = null;

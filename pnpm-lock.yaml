@@ -38,6 +38,9 @@ importers:
         specifier: ^7.30.1
         version: 7.30.1
     devDependencies:
+      '@suveren/unlock-helper':
+        specifier: workspace:*
+        version: link:../../packages/unlock-helper
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -108,6 +111,9 @@ importers:
       '@hap/core':
         specifier: workspace:*
         version: link:../../packages/hap-core
+      '@suveren/approval-card':
+        specifier: workspace:*
+        version: link:../../packages/approval-card
       parse-diff:
         specifier: ^0.12.0
         version: 0.12.0
@@ -140,6 +146,37 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.35)(tsx@4.23.15)
 
+  packages/approval-card:
+    dependencies:
+      '@hap/core':
+        specifier: workspace:*
+        version: link:../hap-core
+    devDependencies:
+      '@types/react':
+        specifier: ^18.2.0
+        version: 18.3.28
+      '@types/react-dom':
+        specifier: ^18.2.0
+        version: 18.3.7(@types/react@18.3.28)
+      '@vitejs/plugin-react':
+        specifier: ^4.7.0
+        version: 4.7.0(vite@6.4.4(@types/node@20.19.35)(tsx@4.23.15))
+      react:
+        specifier: ^18.2.0
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.3.1(react@18.3.1)
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+      vite:
+        specifier: ^6.4.4
+        version: 6.4.4(@types/node@20.19.35)(tsx@4.23.15)
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@20.19.35)(tsx@4.23.15)
+
   packages/hap-core:
     dependencies:
       '@humanagencyp/hap-core':
@@ -152,6 +189,18 @@ importers:
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
+
+  packages/unlock-helper:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.10.0
+        version: 20.19.35
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/node@20.19.35)(tsx@4.23.15)
 
 packages:
 

@@ -9,10 +9,10 @@
 import { describe, it, expect } from 'vitest';
 import { computeMandateDiff, type ChangeProfile } from '@hap/core/mandate-change';
 import type { AgentProfile } from '@hap/core';
-import { isAttachmentSourceField, type SourceManifestLike } from './attachment-sources';
+import { isAttachmentSourceField, type SourceManifestLike } from '@suveren/approval-card/lib/attachment-sources';
 import { formatScopeFieldValue } from './scope-labels';
-import { profileFieldLines } from './approval-view';
-import { rowLabel, rowMeaning } from './mandate-change-view';
+import { profileFieldLines } from '@suveren/approval-card/lib/approval-view';
+import { rowLabel, rowMeaning } from '@suveren/approval-card/lib/mandate-change-view';
 
 const FIELD = 'may_include_documents';
 const DEF = { displayName: 'Documents it may include', format: 'connector:kind', constraint: { enforceable: ['subset'] } };

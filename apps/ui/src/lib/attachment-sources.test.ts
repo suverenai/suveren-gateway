@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   attachmentSourceGroups, attachmentSourceLabel, formatAttachmentSources, isAiSuppliedFileName,
   isAttachmentSourceField, joinSources, parseSources, sourceTitle, type SourceManifestLike,
-} from './attachment-sources';
+} from '@suveren/approval-card/lib/attachment-sources';
 import { formatScopeFieldValue } from './scope-labels';
-import { profileFieldLines } from './approval-view';
+import { profileFieldLines } from '@suveren/approval-card/lib/approval-view';
 import type { AgentProfile } from '@hap/core';
 
 // Manifest shapes as in the contract: ERP-style archive kinds and a "file" kind with aiSupplied.

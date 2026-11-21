@@ -472,7 +472,7 @@ const DEL = { route: 'credentials', op: 'delete' };
 async function confirmed(r: Rig, h: Record<string, string>, kind: string, name: string, change: unknown = null, password = PW) {
   const req = await call(r.port, 'POST', '/auth/confirm/request', { headers: h, body: { kind, name, change } });
   expect(req.status).toBe(200);
-  const request = req.body.request as { request_id: string; kind: string; change_hash: string; gateway_key_id: null; expires_at: number };
+  const request = req.body.request as { request_id: string; kind: string; name: string; change_hash: string; gateway_key_id: null; expires_at: number };
   const conf = await call(r.port, 'POST', '/auth/confirm', { headers: h, body: { request_id: request.request_id, password } });
   return { request, conf, id: request.request_id };
 }
@@ -518,7 +518,9 @@ describe('replacing or removing a connector login: enforced where the vault rout
   it('a request is built for one exact change: {request_id, kind, change_hash, gateway_key_id, expires_at}; request_id is 16 random bytes', async () => {
     const { r, token, cookie } = await withPassword();
     const { request } = await confirmed(r, sessionHeaders(token, cookie), 'replace', 'gmail', PUT({ token: 'a' }));
-    expect(Object.keys(request).sort()).toEqual(['change_hash', 'expires_at', 'gateway_key_id', 'kind', 'request_id']);
+    // plan section 7's five members plus `name` (step 5a: the check key's prompt names the login; change_hash binds it again)
+    expect(Object.keys(request).sort()).toEqual(['change_hash', 'expires_at', 'gateway_key_id', 'kind', 'name', 'request_id']);
+    expect(request.name).toBe('gmail');
     expect(Buffer.from(request.request_id, 'base64url')).toHaveLength(16);
     expect(request.change_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(request.expires_at - r.clock.now()).toBe(CONFIRMATION_TTL_MS);

@@ -52,6 +52,9 @@ import { scrubProxyRequest } from './lib/proxy-headers';
 import { OAuthStartTickets } from './lib/oauth-start-ticket';
 import { RekeyRetrier } from './lib/rekey-retry';
 import { mountDeviceKeyRoutes } from './routes/device-keys-mount';
+import { PlatformHelper, locateHelper } from './lib/platform-helper';
+import { CheckKeyStore } from './lib/platform-checks';
+import { DeviceChainStore } from './lib/device-chain-store';
 import { createOAuthFlowRouter, type OAuthManifestEntry } from './routes/oauth-flow';
 import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
@@ -150,7 +153,12 @@ const pageSessionDeps: PageSessionDeps = {
 };
 vault.onLocked(() => pageSessionDeps.sessions.endAll());
 const unlockLimiter = new UnlockLimiter();
-const loginChangeConfirmations = new ChangeConfirmations();
+// Step 5a (native helper: unlock by Touch ID, this computer's check key): only where the switch is on.
+const checkKeyStore = deviceKeys ? new CheckKeyStore(vault, new DeviceChainStore(vault)) : null;
+const platformHelper = deviceKeys
+  ? new PlatformHelper({ locate: () => locateHelper({ here: import.meta.dirname ?? __dirname }) })
+  : null;
+const loginChangeConfirmations = new ChangeConfirmations(checkKeyStore ? { checkRequired: () => checkKeyStore.has() } : {});
 
 // AU10 §8.4 — "what you saw" snapshots, encrypted at rest with the same
 // vault key as the credential store (shown-snapshot.ts).
@@ -250,8 +258,9 @@ const { loginChangeGate, deviceChainState, signin: deviceSignin } = mountDeviceK
   pageSession: pageSessionDeps,
   limiter: unlockLimiter,
   confirmations: loginChangeConfirmations,
-  // No computer has a check key until the native helper (step 5a) exists.
-  hasCheckKey: () => false,
+  // A computer has a check key once the native helper made one (step 5a); then the password is no confirmation.
+  hasCheckKey: checkKeyStore ? () => checkKeyStore.has() : () => false,
+  platform: platformHelper && checkKeyStore ? { host: platformHelper, checkStore: checkKeyStore } : undefined,
   mcp: mcpRekeyClient,
   internalSecret: () => internalSecret,
   jsonParser,

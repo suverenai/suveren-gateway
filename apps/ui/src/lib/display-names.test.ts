@@ -6,9 +6,9 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentProfile } from '@hap/core';
 import type { ChangeRow, MandateDiff } from '@hap/core/mandate-change';
-import { connectorName, scopeValueName, scopeValueNames } from './display-names';
+import { connectorName, scopeValueName, scopeValueNames } from '@suveren/approval-card/lib/display-names';
 import { blockedView, sourceLineText } from './blocked-view';
-import { valueName, rowMeaning, staysLines } from './mandate-change-view';
+import { valueName, rowMeaning, staysLines } from '@suveren/approval-card/lib/mandate-change-view';
 import { inTicket } from './ticket-what-was-done';
 import type { DenialRecord } from './sp-client';
 

@@ -1,5 +1,5 @@
-import { AreaIcon } from './AreaIcon';
-import type { AreaIconName } from '../lib/area';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
+import type { AreaIconName } from '@suveren/approval-card/lib/area';
 
 export interface AreaFilterOption {
   /** The profile's short id — the `?area=` value (UI spec §13.3). */

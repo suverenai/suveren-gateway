@@ -1,6 +1,6 @@
 import { useCallback, useRef, type ReactNode } from 'react';
-import { AreaIcon } from './AreaIcon';
-import { areaIcon } from '../lib/area';
+import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
+import { areaIcon } from '@suveren/approval-card/lib/area';
 
 /**
  * Shared pieces of the mandate, ticket and blocked cards (UI spec §18): the

@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react';
 import { spClient, type Proposal, type ProfileConfig } from './sp-client';
 import { effectiveApprovals } from './sp-client';
 import { useAuth } from '../contexts/AuthContext';
-import { useProfile } from './profile-cache';
+import { useProfile } from '@suveren/approval-card/lib/profile-cache';
 import { findAboveCapViolation, type AboveCapReason } from './team-caps';
 import { buildMemberNameMap, namesFor } from './member-names';
 

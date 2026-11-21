@@ -35,11 +35,24 @@ import { execSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkHelperBuild } from './lib/helper-check.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 
 const buildApps = process.argv.includes('--build-apps');
+
+// The native helper (opt-in) is checked FIRST, before anything is cleaned or built: a debug helper (software keys,
+// serves any caller) or a file that does not match its hash list never goes into the package.
+const withHelper = process.argv.includes('--with-helper');
+const HELPER_BUILT = process.env.SUVEREN_HELPER_BUILD_DIR ?? join(REPO_ROOT, 'packages/unlock-helper/macos/dist');
+if (withHelper) {
+  const problems = checkHelperBuild(HELPER_BUILT);
+  if (problems.length) {
+    for (const p of problems) console.error(`[bundle] --with-helper: ${p}`);
+    process.exit(1);
+  }
+}
 
 const SRC = {
   ui: join(REPO_ROOT, 'apps/ui/dist'),
@@ -80,6 +93,21 @@ mkdirSync(join(OUT, 'bin'), { recursive: true });
 cpSync(SRC.ui,  join(OUT, 'dist', 'ui'),            { recursive: true });
 cpSync(SRC.cp,  join(OUT, 'dist', 'control-plane'), { recursive: true });
 cpSync(SRC.mcp, join(OUT, 'dist', 'mcp-server'),    { recursive: true });
+
+// ─── Native Touch ID helper (device-keys step 5a; opt-in) ───────────────────
+// macOS on Apple silicon only: an ad-hoc signed Suveren.app and the hashes of its files. The app goes
+// to helper/, the hashes into the control plane's own folder (NOT beside the helper): the gateway
+// refuses a helper file that does not match them. Build it first:
+//   packages/unlock-helper/macos/build-app.sh
+// Without --with-helper nothing changes: the package carries no helper, and the gateway says so
+// ("no helper here") and works with the password, as before.
+if (withHelper) {
+  const built = HELPER_BUILT;   // checked above
+  cpSync(join(built, 'Suveren.app'), join(OUT, 'helper', 'Suveren.app'), { recursive: true });
+  cpSync(join(built, 'helper-manifest.json'), join(OUT, 'dist', 'control-plane', 'helper-manifest.json'));
+  chmodSync(join(OUT, 'helper', 'Suveren.app', 'Contents', 'MacOS', 'suveren-unlock-helper'), 0o755);
+  console.log('[bundle] ✓ native helper (Suveren.app) included');
+}
 
 // Ship integration manifests so the UI's Integrations page works
 // out of the box (Docker copies these too via COPY content/integrations/).

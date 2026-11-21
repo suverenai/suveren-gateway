@@ -14,6 +14,7 @@
     "bin",
     "lib",
     "dist",
+    "helper",
     "scripts",
     "content",
     "profiles",

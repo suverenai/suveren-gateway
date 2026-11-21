@@ -17,9 +17,9 @@ import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import { useFormInProgress } from '../hooks/useFormInProgress';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { QueueCard } from './QueueCard';
-import { announceApprovalDecided, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
+import { announceApprovalDecided, type DecisionKind, type DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { QueueEntry } from '../lib/approval-queue';
-import { resultDismissLabel, type ApprovalOutcome } from '../lib/approval-outcome';
+import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
 import {
   INITIAL_PANEL, RESULT_SHOW_MS, SLIDE_MS, afterDecision, neighbour, panelChrome, positionOf,
   reconcilePanel, resolveCurrent, stripAutoLabel, type PanelState,

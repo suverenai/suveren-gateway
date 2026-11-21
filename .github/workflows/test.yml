@@ -75,3 +75,58 @@ jobs:
         env:
           REPORT_BROWSER_TEST: required
         run: pnpm -r test
+
+  # The native Touch ID helper (device-keys step 5a, packages/unlock-helper) is Swift for macOS on Apple silicon,
+  # so it cannot be tested on the Linux runner above. This job builds it and runs:
+  #   - the Swift tests (the Secure Enclave suite skips itself: a CI virtual machine has no Secure Enclave),
+  #   - the control plane's tests with the real helper process (debug build, software backend: real protocol, no touch),
+  #   - the RELEASE helper (build-app.sh, ad-hoc signed Suveren.app, no --allow-any-caller) started by the control
+  #     plane's own code with the real hash check and the real caller check (platform-release-helper.test.ts),
+  #   - the check that bundle/build.mjs --with-helper refuses a debug helper.
+  # No touch is made anywhere; the prompts are checked by hand (packages/unlock-helper/DESIGN.md section 9).
+  macos-helper:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: suveren-gateway
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: suveren-gateway/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: suveren-gateway
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (workspace)
+        working-directory: suveren-gateway
+        run: pnpm -r build
+
+      - name: Swift build (debug helper) and Swift tests
+        working-directory: suveren-gateway/packages/unlock-helper/macos
+        run: |
+          swift build
+          ./test.sh
+
+      - name: Release helper (Suveren.app, ad-hoc signed)
+        working-directory: suveren-gateway/packages/unlock-helper/macos
+        run: ./build-app.sh
+
+      - name: Helper client tests (real debug helper)
+        working-directory: suveren-gateway/packages/unlock-helper
+        run: pnpm test
+
+      - name: Control plane tests (real debug helper, release helper, bundle check)
+        working-directory: suveren-gateway/apps/control-plane
+        env:
+          SUVEREN_HELPER_BUILD: ${{ github.workspace }}/suveren-gateway/packages/unlock-helper/macos/dist
+        run: pnpm test

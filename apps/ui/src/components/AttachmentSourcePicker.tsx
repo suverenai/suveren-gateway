@@ -14,7 +14,7 @@ import {
   parseSources,
   type SourceGroup,
   type SourceManifestLike,
-} from '../lib/attachment-sources';
+} from '@suveren/approval-card/lib/attachment-sources';
 
 interface Loaded { manifests: SourceManifestLike[]; running: Set<string> }
 
