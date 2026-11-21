@@ -41,7 +41,7 @@ export async function giveRequestFromProposal(args: Record<string, unknown>, tea
   };
 }
 
-export function useCardMandateGive(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void }): MandateGive | null {
+export function useCardMandateGive(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void; onGiven: () => void }): MandateGive | null {
   const chain = useDeviceChain();
   const { user, group, groupId } = useAuth();
   const [request, setRequest] = useState<GiveRequest | null>(null);
@@ -55,7 +55,7 @@ export function useCardMandateGive(proposal: { id: string; tool: string }, args:
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chain, argsKey, groupId, group?.isPersonal]);
-  const driver = useGive(request, { chain, fromProposal: proposal.id, userId: user?.id ?? '' });
+  const driver = useGive(request, { chain, fromProposal: proposal.id, userId: user?.id ?? '', onGiven: o.onGiven });
   // Pressed before the plan was checked: the give starts the moment it is (never a silent click, never a give of an unchecked plan).
   const fired = useRef(false);
   useEffect(() => {

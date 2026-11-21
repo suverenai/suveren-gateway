@@ -100,7 +100,10 @@ export function ApprovalCard({
   // A device-key gateway: "Give this mandate" runs the one give driver IN PLACE, from exactly what the body opened and shows.
   const [mandateArgs, setMandateArgs] = useState<Record<string, unknown> | null>(null);
   const onMandateArgs = useCallback((a: Record<string, unknown> | null) => setMandateArgs(a), []);
-  const hostGive = (approvalHost().useMandateGive ?? noMandateGive)(proposal, mandateArgs, { onClose: () => onDismissResult?.() });
+  // Given: the host keeps this card on screen with the result stamp (as after any decision) until the person presses Close —
+  // told BEFORE the proposal is closed, or the queue would drop the card before "Signed" is seen.
+  const onGiven = useCallback(() => { onDecided?.('approve', {}); onOutcome?.('unknown'); }, [onDecided, onOutcome]);
+  const hostGive = (approvalHost().useMandateGive ?? noMandateGive)(proposal, mandateArgs, { onClose: () => onDismissResult?.(), onGiven });
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   // Whether THIS device can decrypt the content — nothing can be approved that
