@@ -15,6 +15,11 @@ on:
       # that ships an ungoverned read tool MUST fail a build.
       - 'content/**'
       - 'Dockerfile'
+      # Dependencies decide what ships: a lockfile-only update (Dependabot,
+      # a security fix) must test the bundle too.
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/bundle-smoke.yml'
   pull_request:
     paths:
@@ -23,6 +28,11 @@ on:
       - 'packages/**'
       - 'content/**'
       - 'Dockerfile'
+      # Dependencies decide what ships: a lockfile-only update (Dependabot,
+      # a security fix) must test the bundle too.
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/bundle-smoke.yml'
   workflow_dispatch:
 
