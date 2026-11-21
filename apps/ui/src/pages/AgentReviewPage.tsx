@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { autoTitleUnlessTyped } from '../lib/auto-title';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -192,7 +193,8 @@ export function AgentReviewPage() {
           const title = contextParts.length > 0
             ? `${shortName}: ${contextParts.join(' · ')}`
             : shortName;
-          setAuthTitle(title);
+          // The profile can arrive after the person typed: never overwrite what they typed (this closure saw the first, empty title).
+          setAuthTitle(prev => autoTitleUnlessTyped(prev, title));
         }
       })
       .catch(() => {});
