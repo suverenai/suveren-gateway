@@ -162,9 +162,12 @@ const b = (s, k) => { if (typeof s[k] !== 'string' || !/^[A-Za-z0-9_-]*$/.test(s
 async function run(r) {
   switch (r.op) {
     case 'hello':
-      return { helper: 'fake-helper', version: '0.0.0', protocol: 1, platform: 'macos', backend: 'fake', secureHardware: true, biometry: true, userPresence: true };
+      // FAKE_PLATFORM=windows plays the Windows helper (its key storage can only ask "is it you?", never biometry only);
+      // FAKE_BIOMETRY=0 a computer without a fingerprint reader or camera.
+      return { helper: 'fake-helper', version: '0.0.0', protocol: 1, platform: process.env.FAKE_PLATFORM ?? 'macos', backend: 'fake', secureHardware: true, biometry: process.env.FAKE_BIOMETRY !== '0', userPresence: true };
     case 'wrap.create': case 'check.create': {
       if (!['user-presence', 'biometry-current-set', 'biometry-any'].includes(r.policy)) throw err('bad_request', 'policy');
+      if (process.env.FAKE_PLATFORM === 'windows' && r.policy !== 'user-presence') throw err('no_biometry', 'This key storage cannot require biometry only.');
       const k = newKey();
       return { keyBlob: k.blob, publicKey: k.pub.toString('base64url'), policy: r.policy };
     }

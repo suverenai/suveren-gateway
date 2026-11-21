@@ -474,7 +474,7 @@ Windows, C++ a Visual Studio toolchain.
 every use of a TPM key is unknown, and the UI policy may be a software-provider mechanism only. A key whose use does not
 ask the person must never become a `platform` check (DEC-47). And the helper's reason text does **not** reach the
 Windows prompt on this route: CNG takes no per-use text, so the person would see Windows' own wording, not "add the
-device …". Both are for the measurement, and the text question is a product decision for the maintainer.
+device …". The first is for the measurement; the text was accepted (DEC-97): Windows shows its own wording, the page shows the content.
 
 ### 8.1 Design (from documentation)
 
@@ -616,11 +616,12 @@ gateway to a second Mac: expect `key_invalid` on the unlock, not a prompt, and t
    do: the mandate grant's text when steps 13 and 14 freeze its object; and your wording for every text in 3.3 (O19).
 5. **Intel Macs:** password only for now (the control plane reports `unsupported_arch`); a universal build was not tried.
 6. **Windows:** a Windows 11 machine with Hello and a TPM 2.0 to measure Route A (section 8.0, 8.1) before
-   `-tags hellomeasured` may ship; whether the prompt without the helper's reason text is acceptable; an
-   Authenticode code-signing certificate for `suveren-unlock-helper.exe` (the MSI's signing step can sign it; the
-   hashes must then be taken AFTER signing, because signing changes the file) and SmartScreen reputation. Language:
-   decided for Go (8.0). The check key on Windows: the TPM route offers only `user-presence`, so the gateway's
-   `biometry-current-set` check policy is refused there (`no_biometry`) until that is decided.
+   `-tags hellomeasured` may ship; an Authenticode code-signing certificate for `suveren-unlock-helper.exe` (the
+   MSI's signing step can sign it; the hashes must then be taken AFTER signing, because signing changes the file)
+   and SmartScreen reputation. Decided (DEC-97): Go with `golang.org/x/text`; Windows' own Hello prompt wording is
+   accepted (the helper's reason text cannot reach it; the page shows the content); the check key on Windows is
+   `user-presence`, so Windows Hello with the PIN counts as well as biometrics (`checkPolicyFor` in
+   `apps/control-plane/src/lib/platform-helper.ts`); macOS stays `biometry-current-set`.
 7. **Where `allowed-callers.json` is written and who can change it.** In the user's own folder it is only
    a guard against another program, not against the user's AI (section 4). A system-wide install with
    a root-owned list is the S1/S2 answer (O29).

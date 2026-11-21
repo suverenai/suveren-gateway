@@ -168,6 +168,14 @@ export interface HostOptions {
 /** Wrap policies decided in DESIGN.md 6.1 (the maintainer decides): unlock by presence, the check by biometry. */
 export const UNLOCK_POLICY: Policy = 'user-presence';
 export const CHECK_POLICY: Policy = 'biometry-current-set';
+/**
+ * The check key's policy on this computer. macOS: biometry (Touch ID), as decided in DESIGN.md 6.1. Windows (DEC-97):
+ * Windows Hello with the PIN counts as well as a fingerprint or face, so `user-presence`; Windows' key storage cannot
+ * require biometry only anyway (DESIGN.md 8.0).
+ */
+export function checkPolicyFor(platform: HelloInfo['platform'] | undefined): Policy {
+  return platform === 'windows' ? 'user-presence' : CHECK_POLICY;
+}
 
 export class PlatformHelper {
   private client: UnlockHelperClient | null = null;

@@ -1188,3 +1188,24 @@ describe('item 9: the vault key is wrapped in Node; the helper never receives it
     for (const needle of [keyHex, raw.toString('base64'), raw.toString('base64url')]) expect(sent).not.toContain(needle);
   });
 });
+
+// DEC-97: on Windows the check key accepts Windows Hello with the PIN as well as a fingerprint or face; macOS stays biometric.
+describe('the check key\'s policy per platform (DEC-97, FAKE helper)', () => {
+  it('macOS: biometry, and a Mac without Touch ID gets no check key', async () => {
+    const mac = new PlatformChecks(fakeHost());
+    expect(await mac.possible()).toEqual({ ok: true });
+    expect((await mac.createKey()).policy).toBe('biometry-current-set');
+    const noTouchId = new PlatformChecks(fakeHost({ FAKE_BIOMETRY: '0' }));
+    expect(await noTouchId.possible()).toEqual({ ok: false, code: 'no_biometry' });
+    await expect(noTouchId.createKey()).rejects.toMatchObject({ code: 'no_biometry' });
+  });
+
+  it('Windows: Windows Hello with the PIN is enough, with or without biometrics, and the key is made with user-presence', async () => {
+    for (const env of [{ FAKE_PLATFORM: 'windows', FAKE_BIOMETRY: '0' }, { FAKE_PLATFORM: 'windows' }] as Record<string, string>[]) {
+      const win = new PlatformChecks(fakeHost(env));
+      expect(await win.possible()).toEqual({ ok: true });
+      // the fake Windows helper refuses any biometry-only policy, as the TPM key storage does
+      expect((await win.createKey()).policy).toBe('user-presence');
+    }
+  });
+});
