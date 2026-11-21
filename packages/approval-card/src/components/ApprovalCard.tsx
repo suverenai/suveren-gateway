@@ -23,7 +23,7 @@ import { ApprovalBody } from './ApprovalBody';
 import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
-import { RefusedTop, ResultFoot, StampNext, UnknownTop } from './ApprovalResult';
+import { GiveProblemTop, RefusedTop, ResultFoot, StampNext, UnknownTop } from './ApprovalResult';
 import { ApprovalSummary } from './ApprovalSummary';
 import {
   OUTCOME_POLL_MS, OUTCOME_WAIT_MS, OUTCOME_WAITING_LINE, OUTCOME_UNKNOWN_LINE, MANDATE_ENDED_DETAIL,
@@ -225,9 +225,11 @@ export function ApprovalCard({
 
   // An in-place give counts as busy: the header and the other cards stay locked until it is given or back at the offer.
   const busy = phase.t === 'working' || phase.t === 'done' || !!hostGive?.active;
+  // A give that did not go through is a result that stays, like a refused decision: the body stays readable under the reason.
+  const giveProblem = hostGive?.active ? hostGive.problem : null;
   // A result that stays (refused, or not known) is not a stamp over the card: it sits on top of the card, the card below it,
   // and one full-width button is pinned at the bottom (UI review, DEC-88).
-  const staysOnCard = phase.t === 'done' && (outcome === 'refused' || outcome === 'unknown');
+  const staysOnCard = (phase.t === 'done' && (outcome === 'refused' || outcome === 'unknown')) || !!(hostGive?.active && hostGive.problem);
   const [checking, setChecking] = useState(false);
   const checkAgain = () => {
     if (checking) return;
@@ -281,6 +283,7 @@ export function ApprovalCard({
         <article ref={bodyRef} className="av3-body" aria-hidden={(busy && !staysOnCard) || undefined}>
           {nextLabelText && <div className="av3-next" role="status" style={{ order: -1 }}>{nextLabelText}</div>}
           {phase.t === 'done' && refusedAfter && <RefusedTop proposal={refusedAfter} manifests={manifests} />}
+          {giveProblem && <GiveProblemTop text={giveProblem} />}
           {outcome === 'unknown' && phase.t === 'done' && <UnknownTop word={stampWord(phase.kind, isMandate)} line={OUTCOME_UNKNOWN_LINE} />}
           <ApprovalBody
             proposal={proposal}

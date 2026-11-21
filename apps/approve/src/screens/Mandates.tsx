@@ -30,7 +30,7 @@ export function GiveRow({ item, nowSeconds, onOpen }: { item: GiveItem; nowSecon
 
 /** A change on the phone (mockup B1): the gateway's change card body, old values crossed out; the diff was checked against the previous grant. */
 function ChangeBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }) {
-  const summary = giveSummaryLine({ limits: item.bounds, scope: item.scope, boundsSchema: schemaOf(item, 'boundsSchema'), durationSeconds: item.lastsSeconds });
+  const summary = giveSummaryLine({ limits: item.bounds, scope: item.scope, boundsSchema: schemaOf(item, 'boundsSchema'), scopeSchema: schemaOf(item, 'scopeSchema'), durationSeconds: item.lastsSeconds });
   return (
     <>
       <div className="av3-type"><b>{P.changeRowKind}</b><span className="av3-area">{item.title}</span></div>
@@ -51,7 +51,7 @@ function GiveBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }) 
   const limits = limitRows(item.bounds, bounds);
   const scope = Object.entries(item.scope);
   const approvers = Array.isArray(item.payload.above_cap_approvers) ? item.payload.above_cap_approvers : [];
-  const summary = giveSummaryLine({ limits: item.bounds, scope: item.scope, boundsSchema: bounds, durationSeconds: item.lastsSeconds });
+  const summary = giveSummaryLine({ limits: item.bounds, scope: item.scope, boundsSchema: bounds, scopeSchema: schemaOf(item, 'scopeSchema'), durationSeconds: item.lastsSeconds });
   return (
     <>
       <div className="av3-type"><b>{P.giveRowKind}</b><span className="av3-area">{item.title}</span></div>

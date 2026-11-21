@@ -69,7 +69,7 @@ export function approverLines(approvers: Array<{ userId: string; name: string }>
 
 /**
  * The one-line summary under a mandate's title (UI review, DEC-88): the numbers the person signs, before the detail blocks —
- * every shown limit with its unit, every scope value, then how long. "2,000 EUR · 10 · Austria, Germany · 14 days".
+ * every shown limit and scope value with the profile's label for it, then how long. "Offer value: 2000 EUR · Per day: 10 · Region: Austria, Germany · 14 days".
  * Driven by the profile's schema, never by a field name. Empty parts are left out; an empty result means no line.
  */
 export function giveSummaryLine(input: {
@@ -77,13 +77,16 @@ export function giveSummaryLine(input: {
   scope?: Record<string, unknown> | null;
   durationSeconds?: number | null;
   boundsSchema?: SchemaLike;
+  scopeSchema?: SchemaLike;
   hidden?: ReadonlySet<string>;
 }): string {
-  const parts: string[] = limitRows(input.limits ?? {}, input.boundsSchema, input.hidden).map(r => r.value);
+  // Each value with the profile's own label for its field (UI review: a bare "none · none · 50" cannot be read). Generic: the label
+  // comes from the schema, never from a field name in code; a field the schema does not label shows its key.
+  const parts: string[] = limitRows(input.limits ?? {}, input.boundsSchema, input.hidden).map(r => `${r.label}: ${r.value}`);
   for (const [k, v] of Object.entries(input.scope ?? {})) {
     if (k === 'profile' || k === 'path') continue;
     const text = Array.isArray(v) ? v.filter(x => typeof x === 'string' || typeof x === 'number').join(', ') : (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
-    if (text) parts.push(text);
+    if (text) parts.push(`${scopeLabel(k, input.scopeSchema)}: ${text}`);
   }
   if (input.durationSeconds && input.durationSeconds > 0) parts.push(durationText(input.durationSeconds));
   return parts.join(' · ');

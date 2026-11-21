@@ -19,7 +19,7 @@ vi.mock('./sp-client', () => ({
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({}) }));
 vi.mock('../contexts/EventSourceContext', () => ({ useSSEEvent: () => {} }));
 
-const { giveRequestFromProposal } = await import('./card-give');
+const { giveRequestFromProposal, giveProblemText } = await import('./card-give');
 const { mandatePrefillGate } = await import('@suveren/approval-card/lib/create-mandate-prefill');
 const { carryBoundsForward, carryContextForward } = await import('@suveren/approval-card/lib/profile-upgrade');
 
@@ -48,5 +48,21 @@ describe('giveRequestFromProposal: the card gives exactly what the give page wou
     expect(await giveRequestFromProposal({ ...ARGS, profile: 'nope' }, { groupId: 'g', isPersonal: true })).toBeNull();
     expect(await giveRequestFromProposal({ ...ARGS, mode: undefined }, { groupId: 'g', isPersonal: true })).toBeNull();
     expect(await giveRequestFromProposal({ ...ARGS, duration_hours: undefined }, { groupId: 'g', isPersonal: true })).toBeNull();
+  });
+});
+
+describe('giveProblemText: a give that did not go through stays on the card as a result with its reason (DEC-88)', () => {
+  const base = { given: false, phone: { s: 'offered' }, onPhone: false, error: '', touch: 'offered', tried: true };
+  it('a refusal from the phone, a stopped wait, a failed touch here: each has its reason', () => {
+    expect(giveProblemText({ ...base, onPhone: true, phone: { s: 'refused', message: 'The answer from your phone does not match what is shown here. Nothing was given.' } }))
+      .toBe('The answer from your phone does not match what is shown here. Nothing was given.');
+    expect(giveProblemText({ ...base, onPhone: true, phone: { s: 'stopped' } })).toMatch(/Stopped\. Nothing was given\./);
+    expect(giveProblemText({ ...base, error: 'Your touch did not work. Nothing changed.' })).toBe('Your touch did not work. Nothing changed.');
+  });
+  it('none while it runs, before anything was tried, or once it is given', () => {
+    expect(giveProblemText({ ...base, onPhone: true, phone: { s: 'waiting' } })).toBeNull();
+    expect(giveProblemText({ ...base, touch: 'touch', error: 'x' })).toBeNull();
+    expect(giveProblemText({ ...base, tried: false, error: 'x' })).toBeNull();
+    expect(giveProblemText({ ...base, given: true, phone: { s: 'refused', message: 'x' } })).toBeNull();
   });
 });

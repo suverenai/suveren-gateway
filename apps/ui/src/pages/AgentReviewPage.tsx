@@ -547,7 +547,7 @@ export function AgentReviewPage() {
   //     ('fail-safe-approval'), so review is NOT weakened by an automatic twin.
   // The earlier copy said "the more permissive limits effectively apply" for all
   // three — understating the cumulative case and overstating the mode case.
-  const giveSummary = giveSummaryLine({ limits: gateData.bounds as Record<string, string | number>, scope: gateData.context, durationSeconds: ttlSeconds, boundsSchema: profile?.boundsSchema as never, hidden: hiddenLimits });
+  const giveSummary = giveSummaryLine({ limits: gateData.bounds as Record<string, string | number>, scope: gateData.context, durationSeconds: ttlSeconds, boundsSchema: profile?.boundsSchema as never, scopeSchema: profile?.scopeSchema as never, hidden: hiddenLimits });
   const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
 
   const giveDisabled = submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0;
