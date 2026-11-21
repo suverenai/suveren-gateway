@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { SkelArea, SkelBlock } from '@suveren/approval-card/components/LoadGate';
 import { ApprovalCard, type DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
@@ -38,7 +39,14 @@ export function RequestsScreen(p: RequestsScreenProps) {
       <h1>{P.listTitle}</h1>
       <p>{P.welcomeReadOnly}</p>
       {p.error && <Notice kind="error">{p.error}</Notice>}
-      {p.proposals === null && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
+      {/* DEC-98: the list's own rows greyed out while it loads (rows the size of the real ones), never a text that jumps away. */}
+      {p.proposals === null && !p.error && (
+        <SkelArea label={P.listLoading}>
+          <div className="dash-rows" data-testid="request-skeleton">
+            {[0, 1, 2].map(i => <SkelBlock key={i} h="4.25rem" radius="0.75rem" />)}
+          </div>
+        </SkelArea>
+      )}
       {p.pushOffer && (
         <div data-testid="push-offer">
           <Notice kind="info"><strong>{P.pushOfferTitle}</strong> {P.pushOfferBody}</Notice>
