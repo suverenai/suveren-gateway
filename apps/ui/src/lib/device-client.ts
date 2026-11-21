@@ -123,6 +123,8 @@ export class DeviceClient {
   // Probes that need no session
   passwordStatus() { return this.go<PasswordStatus>('/auth/password/status'); }
   platformStatus() { return this.go<PlatformStatus>('/auth/platform/status'); }
+  /** Is the gateway itself (its vault) open? `/health` answers without a session (DEC-95: the unlock screen's reason). */
+  vaultState() { return this.go<{ vaultUnlocked?: boolean }>('/health'); }
 
   // Password and unlock
   setPassword(apiKey: string, password: string) {
