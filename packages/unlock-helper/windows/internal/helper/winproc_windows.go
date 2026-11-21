@@ -264,7 +264,9 @@ func systemDLL(name string) *syscall.LazyDLL {
 
 // StdinPeerIsParent (M1a): the other end of the stdin pipe must belong to the parent. The snapshot's parent id can be
 // chosen by whoever creates the process (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS); the pipe's peer cannot. Node gives
-// a child a named pipe whose server end it holds, so the server process id is the parent's.
+// a child a named pipe whose server end it holds, so the server process id is the parent's. Node (libuv) also opens the
+// client end itself and hands it down, so the client id is the parent's as well (or this process, for a helper that
+// opened it itself); either is accepted, the server must be the parent.
 func StdinPeerIsParent(ppid uint32) bool {
 	h, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
 	if err != nil {
@@ -277,7 +279,7 @@ func StdinPeerIsParent(ppid uint32) bool {
 	if rs == 0 || rc == 0 {
 		return false
 	}
-	return (server == ppid && client == me) || (client == ppid && server == me)
+	return server == ppid && (client == ppid || client == me)
 }
 
 // CheckParent is the live check, at start and before every request.

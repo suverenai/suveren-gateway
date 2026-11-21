@@ -83,7 +83,9 @@ export function reasonFor(bytes, focus, previous) {
   } else if (Object.keys(o).sort().join(',') === CHANGE_MEMBERS && (o.kind === 'replace' || o.kind === 'remove') && typeof o.name === 'string' && o.name) {
     text = `${o.kind === 'replace' ? 'replace' : 'remove'} the login of ${quoted(o.name)}`;
   } else if (o.typ === 'suveren-platform-unlock' && Object.keys(o).sort().join(',') === SWITCH_MEMBERS && (o.action === 'enable' || o.action === 'disable')) {
-    text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
+    // the Windows helper names Windows Hello, never Touch ID (reason.go); the reference follows the OS it runs on
+    const auth = process.platform === 'win32' ? 'Windows Hello' : 'Touch ID';
+    text = o.action === 'enable' ? `turn on ${auth} unlock for Suveren` : `turn off ${auth} unlock for Suveren`;
   } else if (o.typ === 'suveren-identity-cancel' && Object.keys(o).sort().join(',') === CANCEL_MEMBERS) {
     text = 'cancel the request for a new identity';
   } else if (o.typ === 'suveren-passkey-register' && Object.keys(o).sort().join(',') === PASSKEY_MEMBERS) {

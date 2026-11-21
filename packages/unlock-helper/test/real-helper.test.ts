@@ -182,7 +182,7 @@ runCallerCheck('real helper refuses a caller that is not the gateway', () => {
 
   it('serves the gateway', () => {
     const r = launch([], callersFile(gw, 'ok.json'));
-    expect(r.code).toBe(0);
+    expect(r.code, r.err).toBe(0);   // on a refusal the helper's stderr names the reason
     expect(JSON.parse(r.out.split('\n')[0]!)).toMatchObject({ ok: true, protocol: 1 });
   });
   it('refuses a parent whose script is outside the gateway install', () => {
