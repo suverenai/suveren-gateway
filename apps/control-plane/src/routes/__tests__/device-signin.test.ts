@@ -41,6 +41,7 @@ async function setUpWorld() {
   const start = await post('/auth/device/setup/start');
   const fin = await post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: as.issueEnrolmentCode() });
   expect(fin.status).toBe(200);
+  await gw.settled(); // the sign-in's background re-wrap: what a test counts afterwards is its own
   const recoveryCode = String(start.body.recoveryCode);
   const rootDid = String(start.body.rootDid);
   const keyId = String(start.body.deviceKeyId);

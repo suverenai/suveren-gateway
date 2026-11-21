@@ -45,6 +45,11 @@ export class ProposalRewrap {
 
   constructor(private readonly d: { vault: Vault; client: DeviceAsClient; readers: DeviceReaders; log?: (m: string) => void }) {}
 
+  /** Resolves when no run is in progress (a sign-in starts one without waiting): the quiet point after a sign-in. */
+  settled(): Promise<void> {
+    return this.running ? this.running.then(() => undefined, () => undefined) : Promise.resolve();
+  }
+
   /** One run at a time; a second caller gets the run in progress. */
   run(): Promise<RewrapResult> {
     return (this.running ??= this.once().finally(() => { this.running = null; }));

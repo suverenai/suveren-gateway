@@ -117,6 +117,12 @@ export interface GatewayRig {
   signin: import('../../lib/device-signin').DeviceSignin | undefined;
   sweeps: { count: number };
   timers: FakeTimers;
+  /**
+   * Waits for the re-wrap every sign-in starts without waiting (routes/device-keys-mount.ts). It reads the chain from
+   * the Authority Server, so a test that counts what is sent after a sign-in counts from here: on a slower computer
+   * (the Linux CI runner) it otherwise lands after the count.
+   */
+  settled: () => Promise<void>;
   clock: { t: number };
   confirmations: ChangeConfirmations;
   checkStore: CheckKeyStore;
@@ -178,7 +184,7 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   // Wired like index.ts: with the helper, the check key's slot decides whether the password still confirms.
   const checkStore = new CheckKeyStore(vault, new DeviceChainStore(vault));
   const confirmations = new ChangeConfirmations(o.platform ? { checkRequired: () => checkStore.has() } : {});
-  const { deviceChainState, signin, loginChangeGate, grants } = mountDeviceKeyRoutes(app, {
+  const { deviceChainState, signin, loginChangeGate, grants, rewrap } = mountDeviceKeyRoutes(app, {
     enabled, vault, pageSession: deps, limiter: new UnlockLimiter(), confirmations,
     hasCheckKey: o.platform ? () => checkStore.has() : () => false, internalSecret: () => 'sekret', jsonParser: json,
     platform: o.platform ? { host: o.platform, checkStore, opensPageSession: o.opensPageSession } : undefined,
@@ -237,7 +243,8 @@ export async function bootGateway(o: BootOptions): Promise<GatewayRig> {
   const ceremony = ceremonyOut;
   const port = (server.address() as { port: number }).port;
   return {
-    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock, confirmations, checkStore, grants, delivered, resynced,
+    port, dir, vault, sessions, deps, configured, alarms, discards, configureGate, signin, sweeps, timers, clock,
+    settled: () => rewrap?.settled() ?? Promise.resolve(), confirmations, checkStore, grants, delivered, resynced,
     /** The ceremony's deps as the routers get them (undefined without `mandate`): what index.ts's background completion runs with. */
     ceremony,
     unlock: async () => {
