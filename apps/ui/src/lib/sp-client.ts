@@ -47,6 +47,8 @@ export interface SPGroup {
   name: string;
   myDomains: string[];
   isAdmin: boolean;
+  /** The creator, who is the team's admin on the Authority Server (groups-store `createdBy`). */
+  createdBy?: string;
   /** v0.4: true for the auto-provisioned single-member personal workspace. */
   isPersonal?: boolean;
 }
@@ -552,8 +554,14 @@ export interface PreparedMandate {
 }
 
 /** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
+/** The approver ids a grant refusal names (approver_has_no_chain); only strings, never anything else from the answer. */
+function approverIdsOf(body: unknown): string[] | undefined {
+  const v = (body as { approverIds?: unknown } | null)?.approverIds;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+}
+
 export class MandateSignError extends Error {
-  constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string) { super(message); this.name = 'MandateSignError'; }
+  constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string, readonly approverIds?: string[]) { super(message); this.name = 'MandateSignError'; }
 }
 
 export function asErrorMessage(body: unknown, fallback: string): string {
@@ -1206,7 +1214,7 @@ class SPClient {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const b = body as { code?: string; grantCode?: string; reason?: string };
-      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
     }
     return body as { mandateId: string; mandateVersion: number; expiresAt: number };
   }
@@ -2479,7 +2487,7 @@ class SPClient {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const b = body as { code?: string; grantCode?: string; approvers?: unknown; reason?: string };
-      throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason);
+      throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason, approverIdsOf(body));
     }
     return body as { authorizationId: string; revokeError?: string };
   }
@@ -2493,7 +2501,7 @@ class SPClient {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const b = body as { code?: string; grantCode?: string; reason?: string };
-      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
     }
     return body as { mandateId: string; mandateVersion: number; expiresAt: number };
   }
@@ -2504,7 +2512,7 @@ class SPClient {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const b = body as { code?: string; grantCode?: string; reason?: string };
-      throw new MandateSignError(asErrorMessage(body, `Checking your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason);
+      throw new MandateSignError(asErrorMessage(body, `Checking your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
     }
     return body as { state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string };
   }
