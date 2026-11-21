@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"regexp"
 	"strings"
 )
@@ -23,8 +24,8 @@ func quoted(s string) string {
 }
 
 const (
-	reasonEnableUnlock  = "turn on Touch ID unlock for Suveren"
-	reasonDisableUnlock = "turn off Touch ID unlock for Suveren"
+	reasonEnableUnlock  = "turn on Windows Hello unlock for Suveren"
+	reasonDisableUnlock = "turn off Windows Hello unlock for Suveren"
 	reasonRemove        = "remove a device"
 	reasonSetCheck      = "give a device a check key"
 	reasonClearCheck    = "remove the check key of a device"
@@ -108,12 +109,9 @@ func parseObject(b []byte) (map[string]any, bool) {
 	if err := d.Decode(&v); err != nil {
 		return nil, false
 	}
-	// nothing but whitespace may follow the one value (as JSONSerialization refuses trailing data)
-	if d.More() {
-		return nil, false
-	}
-	var extra any
-	if err := d.Decode(&extra); err == nil {
+	// nothing but whitespace may follow the one value (as JSONSerialization refuses trailing data). d.More() is false
+	// before a stray '}' or ']', so ask for the next token and require the clean end (security review M6).
+	if _, err := d.Token(); err != io.EOF {
 		return nil, false
 	}
 	o, ok := v.(map[string]any)

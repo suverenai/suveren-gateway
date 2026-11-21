@@ -93,11 +93,11 @@ export class PlatformChecks {
 
   constructor(private readonly host: PlatformHelper) {}
 
-  /** Is a check key possible here? macOS: Touch ID (`biometry-current-set`). Windows: Windows Hello, PIN included (DEC-97). */
+  /** Is a check key possible here? Only macOS with Touch ID (`biometry-current-set`); never on Windows or Linux (DEC-99). */
   async possible(): Promise<{ ok: true } | { ok: false; code: string }> {
     const s = await this.host.status();
     if (!s.available) return { ok: false, code: s.reason ?? 'helper_failed' };
-    if (checkPolicyFor(s.platform) === 'user-presence' ? !s.userPresence : !s.biometry) return { ok: false, code: 'no_biometry' };
+    if (!s.biometry) return { ok: false, code: 'no_biometry' };
     return { ok: true };
   }
 
@@ -107,7 +107,7 @@ export class PlatformChecks {
     if (!p.ok) throw new CheckError(p.code);
     try {
       return await this.host.use(async (c, info) => {
-        const k = await c.createCheckKey(checkPolicyFor(info.platform));
+        const k = await c.createCheckKey(checkPolicyFor());
         return { v: 1 as const, backend: info.backend, policy: k.policy, keyBlob: k.keyBlob, publicKey: k.publicKey };
       });
     } catch (err) {

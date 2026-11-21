@@ -453,6 +453,17 @@ inside it afterwards does not (this is why the list of callers sits beside the `
 
 ### 8.0 What is built (2026-11-21)
 
+**DEC-99 (the maintainer, 2026-11-21): on Windows and Linux the computer has NO check key and no Hello/biometric
+unlock — password unlock, every grant via the phone — until S1** (the gateway under its own OS user). The control
+plane decides by its own `process.platform`, never by what a helper reports about itself: off macOS it never locates
+or starts a helper (`platformKeysAllowed` in `apps/control-plane/src/lib/platform-helper.ts`; status says
+`unsupported_platform`), so no check key, no unlock wrap and no touch exist there even if a working helper is
+installed. Why: a key in the person's Windows key storage is usable by any program of that user, the caller check
+included (section 4 and the security review of 2026-11-21), and Windows cannot require biometry only, so a PIN typed
+by anything that drives the screen would count. DEC-97's Windows `user-presence` check-key policy is removed;
+`checkPolicyFor` is `biometry-current-set` only. The Windows helper below stays in the repository, shipped off, and is
+hardened for S1 (review items M1–M6, listed after the table).
+
 `windows/` is the Windows helper: the same protocol, the same reason texts and the same wrap format as the macOS helper,
 in **Go**. Why Go: one static `.exe` with no runtime to install; it cross-compiles for x64 and arm64 from any system with
 no C compiler and no paid tool, so `windows-latest` and a Mac build the same file; the standard library has every
@@ -469,6 +480,19 @@ Windows, C++ a Visual Studio toolchain.
 | Software backend, `--allow-any-caller`, `--allowed-callers` | debug builds only (`-tags debug`); the bundle refuses an `.exe` that contains them |
 | TPM keys: `NCryptCreatePersistedKey` (`ECDSA_P256`, `ECDH_P256`) in the Platform Crypto Provider, `NCRYPT_UI_POLICY` with protect + force-high-protection, sign (P1363 → DER), secret agreement (raw secret, reversed to big-endian) | written, **switched off**: the release build reports `backend: tpm-platform-crypto-unmeasured`, `secureHardware: false`, and refuses to make keys. `-tags hellomeasured` switches it on, for the measurement below and only after it passed |
 | In the gateway | `locateHelper` finds `helper/windows-<arch>/suveren-unlock-helper.exe` with its hashes in `dist/control-plane/helper-manifest-windows-<arch>.json`; `bundle/build.mjs --with-windows-helper`; `windows/build.mjs` builds both architectures |
+
+**Hardening for S1 (security review 2026-11-21).**
+
+- **M1a** the stdin pipe's other end must be the parent (`GetNamedPipeServerProcessId` / `GetNamedPipeClientProcessId`), since the snapshot's parent id can be chosen by whoever creates the process.
+- **M1b** paths compare after canonicalisation, folding ASCII letters only (no Unicode folding: `ſ` is not `s`).
+- **M1c** a rooted (`\x.js`) or drive-relative (`C:x.js`) script is refused, and the script must exist as a regular file in the install (this also refuses `node inspect`).
+- **M1d** NODE_OPTIONS is checked in the parent's environment at start and before each request. The limit: a value put into the running gateway's own environment afterwards does nothing to the running Node, so it is not a way in, but an inspector attached to the running process is, and no check by the helper sees that (section 4). Only S1 closes it.
+- **M3** `open()` refuses a request that does not allow interaction before any key is touched.
+- **M4** a key's UI policy is read back on every open; a key without protect and force-high-protection is refused.
+- **M5** `ncrypt.dll` and `shell32.dll` are loaded by full path from the system folder, never from beside the `.exe`.
+- **M6** a request or object with any data after the one JSON value is refused.
+- The bundle refuses a Windows `.exe` that lacks the `tpm-platform-crypto-unmeasured` marker (a `hellomeasured` build).
+- The Windows reason texts say "Windows Hello", never "Touch ID".
 
 **Why switched off.** The design below already says it: whether the Platform Crypto Provider asks for Windows Hello at
 every use of a TPM key is unknown, and the UI policy may be a software-provider mechanism only. A key whose use does not
@@ -619,9 +643,9 @@ gateway to a second Mac: expect `key_invalid` on the unlock, not a prompt, and t
    `-tags hellomeasured` may ship; an Authenticode code-signing certificate for `suveren-unlock-helper.exe` (the
    MSI's signing step can sign it; the hashes must then be taken AFTER signing, because signing changes the file)
    and SmartScreen reputation. Decided (DEC-97): Go with `golang.org/x/text`; Windows' own Hello prompt wording is
-   accepted (the helper's reason text cannot reach it; the page shows the content); the check key on Windows is
-   `user-presence`, so Windows Hello with the PIN counts as well as biometrics (`checkPolicyFor` in
-   `apps/control-plane/src/lib/platform-helper.ts`); macOS stays `biometry-current-set`.
+   accepted (the helper's reason text cannot reach it; the page shows the content); DEC-97's
+   Windows `user-presence` check key is withdrawn by DEC-99: no check key and no platform unlock on Windows or Linux
+   until S1 (section 8.0); macOS stays `biometry-current-set`.
 7. **Where `allowed-callers.json` is written and who can change it.** In the user's own folder it is only
    a guard against another program, not against the user's AI (section 4). A system-wide install with
    a root-owned list is the S1/S2 answer (O29).

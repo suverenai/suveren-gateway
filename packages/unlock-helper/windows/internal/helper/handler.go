@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -243,6 +244,10 @@ func ParseRequest(line []byte) (map[string]any, bool) {
 	d.UseNumber()
 	var v any
 	if err := d.Decode(&v); err != nil {
+		return nil, false
+	}
+	// one request per line and nothing after it (M6)
+	if _, err := d.Token(); err != io.EOF {
 		return nil, false
 	}
 	o, ok := v.(map[string]any)

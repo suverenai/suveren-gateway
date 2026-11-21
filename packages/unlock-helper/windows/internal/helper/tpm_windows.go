@@ -45,7 +45,7 @@ const (
 )
 
 var (
-	ncrypt                        = syscall.NewLazyDLL("ncrypt.dll")
+	ncrypt                        = systemDLL("ncrypt.dll")
 	procNCryptOpenStorageProvider = ncrypt.NewProc("NCryptOpenStorageProvider")
 	procNCryptCreatePersistedKey  = ncrypt.NewProc("NCryptCreatePersistedKey")
 	procNCryptSetProperty         = ncrypt.NewProc("NCryptSetProperty")
@@ -58,6 +58,7 @@ var (
 	procNCryptDeriveKey           = ncrypt.NewProc("NCryptDeriveKey")
 	procNCryptFreeObject          = ncrypt.NewProc("NCryptFreeObject")
 	procNCryptDeleteKey           = ncrypt.NewProc("NCryptDeleteKey")
+	procNCryptGetProperty         = ncrypt.NewProc("NCryptGetProperty")
 )
 
 // TPMBackend is the Windows key storage. Measured is false unless built with -tags hellomeasured (measured_*.go).
@@ -188,8 +189,12 @@ func (b TPMBackend) open(blob []byte, magic uint32, prompt Prompt) (uintptr, uin
 	if !measured {
 		return 0, 0, tpmKey{}, Err("no_secure_hardware", "Windows Hello has not been verified for this helper yet; the password stays the way in.")
 	}
+	// M3: the "never ask" switch is enforced here, not left to the provider (which may not ask at all).
+	if !prompt.InteractionAllowed {
+		return 0, 0, tpmKey{}, Err("interaction_required", "This needs the person; nothing was asked.")
+	}
 	name := string(blob)
-	if !strings.HasPrefix(name, keyNamePrefix) || len(name) != len(keyNamePrefix)+32 {
+	if !strings.HasPrefix(name, keyNamePrefix) || len(name) != len(keyNamePrefix)+32 || !isLowerHex(name[len(keyNamePrefix):]) {
 		return 0, 0, tpmKey{}, Err("key_invalid", "Bad key blob.")
 	}
 	prov, err := openProvider()
@@ -204,6 +209,12 @@ func (b TPMBackend) open(blob []byte, magic uint32, prompt Prompt) (uintptr, uin
 	if r, _, _ := procNCryptOpenKey.Call(prov, uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(utf16p(name))), 0, flags); r != 0 {
 		free(prov)
 		return 0, 0, tpmKey{}, mapNcrypt(uint32(r))
+	}
+	// M4: the key must still carry the "ask the person" UI policy it was made with; a key without it is refused.
+	if !hasProtectionPolicy(key) {
+		free(key)
+		free(prov)
+		return 0, 0, tpmKey{}, Err("key_invalid", "The key does not ask the person.")
 	}
 	pub, err := exportPublic(key, magic)
 	if err != nil {
@@ -328,4 +339,18 @@ func (a tpmAgreement) SharedSecret(peer *ecdh.PublicKey) ([]byte, error) {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
+}
+
+// hasProtectionPolicy reads the key's UI policy back (M4): version 1 with both "protect" and "force high protection"
+// set, i.e. Windows asks the person at every use. Anything else, or no policy at all, is not a check key.
+func hasProtectionPolicy(key uintptr) bool {
+	var buf [512]byte
+	var n uint32
+	r, _, _ := procNCryptGetProperty.Call(key, uintptr(unsafe.Pointer(utf16p(ncryptUIPolicyProperty))), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&n)), 0)
+	if r != 0 || n < 8 {
+		return false
+	}
+	version := binary.LittleEndian.Uint32(buf[0:4])
+	flags := binary.LittleEndian.Uint32(buf[4:8])
+	return version == 1 && flags&ncryptUIProtectKeyFlag != 0 && flags&ncryptUIForceHighProtect != 0
 }

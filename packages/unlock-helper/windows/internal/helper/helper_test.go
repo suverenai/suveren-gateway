@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math/big"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -210,6 +211,15 @@ func TestCallerEvaluate(t *testing.T) {
 	node := filepath.Join(root, "node")
 	gw := filepath.Join(root, "gw")
 	allowed := []AllowedCaller{{Exe: node, ScriptPrefix: gw}}
+	// the scripts that are accepted must exist as regular files (M1c)
+	if err := os.MkdirAll(gw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"index.mjs", "i.mjs"} {
+		if err := os.WriteFile(filepath.Join(gw, f), []byte("//"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cases := []struct {
 		p    Parent
 		want string
@@ -225,6 +235,11 @@ func TestCallerEvaluate(t *testing.T) {
 		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}, Cwd: root}, ""},
 		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}, Cwd: filepath.Join(root, "elsewhere")}, "parent script is outside the gateway install"},
 		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}}, "parent script path cannot be resolved"},
+		// a name that is no file in the install (a node subcommand such as `node inspect`) is refused (M1c)
+		{Parent{Exe: node, Argv: []string{node, "inspect"}, Cwd: gw}, "parent script is not a file in the gateway install"},
+		{Parent{Exe: node, Argv: []string{node, filepath.Join(gw, "missing.mjs")}}, "parent script is not a file in the gateway install"},
+		// a drive-relative script is neither absolute nor relative to the working folder (M1c)
+		{Parent{Exe: node, Argv: []string{node, "C:x.mjs"}, Cwd: gw}, "parent script path is rooted or drive-relative"},
 	}
 	for i, c := range cases {
 		if got := Evaluate(c.p, allowed); got != c.want {
@@ -240,5 +255,53 @@ func TestCallerEvaluate(t *testing.T) {
 		if got := Evaluate(Parent{Exe: node, Argv: []string{node, filepath.Join(gw, "i.mjs")}, Env: []string{"node_options=x"}}, allowed); got != "parent has NODE_OPTIONS set" {
 			t.Errorf("lower-case NODE_OPTIONS not refused: %q", got)
 		}
+		// a rooted path without a drive is not "inside the install" just because cwd is (M1c)
+		if got := Evaluate(Parent{Exe: node, Argv: []string{node, "\\Users\\Public\\evil.js"}, Cwd: gw}, allowed); got != "parent script path is rooted or drive-relative" {
+			t.Errorf("rooted-relative script accepted: %q", got)
+		}
+		// Unicode look-alikes do not fold: "ſ" (U+017F) is not "s" (M1b)
+		look := filepath.Join(root, "g\u017Fw-not", "index.mjs")
+		if got := Evaluate(Parent{Exe: node, Argv: []string{node, look}}, []AllowedCaller{{Exe: node, ScriptPrefix: filepath.Join(root, "gsw-not")}}); got == "" {
+			t.Errorf("a U+017F look-alike path was accepted")
+		}
+	}
+}
+
+func TestEqualFoldASCIIOnly(t *testing.T) {
+	if !equalFoldASCII("C:\\Program Files", "c:\\program files") {
+		t.Error("ASCII case must fold")
+	}
+	for _, p := range [][2]string{{"\u017F", "s"}, {"\u212A", "k"}, {"Program Fileſ", "Program Files"}} {
+		if equalFoldASCII(p[0], p[1]) {
+			t.Errorf("%q must not fold to %q", p[0], p[1])
+		}
+	}
+	if !hasPrefixFold("node_options=x", "NODE_OPTIONS=") || hasPrefixFold("NODE_OPTIONſ=x", "NODE_OPTIONS=") {
+		t.Error("hasPrefixFold must fold ASCII only")
+	}
+}
+
+func TestStrictTrailingData(t *testing.T) {
+	for _, bad := range []string{`{"a":1}}`, `{"a":1}]`, `{"a":1} {"b":2}`, `{"a":1}x`} {
+		if _, ok := parseObject([]byte(bad)); ok {
+			t.Errorf("parseObject accepted %q", bad)
+		}
+		if _, ok := ParseRequest([]byte(bad)); ok {
+			t.Errorf("ParseRequest accepted %q", bad)
+		}
+	}
+	for _, good := range []string{`{"a":1}`, "{\"a\":1}\n", ` {"a":1} `} {
+		if _, ok := parseObject([]byte(good)); !ok {
+			t.Errorf("parseObject refused %q", good)
+		}
+		if _, ok := ParseRequest([]byte(good)); !ok {
+			t.Errorf("ParseRequest refused %q", good)
+		}
+	}
+}
+
+func TestIsLowerHex(t *testing.T) {
+	if !isLowerHex("0123456789abcdef") || isLowerHex("ABC") || isLowerHex("") || isLowerHex("12g") {
+		t.Error("isLowerHex")
 	}
 }

@@ -97,14 +97,18 @@ describe('a debug Windows helper never goes into the package', () => {
   const winBuildJs = (dir: string) => spawnSync(process.execPath, [join(ROOT, 'bundle/build.mjs'), '--with-windows-helper'], { env: { ...process.env, SUVEREN_WINDOWS_HELPER_BUILD_DIR: dir }, encoding: 'utf8' });
 
   it('accepts a clean build, refuses a marker, a changed .exe and a missing architecture', () => {
-    expect(checkWindowsHelperBuild(winBuild(Buffer.from('clean release exe')))).toEqual([]);
+    expect(checkWindowsHelperBuild(winBuild(Buffer.from('clean release exe tpm-platform-crypto-unmeasured')))).toEqual([]);
     expect(checkWindowsHelperBuild(winBuild(Buffer.from('serve --allow-any-caller software-test'))).join('\n')).toMatch(/DEBUG helper/);
-    const dir = winBuild(Buffer.from('clean release exe'));
+    const dir = winBuild(Buffer.from('clean release exe tpm-platform-crypto-unmeasured'));
     writeFileSync(join(dir, 'windows-arm64', 'suveren-unlock-helper.exe'), 'other');
     expect(checkWindowsHelperBuild(dir).join('\n')).toMatch(/does not match/);
-    const one = winBuild(Buffer.from('clean release exe'));
+    const one = winBuild(Buffer.from('clean release exe tpm-platform-crypto-unmeasured'));
     rmSync(join(one, 'windows-x64'), { recursive: true });
     expect(checkWindowsHelperBuild(one).join('\n')).toMatch(/is missing/);
+  });
+
+  it('DEC-99: refuses a build without the unmeasured marker (a -tags hellomeasured build)', () => {
+    expect(checkWindowsHelperBuild(winBuild(Buffer.from('clean release exe measured'))).join('\n')).toMatch(/not the unmeasured build/);
   });
 
   it('build.mjs --with-windows-helper exits 1 for a debug helper, before it cleans or builds anything', () => {

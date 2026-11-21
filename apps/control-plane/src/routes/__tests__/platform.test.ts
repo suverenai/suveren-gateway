@@ -44,7 +44,7 @@ afterEach(async () => {
 });
 
 const host = (spec: HelperSpec | Located): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ('spec' in spec || 'unavailable' in spec ? spec : { spec }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ('spec' in spec || 'unavailable' in spec ? spec : { spec }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };
@@ -407,6 +407,7 @@ describe('the helper itself: found, hashed, started', () => {
     writeFileSync(script, body);
     const spec: HelperSpec = { command: process.execPath, args: [FAKE], files: [{ path: script, sha256: good }] };
     const h2 = new PlatformHelper({
+      platform: 'darwin', 
       locate: () => ({ spec }),
       startClient: async (s) => {
         writeFileSync(script, `${body}# swapped in the gap\n`);
@@ -918,7 +919,9 @@ describe('item 3: turning Touch ID unlock on or off asks for the unlock password
     });
     expect((await w.post('/auth/platform/enable', { password: PW })).status).toBe(200);
     expect((await w.post('/auth/platform/disable', { password: PW })).status).toBe(200);
-    expect(shown).toEqual(['turn on Touch ID unlock for Suveren', 'turn off Touch ID unlock for Suveren']);
+    // the Windows helper names its own platform authenticator (DEC-99 wording: never "Touch ID" on Windows)
+    const auth = process.platform === 'win32' ? 'Windows Hello' : 'Touch ID';
+    expect(shown).toEqual([`turn on ${auth} unlock for Suveren`, `turn off ${auth} unlock for Suveren`]);
   });
 
   it('a cancelled check turns nothing on and nothing off; the password alone is not enough where a check key exists', async () => {
@@ -1165,6 +1168,7 @@ describe('item 9: the vault key is wrapped in Node; the helper never receives it
     const lines: string[] = [];
     const spec: HelperSpec = { command: SOFT, args: ['serve', '--backend', 'software', '--allow-any-caller'], files: [] };
     const h = new PlatformHelper({
+      platform: 'darwin', 
       locate: () => ({ spec }),
       startClient: async (s) => {
         const c = await UnlockHelperClient.start({ command: s.command, args: s.args });
@@ -1190,7 +1194,7 @@ describe('item 9: the vault key is wrapped in Node; the helper never receives it
 });
 
 // DEC-97: on Windows the check key accepts Windows Hello with the PIN as well as a fingerprint or face; macOS stays biometric.
-describe('the check key\'s policy per platform (DEC-97, FAKE helper)', () => {
+describe('the check key\'s policy (DEC-99: macOS only, biometric; FAKE helper)', () => {
   it('macOS: biometry, and a Mac without Touch ID gets no check key', async () => {
     const mac = new PlatformChecks(fakeHost());
     expect(await mac.possible()).toEqual({ ok: true });
@@ -1200,12 +1204,12 @@ describe('the check key\'s policy per platform (DEC-97, FAKE helper)', () => {
     await expect(noTouchId.createKey()).rejects.toMatchObject({ code: 'no_biometry' });
   });
 
-  it('Windows: Windows Hello with the PIN is enough, with or without biometrics, and the key is made with user-presence', async () => {
-    for (const env of [{ FAKE_PLATFORM: 'windows', FAKE_BIOMETRY: '0' }, { FAKE_PLATFORM: 'windows' }] as Record<string, string>[]) {
-      const win = new PlatformChecks(fakeHost(env));
-      expect(await win.possible()).toEqual({ ok: true });
-      // the fake Windows helper refuses any biometry-only policy, as the TPM key storage does
-      expect((await win.createKey()).policy).toBe('user-presence');
-    }
+  it('DEC-99: a helper that calls itself "windows" cannot lower the policy; a check key is always biometric', async () => {
+    // The OS decides (macOS here), never the helper's own report: a key is only ever asked for with biometry-current-set,
+    // which the fake Windows helper refuses (as Windows' key storage does) — so no user-presence check key ever exists.
+    const win = new PlatformChecks(fakeHost({ FAKE_PLATFORM: 'windows' }));
+    await expect(win.createKey()).rejects.toBeTruthy();
+    const noBio = new PlatformChecks(fakeHost({ FAKE_PLATFORM: 'windows', FAKE_BIOMETRY: '0' }));
+    expect(await noBio.possible()).toEqual({ ok: false, code: 'no_biometry' });
   });
 });

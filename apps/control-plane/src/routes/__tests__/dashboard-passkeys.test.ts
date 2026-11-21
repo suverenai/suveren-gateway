@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 const fakeHost = (env: Record<string, string>): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ({ spec: { command: process.execPath, args: [FAKE], env: { ...process.env, ...env }, files: [] } }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ({ spec: { command: process.execPath, args: [FAKE], env: { ...process.env, ...env }, files: [] } }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };

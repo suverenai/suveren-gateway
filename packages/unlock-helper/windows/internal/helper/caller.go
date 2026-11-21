@@ -54,6 +54,9 @@ type Parent struct {
 func Resolve(p string) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		p = r
+	} else if d, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		// a path that does not exist (yet) still compares by its resolved folder, so a refusal names the real reason
+		p = filepath.Join(d, filepath.Base(p))
 	}
 	if a, err := filepath.Abs(p); err == nil {
 		p = a
@@ -86,6 +89,12 @@ func Evaluate(parent Parent, allowed []AllowedCaller) string {
 			return "parent has NODE_OPTIONS set"
 		}
 	}
+	// A rooted path without a drive ("\\x\\y.js", "/x") or a drive-relative one ("C:x.js") is not absolute on Windows
+	// but is not relative to the working folder either: node would run it from somewhere else than Join(cwd, script)
+	// says (security review M1c). Refused.
+	if !filepath.IsAbs(script) && (strings.HasPrefix(script, "\\") || strings.HasPrefix(script, "/") || (len(script) >= 2 && script[1] == ':')) {
+		return "parent script path is rooted or drive-relative"
+	}
 	if !filepath.IsAbs(script) {
 		if parent.Cwd == "" || !filepath.IsAbs(parent.Cwd) {
 			return "parent script path cannot be resolved"
@@ -98,5 +107,16 @@ func Evaluate(parent Parent, allowed []AllowedCaller) string {
 	if !pathEqual(s, base) && !pathHasPrefix(s, strings.TrimSuffix(base, sep)+sep) {
 		return "parent script is outside the gateway install"
 	}
+	// The script must exist as a regular file: a node subcommand such as `node inspect` passes the "not an option"
+	// test and would be "resolved" into the install although node never runs a file of that name (M1c).
+	if !scriptIsRegularFile(s) {
+		return "parent script is not a file in the gateway install"
+	}
 	return ""
+}
+
+// scriptIsRegularFile is a variable only so the pure tests can name files that need not exist; the helper uses os.Stat.
+var scriptIsRegularFile = func(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
 }

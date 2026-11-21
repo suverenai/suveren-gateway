@@ -45,6 +45,8 @@ export function checkHelperBuild(dir) {
 }
 
 export const WINDOWS_ARCHS = ['x64', 'arm64'];
+/** The capability string only the shipped-off (unmeasured) Windows build carries (tpm_windows.go). */
+export const UNMEASURED_MARKER = 'tpm-platform-crypto-unmeasured';
 
 /**
  * Checks a folder made by packages/unlock-helper/windows/build.mjs: for each architecture the .exe and its hash list
@@ -62,6 +64,9 @@ export function checkWindowsHelperBuild(dir) {
     const bytes = readFileSync(exe);
     const found = debugMarkersIn(bytes);
     if (found.length) problems.push(`${exe} is a DEBUG helper (it contains ${found.join(', ')}). Only a release build may ship: run build.mjs without CONFIG=debug.`);
+    // DEC-99 / DESIGN.md section 8: until Windows Hello is measured on a real machine, only the build that reports
+    // "no secure hardware" may ship. A `-tags hellomeasured` build lacks this marker and is refused here.
+    if (!bytes.includes(Buffer.from(UNMEASURED_MARKER))) problems.push(`${exe} is not the unmeasured build (it lacks "${UNMEASURED_MARKER}"). Windows Hello is not verified yet (DEC-99): build without -tags hellomeasured.`);
     let manifest;
     try { manifest = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { problems.push(`${manifestPath} is not readable.`); continue; }
     const files = manifest?.files;

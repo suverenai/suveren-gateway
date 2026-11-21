@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"regexp"
-	"strings"
 )
 
 // Error is a refusal the gateway can act on. Code is part of the protocol (DESIGN.md 3.4).
@@ -52,5 +51,38 @@ func HexDecode(s string) ([]byte, bool) {
 }
 
 func hasPrefixFold(s, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+	return len(s) >= len(prefix) && equalFoldASCII(s[:len(prefix)], prefix)
+}
+
+// equalFoldASCII folds A-Z/a-z only. Any other byte must match exactly: Unicode folding (strings.EqualFold) maps
+// U+017F to 's' and U+212A to 'k', which NTFS does not, so a look-alike path would pass a check NTFS would not
+// (security review 2026-11-21, M1b).
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if x >= 'A' && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if y >= 'A' && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+// isLowerHex: only 0-9 and a-f.
+func isLowerHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return len(s) > 0
 }

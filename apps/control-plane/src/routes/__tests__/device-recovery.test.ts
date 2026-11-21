@@ -61,7 +61,7 @@ afterEach(async () => {
 });
 
 const host = (spec: HelperSpec): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ({ spec }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ({ spec }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };

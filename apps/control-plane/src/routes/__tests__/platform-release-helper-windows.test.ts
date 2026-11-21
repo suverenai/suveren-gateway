@@ -32,7 +32,9 @@ beforeAll(() => {
   if (r.status !== 0) throw new Error(`tsup failed: ${r.stderr}`);
   writeFileSync(join(gatewayDir, 'main.mjs'), `
     import { PlatformHelper, locateHelper } from './platform-helper.mjs';
-    const host = new PlatformHelper({ locate: () => locateHelper({ here: process.argv[2], env: {} }) });
+    // DEC-99 refuses every helper use on Windows; this S1-preparation test lifts that gate (test-only option) to
+    // keep proving the shipped helper's caller check on a real Windows runner.
+    const host = new PlatformHelper({ platform: 'darwin', locate: () => locateHelper({ here: process.argv[2], env: {} }) });
     console.log(JSON.stringify(await host.status()));
     host.close();`);
 }, 120_000);

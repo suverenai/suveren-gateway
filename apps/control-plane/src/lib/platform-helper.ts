@@ -170,6 +170,8 @@ export interface HostOptions {
   idleMs?: number;
   quickTimeoutMs?: number;
   touchTimeoutMs?: number;
+  /** Tests: the OS this gateway runs on (default `process.platform`); DEC-99 refuses every helper use off macOS. */
+  platform?: NodeJS.Platform;
   /** Tests: make the client another way. */
   startClient?: (spec: HelperSpec) => Promise<UnlockHelperClient>;
 }
@@ -178,12 +180,19 @@ export interface HostOptions {
 export const UNLOCK_POLICY: Policy = 'user-presence';
 export const CHECK_POLICY: Policy = 'biometry-current-set';
 /**
- * The check key's policy on this computer. macOS: biometry (Touch ID), as decided in DESIGN.md 6.1. Windows (DEC-97):
- * Windows Hello with the PIN counts as well as a fingerprint or face, so `user-presence`; Windows' key storage cannot
- * require biometry only anyway (DESIGN.md 8.0).
+ * DEC-99 (the maintainer, 2026-11-21): only macOS gets a check key and unlock by the platform authenticator. On Windows
+ * and Linux the computer has NO check key and no Hello/biometric unlock until S1 (the gateway under its own OS user):
+ * a key in the user's Windows key storage is usable by any program of that user, the helper's caller check included
+ * (security review 2026-11-21), and Windows cannot require biometry only. There: unlock by password, every grant via the
+ * phone. Decided by `process.platform` of the running gateway, never by what a helper says about itself.
  */
-export function checkPolicyFor(platform: HelloInfo['platform'] | undefined): Policy {
-  return platform === 'windows' ? 'user-presence' : CHECK_POLICY;
+export function platformKeysAllowed(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'darwin';
+}
+
+/** The check key's policy: biometry (Touch ID), as decided in DESIGN.md 6.1. The only platform with a check key is macOS (DEC-99). */
+export function checkPolicyFor(): Policy {
+  return CHECK_POLICY;
 }
 
 export class PlatformHelper {
@@ -263,6 +272,8 @@ export class PlatformHelper {
   }
 
   private async start(): Promise<UnlockHelperClient> {
+    // DEC-99: off macOS nothing of the helper is used (no check key, no unlock wrap, no touch), whatever is installed.
+    if (!platformKeysAllowed(this.o.platform ?? process.platform)) throw new HelperUnavailableError('unsupported_platform');
     const located = this.o.locate();
     if ('unavailable' in located) throw new HelperUnavailableError(located.unavailable);
     const { spec } = located;

@@ -16,12 +16,15 @@ import (
 // from its process parameters (PEB). All from the kernel, nothing from the caller. stdin must be a pipe.
 
 var (
-	kernel32                      = syscall.NewLazyDLL("kernel32.dll")
-	ntdll                         = syscall.NewLazyDLL("ntdll.dll")
-	shell32                       = syscall.NewLazyDLL("shell32.dll")
+	kernel32                      = syscall.NewLazyDLL("kernel32.dll") // a KnownDLL: always the system's own
+	ntdll                         = syscall.NewLazyDLL("ntdll.dll")    // a KnownDLL
+	shell32                       = systemDLL("shell32.dll")
 	procQueryFullProcessImageName = kernel32.NewProc("QueryFullProcessImageNameW")
 	procReadProcessMemory         = kernel32.NewProc("ReadProcessMemory")
 	procLocalFree                 = kernel32.NewProc("LocalFree")
+	procGetSystemDirectory        = kernel32.NewProc("GetSystemDirectoryW")
+	procGetNamedPipeServerPID     = kernel32.NewProc("GetNamedPipeServerProcessId")
+	procGetNamedPipeClientPID     = kernel32.NewProc("GetNamedPipeClientProcessId")
 	procNtQueryInformationProcess = ntdll.NewProc("NtQueryInformationProcess")
 	procCommandLineToArgvW        = shell32.NewProc("CommandLineToArgvW")
 )
@@ -246,6 +249,37 @@ func StdinIsPipe() bool {
 	return err == nil && t == fileTypePipe
 }
 
+// systemDLL loads a DLL by its full path in the Windows system folder (from the kernel, not the environment), never
+// from the helper's own folder: a ncrypt.dll or shell32.dll planted beside the .exe would otherwise be loaded first,
+// and the gateway's hash list covers the .exe only (security review M5).
+func systemDLL(name string) *syscall.LazyDLL {
+	var buf [260]uint16
+	n, _, _ := procGetSystemDirectory.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if n == 0 || n >= uintptr(len(buf)) {
+		// no system folder known: a path that cannot load, so every use fails closed
+		return syscall.NewLazyDLL("\\\\?\\nonexistent\\" + name)
+	}
+	return syscall.NewLazyDLL(string(utf16.Decode(buf[:n])) + "\\" + name)
+}
+
+// StdinPeerIsParent (M1a): the other end of the stdin pipe must belong to the parent. The snapshot's parent id can be
+// chosen by whoever creates the process (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS); the pipe's peer cannot. Node gives
+// a child a named pipe whose server end it holds, so the server process id is the parent's.
+func StdinPeerIsParent(ppid uint32) bool {
+	h, err := syscall.GetStdHandle(syscall.STD_INPUT_HANDLE)
+	if err != nil {
+		return false
+	}
+	me := uint32(os.Getpid())
+	var server, client uint32
+	rs, _, _ := procGetNamedPipeServerPID.Call(uintptr(h), uintptr(unsafe.Pointer(&server)))
+	rc, _, _ := procGetNamedPipeClientPID.Call(uintptr(h), uintptr(unsafe.Pointer(&client)))
+	if rs == 0 || rc == 0 {
+		return false
+	}
+	return (server == ppid && client == me) || (client == ppid && server == me)
+}
+
 // CheckParent is the live check, at start and before every request.
 func CheckParent(parent *ParentHandle, allowed []AllowedCaller) string {
 	if parent == nil || !parent.Alive() {
@@ -256,6 +290,9 @@ func CheckParent(parent *ParentHandle, allowed []AllowedCaller) string {
 	}
 	if !StdinIsPipe() {
 		return "stdin is not a pipe"
+	}
+	if !StdinPeerIsParent(parent.pid) {
+		return "stdin pipe does not lead to the parent"
 	}
 	exe, err := parent.Image()
 	if err != nil {
