@@ -126,3 +126,22 @@ describe('public/sw.js: push', () => {
     expect(w.opened).toHaveLength(2);
   });
 });
+
+describe('device notices (the device list changed, a recovery was started, a new identity was asked for)', () => {
+  it('each kind shows its own fixed text under its own tag, never anything from the message, and a tap opens Devices', async () => {
+    const w = loadWorker();
+    await w.fire('push', { data: { json: () => ({ notice: 'devices-changed', label: '<script>x</script>' }) } });
+    await w.fire('push', { data: { json: () => ({ notice: 'recovery-started' }) } });
+    await w.fire('push', { data: { json: () => ({ notice: 'identity-reset' }) } });
+    expect(w.shown.map((s) => s.opts.body)).toEqual([P.pushDevicesChanged, P.pushRecoveryStarted, P.pushIdentityReset]);
+    expect(w.shown.every((s) => s.opts.tag === 'suveren-devices' && !JSON.stringify(s.opts).includes('script'))).toBe(true);
+    await w.fire('notificationclick', { notification: { close() {}, data: { devices: true } } });
+    expect(w.opened).toEqual(['/#devices']);
+  });
+
+  it('an unknown notice kind is a request notice (the generic text), not a device notice', async () => {
+    const w = loadWorker();
+    await w.fire('push', { data: { json: () => ({ notice: 'something-else' }) } });
+    expect(w.shown[0].opts.body).toBe(P.pushOne);
+  });
+});

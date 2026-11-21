@@ -70,10 +70,13 @@ describe('the notification words (stage D4)', () => {
     const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
     const block = /\/\/ BEGIN PUSH TEXTS\nconst PUSH_TEXT = (\{[\s\S]*?\});\n\/\/ END PUSH TEXTS/.exec(sw);
     expect(block).not.toBeNull();
-    const t = new Function(`return ${block![1]}`)() as { title: string; one: string; many: string };
+    const t = new Function(`return ${block![1]}`)() as { title: string; one: string; many: string; devicesChanged: string; recoveryStarted: string; identityReset: string };
     expect(t.title).toBe(P.pushTitle);
     expect(t.one).toBe(P.pushOne);
     for (const n of [2, 3, 17]) expect(t.many.replace('{n}', String(n))).toBe(P.pushMany(n));
+    expect(t.devicesChanged).toBe(P.pushDevicesChanged);
+    expect(t.recoveryStarted).toBe(P.pushRecoveryStarted);
+    expect(t.identityReset).toBe(P.pushIdentityReset);
   });
 
   it('the notification names nothing of the request: no amount, no name, no action word', () => {
