@@ -192,7 +192,8 @@ export function AgentReviewPage() {
           const title = contextParts.length > 0
             ? `${shortName}: ${contextParts.join(' · ')}`
             : shortName;
-          setAuthTitle(title);
+          // A title the person already typed is never replaced by the one derived when the area loads (a late load overwrote it).
+          setAuthTitle(prev => (prev.trim() ? prev : title));
         }
       })
       .catch(() => {});
