@@ -99,6 +99,7 @@ export function AddPhoneScreen(p: AddPhoneScreenProps) {
       return (
         <DeviceFrame title={PT.addPhoneChooseTitle(view.label)}>
           {err}
+          <div data-testid="other-ready"><Notice kind="success">{PT.otherReady}</Notice></div>
           <p>{PT.addPhoneChooseBody}</p>
           <CodeChoices codes={view.codes} onChoose={p.onChoose} disabled={busy} />
           <p>{PT.addPhoneListTitle}</p>
@@ -214,9 +215,10 @@ export function AddComputerScreen(p: AddComputerScreenProps) {
       );
     case 'compare':
       return (
-        <DeviceFrame title={PT.compareTitle}>
+        <DeviceFrame title={PT.showTitle}>
           {err}
-          <CodeBlock code={view.code} testid="compare-code" grouped={false} />
+          <p data-testid="compare-next"><strong>{PT.tapThis(view.admitterLabel)}</strong></p>
+          <CodeBlock code={view.code} testid="compare-code" grouped={false} big />
           <p>{PT.compareBody(view.admitterLabel)}</p>
           <Notice kind="info">{PT.waitingFor(view.admitterLabel)}</Notice>
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel} disabled={busy}>{PT.cancel}</button>

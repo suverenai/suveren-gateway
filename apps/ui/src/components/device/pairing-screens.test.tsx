@@ -98,6 +98,9 @@ describe('Add a phone', () => {
     expect((h.match(/data-testid="code-choice"/g) ?? []).length).toBe(3);
     for (const c of ['111111', '222222', '333333']) expect(t).toContain(c);
     expect(t).toContain(PT.addPhoneNew);
+    // DEC-96: the phone is ready — said above the choices, so the person knows the next step is here
+    expect(h).toContain('data-testid="other-ready"'); expect(t).toContain(PT.otherReady);
+    expect(h.indexOf('other-ready')).toBeLessThan(h.indexOf('code-choices'));
   });
 
   it('checking, done with the list, failed with words and a way to start again', () => {
@@ -155,6 +158,9 @@ describe('Add this computer', () => {
     const cmp = render(st({ flow: 'join', step: 'compare', code: '482913', admitterLabel: 'My iPhone' }));
     expect(cmp).toContain('data-testid="compare-code"');
     expect(text(cmp)).toContain('482913'); expect(text(cmp)).toContain(PT.compareBody('My iPhone'));
+    // DEC-96: says first that the next step is on the phone, and the number is the big variant
+    expect(text(cmp)).toContain(PT.showTitle); expect(text(cmp)).toContain(PT.tapThis('My iPhone'));
+    expect(cmp.indexOf('compare-next')).toBeLessThan(cmp.indexOf('compare-code')); expect(cmp).toContain('2.75rem');
     expect(text(render(st({ flow: 'join', step: 'failed', code: 'qr_expired' })))).toContain(pairingErrorText('qr_expired'));
     const ok = text(render(st({ flow: 'join', step: 'done', signedIn: true })));
     expect(ok).toContain(PT.addedComputerTitle); expect(ok).toContain(PT.addedComputerBody);

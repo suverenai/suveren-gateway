@@ -21,6 +21,15 @@ beforeAll(() => {
 
 // Mirrors Sidebar.test.ts: the mobile nav must stay in sync with the desktop
 // sidebar's rename of the /settings entry.
+describe('Devices in the menu (DEC-96)', () => {
+  it('the sidebar and the mobile menu both have a Devices entry to /devices, shown only with device keys on', async () => {
+    const side = (await import('./Sidebar')).NAV_ITEMS.find(i => i.to === '/devices');
+    const mob = (await import('./MobileMenu')).NAV_ITEMS.find(i => i.to === '/devices');
+    expect(side?.label).toBe('Devices'); expect(side?.deviceKeysOnly).toBe(true); expect(side?.icon).toBe('devices');
+    expect(mob?.label).toBe('Devices'); expect(mob && 'deviceKeysOnly' in mob && mob.deviceKeysOnly).toBe(true);
+  });
+});
+
 describe('MobileMenu NAV_ITEMS — settings entry', () => {
   it('labels the /settings entry "Settings"', async () => {
     const { NAV_ITEMS } = await import('./MobileMenu');

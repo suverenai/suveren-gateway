@@ -84,7 +84,6 @@ function Screens() {
   const [joinKey, setJoinKey] = useState(0);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const rotateNext = useRef(false);
   const [openRequest, setOpenRequest] = useState<OpenRequest>(() => {
     const id = requestFromHash(globalThis.location?.hash ?? '');
     return id ? { id, n: 0 } : null;
@@ -174,8 +173,6 @@ function Screens() {
     // Notifications that are on send their subscription again (renewed by the browser, or deleted after a 410). Quiet.
     const bearer = rt.session.bearer();
     if (bearer) void rt.push.resync(bearer);
-    // "Make a new code" on the join's done screen (mockup D1): straight to replacing the recovery code once the app is open.
-    if (rotateNext.current) { rotateNext.current = false; setView({ t: 'home', tab: 'devices', rotate: true }); return; }
     setView({ t: 'home', tab: 'requests' });
   }, [rt, locked]);
 
@@ -191,7 +188,7 @@ function Screens() {
     case 'register':
       return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
     case 'join':
-      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} onRotate={() => { rotateNext.current = true; locked(); }} />;
+      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
@@ -220,7 +217,7 @@ function RegisterFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDo
   );
 }
 
-function JoinFlow({ rt, notice, onBack, onDone, onRotate }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void; onRotate: () => void }) {
+function JoinFlow({ rt, notice, onBack, onDone }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void }) {
   const driver = useMemo(() => new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now }), [rt]);
   useEffect(() => () => driver.dispose(), [driver]);
   const state = useDriver(driver);
@@ -232,7 +229,7 @@ function JoinFlow({ rt, notice, onBack, onDone, onRotate }: { rt: Rt; notice?: s
     <JoinScreen
       state={state} nowSeconds={rt.now()}
       onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
-      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice} onRotate={onRotate}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice}
     />
   );
 }
