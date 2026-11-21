@@ -72,10 +72,11 @@ describe('content-crypto — v0.8 readers by DID', () => {
     // …and NOT with the AS-served one.
     await expect(hapDecrypt(content, OWNER_DID, asServed.privateKey)).rejects.toThrow();
 
-    // This gateway finds its wrap by DID; with only an account id it still finds `keys.self`
-    // (sealed to the AS-registered key, as before — here that is `asServed`).
+    // This gateway finds its wrap by DID; with only an account id it still finds `keys.self` —
+    // sealed to the LOCAL key too, so the AS-served key opens neither (rule 2).
     expect(JSON.parse(await decryptProposalContent(content, 'self', local.privateKey, OWNER_DID))).toEqual(ARGS);
-    expect(JSON.parse(await decryptProposalContent(content, 'self', asServed.privateKey))).toEqual(ARGS);
+    expect(JSON.parse(await decryptProposalContent(content, 'self', local.privateKey))).toEqual(ARGS);
+    await expect(decryptProposalContent(content, 'self', asServed.privateKey)).rejects.toThrow();
   });
 
   it('team with an above-cap approver: readers = owner + signed approver by DID; a 0.40 approver opens `keys` by account id', async () => {
@@ -106,6 +107,25 @@ describe('content-crypto — v0.8 readers by DID', () => {
       encryptedKeys: { 'appr-id': { ct: new Uint8Array(Buffer.from(w.ct, 'base64')), enc: new Uint8Array(Buffer.from(w.enc, 'base64')) } },
     }, 'appr-id', appr.privateKey);
     expect(JSON.parse(legacy)).toEqual(ARGS);
+  });
+
+  it('a team member outside the signed deciders gets no wrap — not by DID, not by account id', async () => {
+    const owner = await generateKeyPair();
+    const appr = await generateKeyPair();
+    const other = await generateKeyPair();
+    accounts.push({ userId: 'owner-id', did: OWNER_DID, pub: owner.publicKey });
+    accounts.push({ userId: 'appr-id', did: APPR_DID, pub: appr.publicKey });
+    accounts.push({ userId: 'other-id', did: 'did:key:z6MkOther', pub: other.publicKey });
+
+    // The caller hands over the team's configured approvers; only APPR_DID is signed.
+    const { content } = await encryptProposalContent(
+      ARGS, ['owner-id', 'appr-id', 'other-id'],
+      { spUrl: 'https://as.example', cookie: 'sid=1', dataDir: '/tmp/x', selfUserId: 'owner-id', selfDid: OWNER_DID, selfPublicKey: owner.publicKey },
+      { ownerDid: OWNER_DID, deciders: [APPR_DID] },
+    );
+    expect(Object.keys(content.keys).sort()).toEqual(['appr-id', 'owner-id']);
+    expect(content.readers.sort()).toEqual([APPR_DID, OWNER_DID].sort());
+    await expect(decryptProposalContent(content, 'other-id', other.privateKey)).rejects.toThrow();
   });
 
   it('a signed decider known only by DID is looked up by DID', async () => {

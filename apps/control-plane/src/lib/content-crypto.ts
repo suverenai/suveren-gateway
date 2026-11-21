@@ -212,14 +212,23 @@ export async function encryptProposalContent(
     if (didReaders.readers.length === 0) {
       throw new Error('No reader of this proposal (the mandate owner or a signed decider) has an end-to-end key — cannot encrypt this proposal.');
     }
+    // The account-id wraps follow the same rules as the DID wraps (rule 2):
+    // only accounts whose DID is the owner or a signed decider — a team
+    // member outside the signed set must not open the content through
+    // `keys` — and this gateway's own account is wrapped to its LOCAL key,
+    // never the one the AS serves for it.
+    const signed = new Set([v08.ownerDid, ...v08.deciders]);
+    const legacyReaders = resolved
+      .filter((r) => (r.userId === deps.selfUserId && deps.selfDid ? signed.has(deps.selfDid) : r.did !== undefined && signed.has(r.did)))
+      .map((r) => (r.userId === deps.selfUserId && deps.selfPublicKey?.length === 32 ? { ...r, publicKey: deps.selfPublicKey } : r));
     const { content: env, proposalContentHash } = await hapEncryptProposalContent(toolArgs, [
-      ...resolved.map((r) => ({ did: r.userId, publicKey: r.publicKey })),
+      ...legacyReaders.map((r) => ({ did: r.userId, publicKey: r.publicKey })),
       ...didReaders.readers,
     ]);
     const byDid = new Set(didReaders.readers.map((r) => r.did));
     const keys: Record<string, { ct: string; enc: string }> = {};
     const encryptedKeys: Record<string, { ct: string; enc: string }> = {};
-    for (const r of resolved) keys[r.userId] = env.encrypted_keys[r.userId];
+    for (const r of legacyReaders) keys[r.userId] = env.encrypted_keys[r.userId];
     for (const did of byDid) encryptedKeys[did] = env.encrypted_keys[did];
     return {
       content: {
