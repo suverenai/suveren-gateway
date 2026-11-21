@@ -85,7 +85,7 @@ jobs:
   #   - the check that bundle/build.mjs --with-helper refuses a debug helper.
   # No touch is made anywhere; the prompts are checked by hand (packages/unlock-helper/DESIGN.md section 9).
   macos-helper:
-    runs-on: macos-14
+    runs-on: macos-15  # macos-14 is retired on GitHub (refused 2026-11-20)
     timeout-minutes: 30
 
     steps:
