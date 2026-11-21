@@ -19,6 +19,7 @@ export const NAV_ITEMS = [
   { to: '/reports', icon: 'reports' as NavIconName, label: 'Reports' },
   { to: '/blocked', icon: 'blocked' as NavIconName, label: 'Blocked' },
   { to: '/team', icon: 'team' as NavIconName, label: 'Team' },
+  { to: '/devices', icon: 'devices' as NavIconName, label: 'Devices', deviceKeysOnly: true },
   { to: '/agent-brief', icon: 'brief' as NavIconName, label: 'Agent Brief' },
   { to: '/integrations', icon: 'integrations' as NavIconName, label: 'Connectors' },
   { to: '/settings', icon: 'settings' as NavIconName, label: 'Settings' },
@@ -30,7 +31,7 @@ interface Props {
 }
 
 export function MobileMenu({ open, onClose }: Props) {
-  const { user, activeGroup, activeDomain, logout } = useAuth();
+  const { user, activeGroup, activeDomain, logout, deviceKeysSwitch } = useAuth();
   const { theme, toggle } = useTheme();
   const location = useLocation();
 
@@ -60,7 +61,7 @@ export function MobileMenu({ open, onClose }: Props) {
 
         {/* Navigation */}
         <nav className="mobile-menu-nav">
-          {NAV_ITEMS.map(item => (
+          {NAV_ITEMS.filter(item => !('deviceKeysOnly' in item && item.deviceKeysOnly) || deviceKeysSwitch).map(item => (
             <NavLink
               key={item.to}
               to={item.to}

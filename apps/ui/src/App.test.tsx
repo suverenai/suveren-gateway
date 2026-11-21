@@ -138,6 +138,11 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     expect(src).toMatch(/if \(leaving\) return <PageLoading \/>;/);
     expect(src).not.toMatch(/void adoptSessionUser\(\); navigate\('\/'/);
   });
+  it('DEC-93: the ordinary sign-in stays reachable: the start page links to /login?account-key, which never moves to /start', () => {
+    const start = readFileSync(join(dir, 'StartScreens.tsx'), 'utf8');
+    expect(start).toMatch(/navigate\(`\/login\?\$\{ACCOUNT_KEY_PARAM\}`/);
+    expect(start).toMatch(/if \(!switchOn \|\| wantsAccountKey\) \{ setDecided\(true\); return; \}/);
+  });
   it('DEC-93: a new gateway starts at /start; set-up opens with the page session alone; the start token stays out of the page session', () => {
     const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
     expect(app).toMatch(/path="\/start" element=\{user \? <Navigate to="\/" replace \/> : <StartPage \/>\}/);

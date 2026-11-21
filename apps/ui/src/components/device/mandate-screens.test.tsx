@@ -307,6 +307,10 @@ describe('screen 1: give a mandate (review step, chain accounts)', () => {
     expect(giveErrorText({ code: 'approvers_unavailable' })).toBe(S13.giveErrApprovers);
     expect(giveErrorText({ code: 'as_unreachable' })).toBe(S13.endOffline);
     expect(giveErrorText({ code: 'approver_has_no_chain' })).toBe(S13.giveErrNoChain);
+    // the approvers are named when the page knows them
+    expect(giveErrorText({ code: 'approver_has_no_chain', approverNames: ['Colleague'] })).toBe('Colleague has not finished setting up Suveren yet. Nothing changed. Ask them to finish it.');
+    expect(giveErrorText({ code: 'approver_has_no_chain', approverNames: ['Ben', 'Cara', 'Dora'] })).toMatch(/^Ben, Cara and Dora have not finished setting up Suveren yet/);
+    expect(giveErrorText({ code: 'approver_has_no_chain', approverNames: [] })).toBe(S13.giveErrNoChain);
     expect(giveErrorText({ code: 'check_failed', reason: 'user_cancelled' })).toBe(S13.giveErrCancelled);
     expect(giveErrorText({ code: 'check_failed', reason: 'check_failed' })).toBe(S13.giveErrTouch);
     expect(giveErrorText({ code: 'delivery_failed' })).toBe(S13.giveErrNotDelivered);

@@ -64,18 +64,19 @@ export function DevicesScreen(p: DevicesScreenProps) {
       {p.updated && <Notice kind="info">{P.appUpdated}</Notice>}
       {p.error && <Notice kind="error">{p.error}</Notice>}
       {(p.notices ?? []).map((n, i) => <div key={i} data-testid="chain-notice"><Notice kind="info">{n}</Notice></div>)}
-      {p.rotateOffer && p.onRotate && (
-        <div data-testid="rotate-offer">
-          <h2 style={{ fontSize: 'var(--text-lead)' }}>{P.rotateOfferTitle}</h2>
-          <p>{P.rotateOfferBody(p.rotateOffer)}</p>
-          <p>{P.rotateNeedPaper}</p>
-          <button type="button" className="btn btn-primary btn-full" onClick={p.onRotate} disabled={p.busy}>{P.rotateStart}</button>
-        </div>
-      )}
       <DeviceList rows={p.rows} nowSeconds={p.nowSeconds} onRemove={p.onRemove} />
       {p.identityCode && <CodeBlock label={P.devIdentity} code={p.identityCode} testid="identity-code" />}
       <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onAddComputer} disabled={p.busy}>{P.devAddComputer}</button>
       <button type="button" className="btn btn-ghost btn-full" onClick={p.onRefresh} disabled={p.busy}>{P.devRefresh}</button>
+      {/* DEC-96: replacing the recovery code is a plain section here, not an offer after joining. */}
+      {p.onRotate && (
+        <div data-testid="rotate-section">
+          <h2 style={{ fontSize: 'var(--text-lead)' }}>{P.rotateTitle}</h2>
+          <p>{P.rotateWhy}</p>
+          <p>{P.rotateNeedPaper}</p>
+          <button type="button" className="btn btn-secondary btn-full" onClick={p.onRotate} disabled={p.busy}>{P.rotateStart}</button>
+        </div>
+      )}
       {p.push && <PushPanel {...p.push} />}
       <p className="form-hint" data-testid="second-icon">{P.secondIcon}</p>
       {p.persistent !== null && <p className="form-hint">{p.persistent ? P.storagePersistent : P.storageNotPersistent}</p>}

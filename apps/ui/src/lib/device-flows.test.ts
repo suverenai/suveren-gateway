@@ -109,6 +109,12 @@ describe('set up this computer (screens 2 and 3)', () => {
     d = new SetupDriver({ client, open: vi.fn() });
     await d.begin(); await d.connect(); await d.poll();
     expect(d.get()).toMatchObject({ error: T.connectOtherWindow });
+
+    // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code; "Try again" would never help.
+    ({ client } = mk({ ok: true, state: 'failed', code: 'connect_refused', asCode: 'CHAIN_EXISTS' }));
+    d = new SetupDriver({ client, open: vi.fn() });
+    await d.begin(); await d.connect(); await d.poll();
+    expect(d.get()).toMatchObject({ step: 'connect', error: DRAFT.connectChainExists });
   });
 
   it('cancel drops the code and goes back to the start', async () => {
@@ -183,6 +189,35 @@ describe('unlock (screen 4)', () => {
     return { log, d: { client, onSession: (t: string) => log.push(`session:${t}`), onIn: async () => { log.push('in'); return true; }, onAccountKey: () => log.push('account-key') } };
   };
   const status = (setUp: boolean, signedIn: boolean) => ({ body: { ok: true, setUp, setupPending: false, signedIn } });
+
+  it('DEC-95: a reload while the gateway runs says so, never "the computer restarted"', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: true } }, '/health': { body: { status: 'ok', vaultUnlocked: true } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBe(T.pageNeedsUnlock);
+    expect(u.get().touchAvailable).toBe(true);
+  });
+
+  it('DEC-95: a locked gateway (a restart) keeps the restart text', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: true } }, '/health': { body: { status: 'ok', vaultUnlocked: false } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBeUndefined();   // the screen then shows T.unlockWhy, the restart text
+  });
+
+  it('DEC-95: a session-end reason (idle, lock, sleep) stays, even with the gateway still running', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: false } }, '/health': { body: { status: 'ok', vaultUnlocked: true } } });
+    const u = new UnlockDriver(deps(client).d, T.sessionClosed);
+    await u.init();
+    expect(u.get().notice).toBe(T.sessionClosed);
+  });
+
+  it('DEC-95: no answer about the gateway keeps the restart text (never a guess)', async () => {
+    const { client } = fakeClient({ '/auth/platform/status': { body: { unlockEnabled: false } } });
+    const u = new UnlockDriver(deps(client).d);
+    await u.init();
+    expect(u.get().notice).toBeUndefined();
+  });
 
   it('password: session, device status, sign-in by device key, in', async () => {
     const { client } = fakeClient({ '/auth/unlock': { body: { ok: true, sessionToken: 'T' } }, '/auth/device/status': status(true, false), '/auth/device/signin': { body: { ok: true, expiresAt: 1 } } });

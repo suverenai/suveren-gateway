@@ -25,7 +25,6 @@ export interface MandateResult {
   /** The old mandate is no longer honoured on this gateway (its revoke is retried). */
   oldStoppedLocally?: boolean;
   /** This computer cannot grant it (no Touch ID): it was sent to the person's phone and goes live with their touch there (DEC-90). */
-  onPhone?: { mandateId: string; mandateVersion: number; expiresAt: number };
 }
 
 export async function controlPlaneMandate(dryRun: boolean, request: Record<string, unknown>): Promise<MandateResult> {

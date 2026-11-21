@@ -46,6 +46,8 @@ import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
 import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
 import { requestFromHash, type PushState } from './lib/push';
+import { readPendingPasskeys, approvePasskey, type PendingPasskey } from './lib/passkey-approve';
+import { DashboardPasskeyCard, PASSKEY_TEXT, passkeyRefusalText, type PasskeyCardView } from '@suveren/approval-card/components/DashboardPasskeyCard';
 
 /** How often an open list is read again (a timer; it never counts as use of the session). */
 const REFRESH_MS = 30_000;
@@ -84,7 +86,6 @@ function Screens() {
   const [joinKey, setJoinKey] = useState(0);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const rotateNext = useRef(false);
   const [openRequest, setOpenRequest] = useState<OpenRequest>(() => {
     const id = requestFromHash(globalThis.location?.hash ?? '');
     return id ? { id, n: 0 } : null;
@@ -95,6 +96,8 @@ function Screens() {
     if (!('serviceWorker' in navigator)) return;
     const onMsg = (e: MessageEvent) => {
       const d = e.data as { t?: unknown; id?: unknown } | null;
+      // A device notice: the list of devices is what changed (stage D4, device notices).
+      if (d && d.t === 'open-devices') { if (viewRef.current.t === 'home') setView({ t: 'home', tab: 'devices' }); return; }
       if (!d || d.t !== 'open-request') return;
       const id = typeof d.id === 'string' ? requestFromHash(`#request=${d.id}`) : null;
       setOpenRequest((cur) => (id ? { id, n: (cur?.n ?? 0) + 1 } : null));
@@ -174,8 +177,6 @@ function Screens() {
     // Notifications that are on send their subscription again (renewed by the browser, or deleted after a 410). Quiet.
     const bearer = rt.session.bearer();
     if (bearer) void rt.push.resync(bearer);
-    // "Make a new code" on the join's done screen (mockup D1): straight to replacing the recovery code once the app is open.
-    if (rotateNext.current) { rotateNext.current = false; setView({ t: 'home', tab: 'devices', rotate: true }); return; }
     setView({ t: 'home', tab: 'requests' });
   }, [rt, locked]);
 
@@ -191,7 +192,7 @@ function Screens() {
     case 'register':
       return <RegisterFlow rt={rt} onBack={() => setView({ t: 'welcome' })} onDone={() => locked()} />;
     case 'join':
-      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} onRotate={() => { rotateNext.current = true; locked(); }} />;
+      return <JoinFlow key={joinKey} rt={rt} notice={view.notice} onBack={() => (PHONE_FIRST_SETUP ? setView({ t: 'welcome' }) : setJoinKey((k) => k + 1))} onDone={() => locked()} />;
     case 'locked':
       return <OpenSessionScreen busy={busy} error={view.error} ended={view.ended} onOpen={() => void openSession()} onForget={view.canForget ? () => void forget() : undefined} />;
     case 'home':
@@ -220,7 +221,7 @@ function RegisterFlow({ rt, onBack, onDone }: { rt: Rt; onBack: () => void; onDo
   );
 }
 
-function JoinFlow({ rt, notice, onBack, onDone, onRotate }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void; onRotate: () => void }) {
+function JoinFlow({ rt, notice, onBack, onDone }: { rt: Rt; notice?: string; onBack: () => void; onDone: () => void }) {
   const driver = useMemo(() => new JoinDriver({ keys: rt.keys, check: rt.check, transport: rt.transport, api: rt.api, accounts: rt.accounts, asUrl: rt.asUrl, now: rt.now }), [rt]);
   useEffect(() => () => driver.dispose(), [driver]);
   const state = useDriver(driver);
@@ -232,7 +233,7 @@ function JoinFlow({ rt, notice, onBack, onDone, onRotate }: { rt: Rt; notice?: s
     <JoinScreen
       state={state} nowSeconds={rt.now()}
       onScanned={(t) => void driver.scanned(t)} onReviewConfirm={() => driver.confirmReview()} onName={(l) => void driver.submitName(l)}
-      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice} onRotate={onRotate}
+      onCancel={() => { void driver.cancel(); onBack(); }} onDone={onDone} canGoBack={PHONE_FIRST_SETUP} notice={notice}
     />
   );
 }
@@ -621,6 +622,20 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
   const [push, setPush] = useState<{ state: PushState; busy: boolean; error?: string } | null>(null);
 
   useEffect(() => { void rt.push.state().then((state) => setPush({ state, busy: false })); }, [rt]);
+  // A passkey for the suveren.ai dashboard that waits for one of this person's devices (AS step 17): a row, then the shared card.
+  const [passkeys, setPasskeys] = useState<PendingPasskey[]>([]);
+  const [passkeyOpen, setPasskeyOpen] = useState(false);
+  const [passkeyView, setPasskeyView] = useState<PasskeyCardView>({ s: 'offered' });
+  const passkeyGen = useRef(0);
+  const readPasskeys = useCallback(async () => { setPasskeys(await readPendingPasskeys({ api: rt.api, session: rt.session, now: rt.now })); }, [rt]);
+  useEffect(() => { void readPasskeys(); }, [readPasskeys]);
+  const approveOne = useCallback(async (item: PendingPasskey) => {
+    const g = ++passkeyGen.current;
+    setPasskeyView({ s: 'touch' });
+    const code = await approvePasskey({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }, item);
+    if (g !== passkeyGen.current) return;
+    setPasskeyView(code === null ? { s: 'added' } : { s: 'offered', error: passkeyRefusalText(code) });
+  }, [rt]);
 
   const changePush = useCallback(async (on: boolean) => {
     const bearer = rt.session.bearer();
@@ -690,7 +705,25 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
       />
     );
   }
+  if (passkeyOpen && passkeys[0]) {
+    const item = passkeys[0];
+    return (
+      <DashboardPasskeyCard
+        request={{ code: item.code, email: item.email, credentialAt: item.credentialAt, expiresAt: item.expiresAt }}
+        view={passkeyView} canApprove
+        onApprove={() => void approveOne(item)}
+        onCancel={() => { passkeyGen.current++; setPasskeyView({ s: 'offered' }); }}
+        onClose={() => { setPasskeyOpen(false); setPasskeyView({ s: 'offered' }); void readPasskeys(); }} />
+    );
+  }
   return (
+    <>
+    {passkeys.length > 0 && (
+      <div className="alert alert-info" role="status" data-testid="passkey-waiting-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'space-between', margin: '0.75rem' }}>
+        <span>{PASSKEY_TEXT.waitingRow}</span>
+        <button type="button" className="btn btn-primary" style={{ minHeight: 44 }} onClick={() => setPasskeyOpen(true)} data-testid="passkey-open">{PASSKEY_TEXT.open}</button>
+      </div>
+    )}
     <DevicesScreen
       rows={rows} identityCode={code} nowSeconds={rt.now()} persistent={persistent} updated={updated}
       version={VERSION} build={BUILD_COMMIT} onAddComputer={onAdd} onRefresh={() => void refresh()} busy={busy} error={error}
@@ -698,6 +731,7 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
       rotateOffer={offer} onRotate={() => rotator.start()}
       push={push ? { ...push, onOn: () => void changePush(true), onOff: () => void changePush(false) } : undefined}
     />
+    </>
   );
 }
 
@@ -706,6 +740,7 @@ function noticeText(n: ChainNotice, now: number): string {
   const by = n.by ?? P.noticeByCode;
   if (n.kind === 'added') return P.noticeAdded(n.label, whenText(n.at, now), by);
   if (n.kind === 'removed') return P.noticeRemoved(n.label, by);
+  if (n.kind === 'touch-id') return P.noticeTouchId(n.label, whenText(n.at, now));
   return P.noticeRotated(by);
 }
 

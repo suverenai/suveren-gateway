@@ -643,7 +643,6 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           // A gateway with a device chain refuses this (the person gives the mandate on the gateway page from the card).
           const r = await controlPlaneMandate(false, mandateRequest(args));
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
-          if (r.onPhone) return builtinText(onPhoneText('create', r.onPhone));
           return builtinText(
             `Mandate created: ${r.authorizationId} — profile ${r.profileId}, ${r.groupName}, mode ${r.mode}, ` +
             `valid for ${Math.round((r.ttlSeconds ?? 0) / 3600)} h. It is active now.`,
@@ -663,7 +662,6 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
           const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change } });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
-          if (r.onPhone) return builtinText(onPhoneText('change', r.onPhone));
           if (r.revokeError && r.oldStoppedLocally) {
             // The change happened: the new mandate is in place and the old one is no
             // longer used on this gateway. Only its revoke at the Authority Server is
@@ -782,17 +780,6 @@ function mandateRequest(args: Record<string, unknown>): Record<string, unknown> 
  * ends it there by itself (approved wording, Andreas 2026-11-20). The id pair
  * and the reason follow for the AI's own record. Exported for its test.
  */
-/**
- * The person approved it, but this computer has no Touch ID and cannot give the mandate itself: it went to their phone (DEC-90). The AI gets
- * the facts and the one next step: nothing is in place until the person confirms it there; it must not propose it again.
- */
-export function onPhoneText(kind: 'create' | 'change', g: { mandateId: string; expiresAt: number }): string {
-  const what = kind === 'change' ? 'The change' : 'The mandate';
-  return `${what} was approved. This computer cannot give it itself, so it was sent to the person's phone. ` +
-    `It is not in place yet: it goes live when the person confirms it on their phone with their touch. Do not propose it again; ` +
-    `if the person asks, tell them to open the request on their phone. (Mandate ${g.mandateId}, waiting until ${new Date(g.expiresAt * 1000).toISOString()}.)`;
-}
-
 export function changeRevokePendingText(newId: string, oldId: string, revokeError: string): string {
   return (
     'The change is in place. The old mandate is no longer used on this computer. ' +

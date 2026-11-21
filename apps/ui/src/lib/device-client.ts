@@ -50,7 +50,7 @@ export interface PlatformUnlockAnswer { unlocked: true; sessionOpened: boolean; 
 export interface PlatformCapabilities { unlockEnabled: boolean; checkKey: boolean; available?: boolean }
 
 export interface PendingIdentityReset { id: string; effectiveAt: number; raisedAt?: number }
-export interface RecoveryStatus { recoveryPending: boolean; kind?: 'reset' | 'rotate'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string }
+export interface RecoveryStatus { recoveryPending: boolean; kind?: 'reset' | 'rotate' | 'set'; handoff?: 'waiting' | 'authorised' | 'failed' | 'expired'; confirmCode?: string }
 export interface DeviceStatus {
   setUp: boolean;
   setupPending: boolean;
@@ -106,6 +106,13 @@ export type PairingView =
 
 export interface DevicesAnswer { rows: PairingDeviceRow[]; identityCode: string; origin: PairingOrigin | null; canGrant: boolean; hasRoom: boolean }
 
+export interface DashboardPasskey {
+  requestId: string; credId: string; rpId: string; code: string;
+  createdAt: number; credentialAt: number; expiresAt: number;
+  account: { email: string; name: string };
+}
+export interface DashboardPasskeysAnswer { canApprove: boolean; pending: DashboardPasskey[] }
+
 export class DeviceClient {
   constructor(private readonly send: Transport = (p, i) => spClient.request(p, i)) {}
 
@@ -116,6 +123,8 @@ export class DeviceClient {
   // Probes that need no session
   passwordStatus() { return this.go<PasswordStatus>('/auth/password/status'); }
   platformStatus() { return this.go<PlatformStatus>('/auth/platform/status'); }
+  /** Is the gateway itself (its vault) open? `/health` answers without a session (DEC-95: the unlock screen's reason). */
+  vaultState() { return this.go<{ vaultUnlocked?: boolean }>('/health'); }
 
   // Password and unlock
   setPassword(apiKey: string, password: string) {
@@ -158,10 +167,18 @@ export class DeviceClient {
   rotateSubmit(rotateId: string, oldCode: string, newCode: string) { return this.go<HandoffStarted>('/auth/device/rotate-root/submit', json({ rotateId, oldCode, newCode })); }
   rotateStatus(recoveryId: string) { return this.go<HandoffStatus>(`/auth/device/rotate-root/status?recoveryId=${encodeURIComponent(recoveryId)}`); }
   rotateFinish(recoveryId: string) { return this.go<{ rootDid: string }>('/auth/device/rotate-root/finish', json({ recoveryId })); }
+  // A computer set up without Touch ID gets its check key (a root-signed `set`, recovery code + email link).
+  checkKeySubmit(code: string) { return this.go<HandoffStarted>('/auth/device/check-key/submit', json({ code })); }
+  checkKeyStatus(recoveryId: string) { return this.go<HandoffStatus>(`/auth/device/check-key/status?recoveryId=${encodeURIComponent(recoveryId)}`); }
+  checkKeyFinish(recoveryId: string) { return this.go<{ rootDid: string; checkKey: true }>('/auth/device/check-key/finish', json({ recoveryId })); }
   identityResetCancel(requestId: string) { return this.go<{ cancelled: true; requestId: string }>('/auth/device/identity-reset/cancel', json({ requestId })); }
 
   // Pairing with the phone app: the list, "Add a phone" (admit), "Add this computer" (join)
   devices() { return this.go<DevicesAnswer>('/auth/device/devices'); }
+  /** The dashboard passkeys waiting for one of this person's devices (AS step 17, the device side), and whether this computer can approve. */
+  dashboardPasskeys() { return this.go<DashboardPasskeysAnswer>('/auth/device/dashboard-passkeys'); }
+  /** Approve one with this computer's key and its check (one touch). */
+  approveDashboardPasskey(requestId: string) { return this.go<{ registered: true; credId: string; code: string }>(`/auth/device/dashboard-passkeys/${encodeURIComponent(requestId)}/approve`, json({})); }
   pairingStatus() { return this.go<{ view: PairingView }>('/auth/device/pairing/status'); }
   admitStart() { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/start', json({})); }
   admitChoose(code: string) { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/choose', json({ code })); }

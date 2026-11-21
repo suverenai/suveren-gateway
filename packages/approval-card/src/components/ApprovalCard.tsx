@@ -97,9 +97,10 @@ export function ApprovalCard({
   const isChange = proposal.tool === CHANGE_MANDATE_TOOL;
   const isMandate = proposal.tool === CREATE_MANDATE_TOOL || isChange;
   const [phase, setPhase] = useState<Phase>({ t: 'idle' });
-  // A device-key gateway: "Give this mandate" runs the give page's own flow from this proposal (ApprovalBody registerGive).
-  const giveRef = useRef<(() => void) | null>(null);
-  const registerGive = useCallback((g: (() => void) | null) => { giveRef.current = g; }, []);
+  // A device-key gateway: "Give this mandate" runs the one give driver IN PLACE, from exactly what the body opened and shows.
+  const [mandateArgs, setMandateArgs] = useState<Record<string, unknown> | null>(null);
+  const onMandateArgs = useCallback((a: Record<string, unknown> | null) => setMandateArgs(a), []);
+  const hostGive = (approvalHost().useMandateGive ?? noMandateGive)(proposal, mandateArgs, { onClose: () => onDismissResult?.() });
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   // Whether THIS device can decrypt the content — nothing can be approved that
@@ -219,7 +220,8 @@ export function ApprovalCard({
   }, [outcome]);
   useEffect(() => { onOutcome?.(outcome); }, [outcome]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const busy = phase.t === 'working' || phase.t === 'done';
+  // An in-place give counts as busy: the header and the other cards stay locked until it is given or back at the offer.
+  const busy = phase.t === 'working' || phase.t === 'done' || !!hostGive?.active;
   // A result that stays (refused, or not known) is not a stamp over the card: it sits on top of the card, the card below it,
   // and one full-width button is pinned at the bottom (UI review, DEC-88).
   const staysOnCard = phase.t === 'done' && (outcome === 'refused' || outcome === 'unknown');
@@ -288,7 +290,7 @@ export function ApprovalCard({
             topExtras={topExtras}
             onContentState={({ loading, readable }) => { setContentLoading(loading); setContentReadable(readable); }}
             onShownSnapshot={(snapshot) => { shownSnapshotRef.current = snapshot; }}
-            registerGive={registerGive}
+            onMandateArgs={onMandateArgs}
           />
         </article>
         {moreBelow && <div className="more-cue" aria-hidden="true" data-testid="more-cue">More below ↓</div>}
@@ -300,7 +302,9 @@ export function ApprovalCard({
         Only you approve. Never let an AI or a browser it controls open this page or approve for you.
       </span>
 
-      {showButtons && phase.t !== 'change' && (
+      {hostGive?.active && <div data-testid="card-give">{hostGive.footer}</div>}
+
+      {showButtons && !hostGive?.active && phase.t !== 'change' && (
         <footer className="av3-foot">
           {error && <p className="msg-error av3-error" role="alert">{error}</p>}
           {mandateEnded && (
@@ -316,7 +320,7 @@ export function ApprovalCard({
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => {
                 // A chain account gives a mandate with its device touch on the give page (one implementation, DEC-80/91 direction 2026-11-20).
-                if (approveRoute({ giveWording, isMandate, canOpenGivePage: !!giveRef.current }) === 'give_page') { giveRef.current!(); return; }
+                if (approveRoute({ giveWording, isMandate: proposal.tool === CREATE_MANDATE_TOOL, canGive: !!hostGive }) === 'give') { hostGive!.start(); return; }
                 void run('approve');
               }}>
                 {approveWord}
@@ -380,3 +384,6 @@ export function ApprovalCard({
     </div>
   );
 }
+
+/** No in-place give (the host does not give mandates this way). */
+function noMandateGive(): null { return null; }

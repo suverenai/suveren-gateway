@@ -239,6 +239,14 @@ export class MandateGrants {
     return { credential, stored, own };
   }
 
+  /**
+   * For other device-key flows on this computer (lib/dashboard-passkeys.ts): the signed-in device session with this person's chain
+   * verified from the genesis on against the pinned head. Throws {@link GrantRefusal} (locked, not set up, not signed in, removed).
+   */
+  async deviceSession(): Promise<Session> {
+    return this.session();
+  }
+
   /** The mandate id of the mandate an authorization was granted as, read from the Authority Server and verified against this person's chain. */
   async mandateIdFor(authorizationId: string): Promise<string> {
     const s = await this.session();
@@ -309,19 +317,22 @@ export class MandateGrants {
     const identities: Issued['approvers'] = [];
     if (team.approvers.length > 0 && !Array.isArray(team.eligible)) return refuse('approvers_unavailable', 'The Authority Server did not say who may approve for this team.');
     const seenDid = new Set<string>();
+    // Every approver without a device chain is named in the refusal (by user id; the page shows their names), not only the first.
+    const noChain: string[] = [];
     for (const e of team.eligible ?? []) {
       if (typeof e.did === 'string') { if (seenDid.has(e.did)) continue; seenDid.add(e.did); }
       if (!team.approvers.includes(e.user_id)) return refuse('approver_unresolved', 'The Authority Server named an approver this team does not have.');
-      if (e.did === null) return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.');
+      if (e.did === null) { if (!noChain.includes(e.user_id)) noChain.push(e.user_id); continue; }
       if (typeof e.did !== 'string' || !DID.test(e.did)) return refuse('approver_unresolved', 'An approver of this team could not be identified.');
       identities.push({ userId: e.user_id, did: e.did, identityCode: await dk.identityCode(e.did) });
     }
+    if (noChain.length > 0) return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.', { approverIds: noChain });
     for (const a of identities) {
       if (a.did === s.stored.rootDid) continue;
       const pin = this.d.pins.get(a.did);
       let state: ChainState;
       try { state = await this.chainOf(a.did, s.credential, pin); } catch (e) {
-        if (e instanceof GrantRefusal && e.code === 'chain_unknown') return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.');
+        if (e instanceof GrantRefusal && e.code === 'chain_unknown') return refuse('approver_has_no_chain', 'A team approver has no device chain; a mandate does not mix accounts with and without one.', { approverIds: [a.userId] });
         throw e;
       }
       try { this.d.pins.advance(a.did, state.head, this.protectedDids()); } catch (e) {

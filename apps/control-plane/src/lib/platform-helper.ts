@@ -152,7 +152,16 @@ export function locateHelper(o: LocateOptions): Located {
   } catch {
     return { unavailable: 'helper_failed' };
   }
-  return { spec: { command: join(app, layout.executable), args: ['serve'], files, callers } };
+  // Tests only: with a deliberately chosen helper (SUVEREN_HELPER_APP), extra arguments for the helper's DEBUG build
+  // (`--backend software --allow-any-caller`, DESIGN.md section 9: a CI runner has no Secure Enclave). A release
+  // helper compiles these options out, so they change nothing there; without the override they are never passed.
+  const extra: string[] = [];
+  if (override) {
+    const t = (env.SUVEREN_HELPER_ARGS ?? '').split(/\s+/);
+    if (t.some((a, i) => a === '--backend' && t[i + 1] === 'software')) extra.push('--backend', 'software');
+    if (t.includes('--allow-any-caller')) extra.push('--allow-any-caller');
+  }
+  return { spec: { command: join(app, layout.executable), args: ['serve', ...extra], files, callers } };
 }
 
 export interface HostOptions {

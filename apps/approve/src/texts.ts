@@ -98,7 +98,11 @@ export const P = {
   reviewNotMine: SP.reviewNotMine, // shared (approval-card pairing-texts)
   reviewButton: 'Add this phone to it', // DRAFT
   compareTitle: SP.compareTitle, // shared (approval-card pairing-texts)
-  compareBody: (label: string): string => `Check that ${label} shows the same six digits. Then confirm on ${label}.`, // DRAFT
+  compareBody: (label: string): string => `Check that ${label} shows the same six digits. Then confirm on ${label}.`, // DRAFT (replaced by showTitle/tapThis on the compare screen, DEC-96)
+  showTitle: SP.showOnComputerTitle, // shared (DEC-96)
+  tapThis: SP.tapThisNumber, // shared (DEC-96)
+  otherReady: SP.otherReadyComputer, // shared (DEC-96): the phone admits a computer
+  rotateWhy: SP.rotateWhy, // shared (DEC-96)
   compareWaiting: SP.compareWaiting, // shared (approval-card pairing-texts)
   joinDoneTitle: 'This phone was added', // DRAFT
 
@@ -163,6 +167,9 @@ export const P = {
   pushTitle: 'Suveren', // DRAFT
   pushOne: 'A request is waiting for you.', // DRAFT
   pushMany: (n: number) => `${n} requests are waiting for you.`, // DRAFT
+  pushDevicesChanged: 'Your devices changed. Open Suveren to see what changed.', // DRAFT
+  pushRecoveryStarted: 'Someone started a change with your recovery code. If this was not you, open Suveren now.', // DRAFT
+  pushIdentityReset: 'Someone asked for a new identity for your account. If this was not you, open Suveren now.', // DRAFT
   pushOfferTitle: 'Get a notice when something waits for you', // DRAFT
   pushOfferBody: 'The notice says only that a request is waiting. What it is about you see here, after you open the app.', // DRAFT
   pushTurnOn: 'Turn on notifications', // DRAFT
@@ -235,6 +242,7 @@ export const P = {
   noticeAdded: (label: string, when: string, by: string): string => `${label} was added to your account ${when} on ${by}. If this was not you, remove it.`, // DRAFT new
   noticeRemoved: (label: string, by: string): string => `${label} was removed from your account on ${by}.`, // DRAFT new
   noticeRotated: (by: string): string => `${by} replaced your recovery code. The old code no longer works. If this was not you, contact support.`, // DRAFT new
+  noticeTouchId: (label: string, when: string): string => `Touch ID was turned on for ${label} ${when}, with your recovery code. If this was not you, someone has your recovery code: replace it.`, // DRAFT new
   noticeByCode: 'your recovery code', // DRAFT new (who signed: the recovery code, not a device)
 
   // ─── Navigation ───────────────────────────────────────────────────────────────

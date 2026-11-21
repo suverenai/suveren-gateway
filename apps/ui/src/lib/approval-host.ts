@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSSEEvent, type SSEEventType } from '../contexts/EventSourceContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { useDeviceChain } from './use-device-chain';
+import { useCardMandateGive } from './card-give';
 
 function HostLink(props: { to: string; className?: string; children?: ReactNode }) {
   return createElement(Link, props);
@@ -45,6 +46,8 @@ configureApprovalHost({
   },
   useSimulationMode,
   useGiveWording: useDeviceChain,
+  // One give driver for the card and the give page (lib/use-give.ts): "Give this mandate" runs in place.
+  useMandateGive: useCardMandateGive,
   useOpenMandateScreen() {
     const navigate = useNavigate();
     return (handoff) => {

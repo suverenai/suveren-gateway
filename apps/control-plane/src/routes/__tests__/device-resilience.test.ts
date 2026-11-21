@@ -47,6 +47,7 @@ async function setUp(w: World) {
   const start = await w.post('/auth/device/setup/start');
   const fin = await w.post('/auth/device/setup/finish', { setupId: start.body.setupId, enrolmentCode: w.as.issueEnrolmentCode() });
   expect(fin.status).toBe(200);
+  await w.gw.settled(); // the sign-in's background re-wrap: what a test counts afterwards is its own
   return start;
 }
 
