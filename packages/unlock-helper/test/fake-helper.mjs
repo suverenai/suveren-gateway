@@ -59,6 +59,7 @@ export function signDigest(blob, digestBytes) {
 const CHANGE_MEMBERS = ['request_id', 'kind', 'name', 'change_hash', 'gateway_key_id', 'expires_at'].sort().join(',');
 const SWITCH_MEMBERS = ['typ', 'v', 'action', 'nonce', 'issued_at'].sort().join(',');
 const CANCEL_MEMBERS = ['typ', 'v', 'aud', 'root_did', 'key_id', 'request_id', 'chain_seq', 'chain_head', 'issued_at'].sort().join(',');
+const PASSKEY_MEMBERS = ['typ', 'v', 'root_did', 'key_id', 'chain_seq', 'chain_head', 'request_id', 'cred_id', 'rp_id', 'issued_at'].sort().join(',');
 const GRANT_FIXED = ['typ', 'v', 'op', 'owner_did', 'key_id', 'chain_seq', 'chain_head', 'mandate_id', 'mandate_version', 'granted_at', 'nonce'];
 const quoted = (x) => `"${x.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 const ANCHOR_MEMBERS = ['typ', 'v', 'member_did', 'team_id', 'admin_did', 'version', 'prev', 'key_id', 'chain_seq', 'chain_head', 'created_at', 'nonce'].sort().join(',');
@@ -85,6 +86,8 @@ export function reasonFor(bytes, focus, previous) {
     text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
   } else if (o.typ === 'suveren-identity-cancel' && Object.keys(o).sort().join(',') === CANCEL_MEMBERS) {
     text = 'cancel the request for a new identity';
+  } else if (o.typ === 'suveren-passkey-register' && Object.keys(o).sort().join(',') === PASSKEY_MEMBERS) {
+    text = 'add a passkey for your Suveren dashboard';
   } else if (o.typ === 'suveren-team-anchor' && Object.keys(o).sort().join(',') === ANCHOR_MEMBERS) {
     text = o.admin_did === null ? 'stop trusting the admin of a team' : 'trust the admin of the team you asked to join';
   } else if (o.typ === 'suveren-team-members' && Object.keys(o).sort().join(',') === LIST_MEMBERS) {

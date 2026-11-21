@@ -109,6 +109,8 @@ export const T = {
   locked: 'The gateway is locked. Unlock it with your password.', // 88
   sessionIdle: 'You were away for an hour, so this page closed. Unlock it again to go on.', // 89
   sessionLong: 'This page has been open for 12 hours, so it closed. Unlock it again to go on.', // 90
+  /** DEC-95: the page lost its session (a reload, a new tab) while the gateway itself kept running. */
+  pageNeedsUnlock: 'The gateway is still running and your AI can keep working. Unlock to use this page again.', // DRAFT
   sessionClosed: 'This page was closed, for example after a restart, sleep or a locked screen. Unlock it again to go on.', // 91
   asUnreachable: 'Cannot reach suveren.ai. Check your internet connection and try again.', // 92
   asWrongServer: 'The server that answered is not the suveren.ai this gateway was set up with. Nothing was sent. Do not go on, and tell whoever runs your gateway.', // 93
@@ -156,6 +158,7 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  * changed" only where it is true). Every one is listed in the hand-over report for the maintainer to confirm.
  */
 export const DRAFT = {
+  connectChainExists: 'This account already has a device. Add this computer from a device you already have. Nothing changed.', // DRAFT (plan 20.18 point 6)
   loading: 'Loading…', // DRAFT
   connectWaitingWhat: 'Still missing: press Connect on the suveren.ai page in that tab.', // DRAFT
   connectStuck: 'Nothing has arrived yet. If you closed that tab, or it says Done without a Connect button, start again.', // DRAFT
@@ -169,6 +172,14 @@ export const DRAFT = {
   startUseAccountKey: 'Sign in with an account key instead', // DRAFT
 
   touchSetupSkipped: 'Touch ID was not turned on. You can turn it on later under Settings.', // DRAFT
+  // Turn on Touch ID for approvals on a computer set up without it (a root-signed `set`): recovery code + email link, then two touches.
+  addCheckTitle: 'Turn on Touch ID for approvals', // DRAFT
+  addCheckWhy: 'This computer was set up without Touch ID, so it cannot give mandates or confirm changes. Turn it on with your recovery code and an email link.', // DRAFT
+  addCheckPasswordHint: 'Your unlock password turns on unlocking with Touch ID in the same step.', // DRAFT
+  addCheckButton: 'Turn on Touch ID', // DRAFT
+  addCheckDone: 'Touch ID is on. This computer can now give mandates and confirm changes, and you open the gateway with Touch ID.', // DRAFT
+  addCheckDoneNoUnlock: 'Touch ID is on for approvals. Unlocking with Touch ID did not turn on; you can turn it on below.', // DRAFT
+  addCheckCardBody: 'This computer cannot give mandates yet: it was set up without Touch ID.', // DRAFT
   touchCardTitle: 'Unlock with Touch ID', // DRAFT
   touchCardBody: 'Open this gateway with your fingerprint instead of typing the unlock password. The password still works.', // DRAFT
   touchCardOn: 'Touch ID is on for this gateway.', // DRAFT
@@ -194,7 +205,7 @@ export const DRAFT = {
   recoverPendingClosed: 'Your request for a new identity is closed by this recovery.', // DRAFT
   // Replace the recovery code
   rotateTitle: 'Replace your recovery code', // DRAFT
-  rotateWhy: 'Do this if the old code was seen by someone else or got lost. The old code stops working.', // DRAFT
+  rotateWhy: 'Replace it if anyone could have seen your screen when you set up. The old code stops working.', // DRAFT (DEC-96)
   rotateStart: 'Make a new code', // DRAFT
   rotateNewTitle: 'Your new recovery code', // DRAFT
   rotateOldLabel: 'Old recovery code', // DRAFT
@@ -205,6 +216,7 @@ export const DRAFT = {
   // Pending identity reset (item 99/100), cancelling
   cancelling: 'Cancelling...', // DRAFT
   // Settings entry
+  deviceKeysCardTitle: 'Devices and recovery code', // DRAFT (DEC-96)
   deviceCardTitle: 'Recovery code', // DRAFT
   deviceCardBody: 'This code gets you back in if you lose this computer.', // DRAFT
   // Waiting-state messages (neutral)
@@ -236,6 +248,7 @@ const DRAFT_CODES: Record<string, string> = {
   rotate_expired: 'The new code was not used in time. Make another.',
   new_code_mismatch: 'The new code you typed is not the one shown. Check it and try again.',
   granting_device_required: 'This computer needs Touch ID to replace the recovery code.',
+  check_key_present: 'Touch ID is already on for approvals on this computer.', // DRAFT
   check_unavailable: 'Touch ID is not available on this computer. Nothing changed.',
   not_signed_in: 'This computer is not signed in to your account. Unlock the gateway again.',
   reset_unknown: 'This request no longer exists. Nothing changed.',
@@ -266,6 +279,8 @@ export interface TextContext {
   /** Where the code was met. Some codes read differently there (a cancelled Touch ID on unlock vs on confirm). */
   screen?: 'password' | 'setup' | 'connect' | 'unlock' | 'confirm' | 'signin' | 'recover' | 'general';
   retryAfterSeconds?: number;
+  /** The Authority Server's own refusal code, where the control plane passed it on (Connect: `asCode`). */
+  asCode?: string;
 }
 
 /** "10 minutes" for the wait the control plane named; at least one minute. */
@@ -280,6 +295,9 @@ export function minutesText(retryAfterSeconds: number | undefined): string {
  */
 export function textForCode(code: string | undefined, ctx: TextContext = {}): string {
   const screen = ctx.screen ?? 'general';
+  // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code. Trying again never helps,
+  // so the generic "refused … Try again" would send the person round in circles.
+  if (ctx.asCode === 'CHAIN_EXISTS') return DRAFT.connectChainExists;
   switch (code) {
     // The page session (DEC-47)
     case 'session_idle': return T.sessionIdle;

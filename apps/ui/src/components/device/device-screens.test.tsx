@@ -10,6 +10,7 @@ import { SetupScreen, type SetupScreenProps } from './SetupScreens';
 import { ConnectWaiting, CONNECT_STUCK_MS } from './ConnectWaiting';
 import { ConfirmChange } from './ConfirmChange';
 import { RecoverScreen } from './RecoverScreens';
+import { CheckKeyScreen } from './CheckKeyScreens';
 import { IdentityResetNotice } from './IdentityResetBanner';
 import { LoginPage } from '../../pages/LoginPage';
 import type { UnlockState } from '../../lib/unlock-driver';
@@ -241,5 +242,24 @@ describe('a gateway without an unlock password keeps today\'s sign-in page', () 
     const off = html(<LoginPage />, { access: 'legacy', deviceKeysSwitch: false, passwordSet: false });
     const on = html(<LoginPage />, { access: 'legacy', deviceKeysSwitch: true, passwordSet: false });
     expect(on).toBe(off);
+  });
+});
+
+describe('turn on Touch ID for approvals (a computer set up without it)', () => {
+  const props = { onSubmit: noop, onCancel: noop, onBack: noop, onDone: noop };
+  it('the form asks for the recovery code and the unlock password; each touch says what it is for; the email step shows the code to compare', () => {
+    const f = text(html(<CheckKeyScreen {...props} state={{ step: 'form', busy: false }} />));
+    expect(f).toContain(DRAFT.addCheckTitle);
+    expect(f).toContain(DRAFT.addCheckWhy);
+    expect(f).toContain(DRAFT.recoverCodeLabel);
+    expect(f).toContain(T.passwordLabel);
+    expect(text(html(<CheckKeyScreen {...props} state={{ step: 'touch-key' }} />))).toContain(DRAFT.touchCheckKeyWaiting);
+    const w = text(html(<CheckKeyScreen {...props} state={{ step: 'waiting', recoveryId: 'r', confirmCode: '654321' }} />));
+    expect(w).toContain('654321');
+    expect(w).toContain(DRAFT.recoverMail);
+    expect(text(html(<CheckKeyScreen {...props} state={{ step: 'touch-unlock' }} />))).toContain(DRAFT.touchSetupWaiting);
+    expect(html(<CheckKeyScreen {...props} state={{ step: 'finishing' }} />)).toContain('brand-spin');
+    expect(text(html(<CheckKeyScreen {...props} state={{ step: 'done', unlockOn: true }} />))).toContain(DRAFT.addCheckDone);
+    expect(text(html(<CheckKeyScreen {...props} state={{ step: 'done', unlockOn: false }} />))).toContain(DRAFT.addCheckDoneNoUnlock);
   });
 });

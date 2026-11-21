@@ -7,9 +7,17 @@
 
 export type NavIconName =
   | 'dashboard' | 'approvals' | 'mandates' | 'tickets' | 'reports' | 'blocked'
-  | 'team' | 'brief' | 'integrations' | 'settings';
+  | 'team' | 'brief' | 'integrations' | 'settings' | 'devices';
 
 const PATHS: Record<NavIconName, React.ReactNode> = {
+  // DEC-96: a computer and a phone, the person's devices.
+  devices: (
+    <>
+      <rect x="2.5" y="5" width="13" height="9.5" rx="1.2" />
+      <path d="M1.5 18h15" />
+      <rect x="16.5" y="9" width="5.5" height="10" rx="1.2" />
+    </>
+  ),
   dashboard: (
     <>
       <rect x="3.5" y="3.5" width="7" height="7" rx="1.4" />

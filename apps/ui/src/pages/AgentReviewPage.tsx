@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { autoTitleUnlessTyped } from '../lib/auto-title';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,7 +14,7 @@ import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '@suveren/approval-card/lib/source-manifests';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
-import { mandateRight } from '../lib/mandate-rights';
+import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '@suveren/approval-card/lib/reject-outcome';
 import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
@@ -27,6 +28,7 @@ import {
   GivePhoneFooter, giveSummaryLine, GiveTouchFooter,
 } from '@suveren/approval-card/mandate-screens';
 import { useGive, closeReplacedProposal } from '../lib/use-give';
+import { useSpUrl, teamSettingsHref, ENABLE_IN_TEAM_SETTINGS } from '../lib/use-sp-url';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -67,7 +69,8 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, activeMembership, activeTeam } = useAuth();
+  const spUrl = useSpUrl();
   // Chain accounts only (device keys on, a set-up device): the review step gives the mandate with Touch ID (DEC-80). Everyone else sees today's page.
   const chain = useDeviceChain();
   const [adminName, setAdminName] = useState('');
@@ -192,8 +195,8 @@ export function AgentReviewPage() {
           const title = contextParts.length > 0
             ? `${shortName}: ${contextParts.join(' · ')}`
             : shortName;
-          // A title the person already typed is never replaced by the one derived when the area loads (a late load overwrote it).
-          setAuthTitle(prev => (prev.trim() ? prev : title));
+          // The profile can arrive after the person typed: never overwrite what they typed (this closure saw the first, empty title).
+          setAuthTitle(prev => autoTitleUnlessTyped(prev, title));
         }
       })
       .catch(() => {});
@@ -415,7 +418,7 @@ export function AgentReviewPage() {
     } catch (e) {
       if (chain && e instanceof MandateSignError) {
         if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(0);   // look at the plan again
-        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason }));
+        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason, approverNames: (e.approverIds ?? []).map(id => approverNames[approverIds.indexOf(id)] ?? '').filter(Boolean) }));
         return;
       }
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');
@@ -480,6 +483,7 @@ export function AgentReviewPage() {
     userId: user?.id,
     profileName: profileDisplayName(authData.profileId),
     teamName: authData.groupName,
+    isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
   });
   const blockedByTeamGate = !right.can;
   const giveCaps = Object.entries(profileConfig?.caps ?? {}).map(([k, v]) => ({ label: profile?.boundsSchema?.fields?.[k]?.displayName ?? k, value: limitValueText(profile?.boundsSchema?.fields?.[k], v) }));
@@ -805,6 +809,11 @@ export function AgentReviewPage() {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
                       {right.reason} {right.fix}
                     </div>
+                    {right.adminCanEnable && teamSettingsHref(spUrl, authData.groupId) && (
+                      <a className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', textDecoration: 'none' }} href={teamSettingsHref(spUrl, authData.groupId)} target="_blank" rel="noopener noreferrer" data-testid="enable-in-team-settings">
+                        {ENABLE_IN_TEAM_SETTINGS}
+                      </a>
+                    )}
                   </>
                 ) : chain && approverIds.length > 0 ? (
                   <GiveApprovers

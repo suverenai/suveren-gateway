@@ -81,6 +81,9 @@ export const PT = {
   waitingFor: SP.compareWaiting, // shared (approval-card pairing-texts)
   compareTitle: SP.compareTitle, // shared (approval-card pairing-texts)
   compareBody: (label: string): string => `${label} shows three codes. Tap the one that matches this code. Then it asks for your touch.`, // DRAFT
+  showTitle: SP.showOnPhoneTitle, // shared (DEC-96): the computer shows, the phone taps
+  tapThis: SP.tapThisNumber, // shared (DEC-96)
+  otherReady: SP.otherReadyPhone, // shared (DEC-96): the computer adds a phone
   addedComputerTitle: 'This computer was added', // DRAFT
   addedComputerBody: 'It is now one of your devices, and you are signed in.', // DRAFT
   addedComputerNoSignin: 'This computer was added, but signing in did not work. Try again.', // DRAFT (T.connectedSigninFailed)

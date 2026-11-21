@@ -40,6 +40,7 @@ export const S13 = {
   giveErrCap: 'A limit is higher than your team allows. Nothing changed. Lower it and try again.', // 218
   giveErrApprovers: 'suveren.ai did not say who may approve for this team. Nothing changed. Try again.', // 219
   giveErrNoChain: 'An approver has not finished setting up Suveren yet. Nothing changed. Ask them to finish it.', // 220
+  giveErrNoChainNamed: (names: string[]): string => `${names.length === 1 ? `${names[0]} has` : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} have`} not finished setting up Suveren yet. Nothing changed. Ask them to finish it.`, // DRAFT (names the approvers)
   giveErrCancelled: 'Cancelled. Nothing changed.', // 221
   giveErrTouch: 'Touch ID did not work this time. Nothing changed. Try again.', // 222
   giveErrChanged: 'What would be granted changed since you looked. Look at it again.', // DRAFT

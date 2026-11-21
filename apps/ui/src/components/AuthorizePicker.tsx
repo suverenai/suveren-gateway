@@ -11,11 +11,12 @@ import {
   effectiveGrantors,
 } from '../lib/sp-client';
 import { pickerEntries, findPreselectedEntry } from '../lib/picker-entries';
-import { mandateRight } from '../lib/mandate-rights';
+import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import { ProfileIcon } from './ProfileIcon';
 import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
+import { useSpUrl, teamSettingsHref, ENABLE_IN_TEAM_SETTINGS } from '../lib/use-sp-url';
 
 interface Props {
   onDismiss?: () => void;
@@ -41,7 +42,9 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
   // Loads the connector manifests' area icons (lib/area.ts) and re-renders once they are known.
   useAreaCatalog();
   const navigate = useNavigate();
-  const { group, groupId, domain, user } = useAuth();
+  const { group, groupId, domain, user, activeMembership, activeTeam } = useAuth();
+  const spUrl = useSpUrl();
+  const enableHref = teamSettingsHref(spUrl, groupId);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [manifests, setManifests] = useState<IntegrationManifest[]>([]);
   const [integrations, setIntegrations] = useState<McpIntegrationStatus[]>([]);
@@ -94,6 +97,7 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       userId: user?.id,
       profileName: profileDisplayName(profile.id),
       teamName: group?.name,
+      isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
     });
   };
 
@@ -212,6 +216,11 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
                       {right.reason} <span style={{ color: 'var(--text-tertiary)' }}>{right.fix}</span>
                     </div>
+                    {right.adminCanEnable && enableHref && (
+                      <a className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', textDecoration: 'none' }} href={enableHref} target="_blank" rel="noopener noreferrer" data-testid="enable-in-team-settings">
+                        {ENABLE_IN_TEAM_SETTINGS}
+                      </a>
+                    )}
                   </>
                 ) : entry.ready ? (
                   <button className="btn btn-primary btn-sm" onClick={() => handleCreate(p.id, entry.intentHint)}>

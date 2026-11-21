@@ -149,6 +149,16 @@ export class AsApi {
   }
 
   /** Gives prepared for this person's devices that hold no grant yet (`GET /api/mandates/prepared`), each with this phone's own wrap. */
+  /** Dashboard passkeys waiting for one of this person's devices (`GET /api/passkeys/register/pending`, AS step 17). */
+  pendingPasskeys(bearer: string) {
+    return this.go<{ pending?: unknown[] }>('GET', '/api/passkeys/register/pending', { bearer });
+  }
+
+  /** Approve one: `{ register, sig, check }` (`POST /api/passkeys/register`). */
+  approvePasskey(body: unknown, bearer: string) {
+    return this.go<{ registered?: unknown; cred_id?: unknown }>('POST', '/api/passkeys/register', { body, bearer });
+  }
+
   prepared(bearer: string) {
     return this.go<{ prepared?: unknown[] }>('GET', '/api/mandates/prepared', { bearer });
   }

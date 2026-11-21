@@ -20,8 +20,6 @@ export interface JoinScreenProps {
   canGoBack?: boolean;
   /** Why the phone is back here (mockup C5: it was removed from the account). */
   notice?: string;
-  /** Replace the recovery code now (DEC-85, mockup D1: offered with "Later"). */
-  onRotate?: () => void;
 }
 
 const DOING: Record<'keys' | 'passkey' | 'sign' | 'check' | 'send', string> = {
@@ -87,10 +85,11 @@ export function JoinScreen(p: JoinScreenProps) {
         </Screen>
       );
     case 'compare':
+      // DEC-96: the next step is on the computer — say so first, and show the number large.
       return (
-        <Screen title={P.compareTitle}>
-          <CodeBlock code={st.code} testid="compare-code" grouped={false} />
-          <p>{P.compareBody(st.admitterLabel)}</p>
+        <Screen title={P.showTitle}>
+          <p data-testid="compare-next"><strong>{P.tapThis(st.admitterLabel)}</strong></p>
+          <CodeBlock code={st.code} testid="compare-code" grouped={false} big />
           <Notice kind="info">{P.compareWaiting(st.admitterLabel)}</Notice>
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel}>{P.cancel}</button>
         </Screen>
@@ -106,15 +105,8 @@ export function JoinScreen(p: JoinScreenProps) {
       return (
         <Screen title={P.joinDoneTitle}>
           <Notice kind="success">{P.setupDoneBody}</Notice>
-          {p.onRotate ? (
-            <div data-testid="rotate-offer">
-              <h2 style={{ fontSize: 'var(--text-lead)' }}>{P.rotateOfferTitle}</h2>
-              <p>{P.rotateOfferJoined}</p>
-              <p>{P.rotateNeedPaper}</p>
-              <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onRotate}>{P.rotateStart}</button>
-              <button type="button" className="btn btn-ghost btn-full" onClick={p.onDone}>{P.rotateLater}</button>
-            </div>
-          ) : <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>}
+          {/* DEC-96 (revises DEC-85): no recovery-code offer after joining; replacing it stays under Devices. */}
+          <button type="button" className="btn btn-primary btn-full btn-lg" onClick={p.onDone}>{P.continue}</button>
         </Screen>
       );
   }

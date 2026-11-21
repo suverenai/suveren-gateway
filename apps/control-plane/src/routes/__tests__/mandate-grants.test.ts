@@ -345,11 +345,12 @@ describe('teams: approvers, caps and the count go into the mandate before the ow
     const t = await team(w);
     w.mandates.users.get('u_ap2')!.chain = false;   // the Authority Server lists them with did: null
     const r = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
-    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_has_no_chain' });
+    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'approver_has_no_chain', approverIds: ['u_ap2'] });
     // and an approver whose DID it names but whose chain it does not serve
     w.mandates.users.get('u_ap2')!.chain = true;
     w.as.otherChains.delete(t.ap2.did);
-    expect((await w.sign({ team: 'g_team', confirmedApproverDids: t.dids })).body.grantCode).toBe('approver_has_no_chain');
+    const r2 = await w.sign({ team: 'g_team', confirmedApproverDids: t.dids });
+    expect(r2.body).toMatchObject({ grantCode: 'approver_has_no_chain', approverIds: ['u_ap2'] });
     expect(w.touches).not.toHaveBeenCalled();
   });
 

@@ -28,6 +28,7 @@ import { ReportsPage } from './pages/ReportsPage';
 import { UnlockPage } from './components/device/UnlockScreen';
 import { SetupPage } from './components/device/SetupScreens';
 import { StartPage, LoginOrStart, PageLoading } from './components/device/StartScreens';
+import { CheckKeyPage } from './components/device/CheckKeyScreens';
 import { SetPasswordPage } from './components/device/PasswordScreen';
 import { RecoverPage } from './components/device/RecoverScreens';
 import { ConfirmationHost } from './components/device/ConfirmChange';
@@ -101,6 +102,7 @@ export function AppRoutes() {
       <Route path="/device-password" element={user ? <SetPasswordPage /> : <Navigate to="/login" replace />} />
       {/* After the start access (DEC-93) the page has its session before anyone is signed in: set-up signs in at its end. */}
       <Route path="/device-setup" element={(user || pageSessionOpen) && access === 'password' ? <SetupPage /> : <Navigate to="/login" replace />} />
+      <Route path="/device-check-key" element={user && access === 'password' ? <CheckKeyPage /> : <Navigate to="/login" replace />} />
       <Route path="/device-recovery-code" element={user && access === 'password' ? <RecoverPage kind="rotate" onBack={() => navigate('/settings')} /> : <Navigate to="/login" replace />} />
       <Route path="/onboarding" element={user ? <OnboardingPage /> : <Navigate to="/login" replace />} />
       <Route element={

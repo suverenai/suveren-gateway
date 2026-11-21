@@ -29,6 +29,7 @@ import { StubAs } from '../../__tests__/helpers/stub-as';
 import { bootGateway, call, sessionHeaders, type GatewayRig, type Reply } from '../../__tests__/helpers/device-rig';
 import { PlatformHelper, type HelperSpec } from '../../lib/platform-helper';
 import { DeviceChainStore } from '../../lib/device-chain-store';
+import { CheckKeyStore } from '../../lib/platform-checks';
 import { eventBus, type BusEvent } from '../../lib/event-bus';
 import { confirmCodeOf, readStageResponse, readRedeemResponse, readLookupResponse, pageUrl } from '../../lib/device-recovery-contract';
 import { readPendingReset } from '../../lib/device-signin';
@@ -936,6 +937,90 @@ describe('recovery with this computer\'s check key', () => {
     const r = await fresh.post('/auth/device/recover/start', { code: acct.code, checkKey: true });
     expect(r.status).toBe(409);
     expect(r.body.code).toBe('helper_unavailable');
+  });
+});
+
+describe('turning on Touch ID for approvals on a computer set up without it (a root-signed set)', () => {
+  async function withoutCheckKey() {
+    const as = await newAs();
+    const w = await boot(as, { platform: fakeHost() });
+    const acct = await setUp(as, w, { checkKey: false });
+    return { as, w, acct };
+  }
+
+  it('the recovery code signs a set naming THIS computer and a new platform key; the key checks it; after the email link the key is stored and the chain names it', async () => {
+    const { as, w, acct } = await withoutCheckKey();
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
+    const sub = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    expect(sub.status).toBe(200);
+    expect(sub.body.confirmCode).toMatch(/^\d{6}$/);
+    expect(JSON.stringify(sub.body)).not.toContain(acct.code);
+    expect(as.chainEntries()).toHaveLength(1); // staged, not appended
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false); // nothing stored before the chain holds it
+    const b = await browser(as, w, sub);
+    expect('callback' in b && b.callback.status).toBe(200);
+    const fin = await w.post('/auth/device/check-key/finish', { recoveryId: sub.body.recoveryId });
+    expect(fin.status).toBe(200);
+    expect(fin.body).toMatchObject({ ok: true, rootDid: acct.rootDid, head: { seq: 1 }, checkKey: true });
+
+    const entries = as.chainEntries() as ChainEntry[];
+    const e = entries[1];
+    expect(e).toMatchObject({ op: 'set', signer: 'root', target: acct.keyId, device: null });
+    expect(e.check).toMatchObject({ type: 'platform' });
+    expect(e.sigs.map(s => s.by)).toEqual(['root']);
+    expect(e.checks.map(c => c.by)).toEqual([acct.keyId]);
+    const state = await verifyChain({ expectedRootDid: acct.rootDid, entries });
+    expect(state.devices[acct.keyId].check).toEqual(e.check);
+    expect(sub.body.confirmCode).toBe(confirmCodeOf(await entryHash(e)));
+    const stored = new CheckKeyStore(w.gw.vault).read();
+    expect(stored && e.check && stored.publicKey).toBeTruthy();
+    expect(new DeviceChainStore(w.gw.vault).read()).toMatchObject({ head: { seq: 1, hash: await entryHash(e) } });
+    expect((await w.post('/auth/device/signin')).status).toBe(200);
+  });
+
+  it('refused without a usable result: a wrong code, a computer that already has its key, no helper, a cancelled touch; nothing is staged', async () => {
+    const { as, w, acct } = await withoutCheckKey();
+    const other = (await generateRecoveryCode()).code;
+    const wrong = await w.post('/auth/device/check-key/submit', { code: other });
+    expect([wrong.status, wrong.body.code]).toEqual([409, 'recovery_code_wrong']);
+    const g = await newAs();
+    const has = await boot(g, { platform: fakeHost() });
+    const hasAcct = await setUp(g, has, { checkKey: true });
+    const present = await has.post('/auth/device/check-key/submit', { code: hasAcct.code });
+    expect([present.status, present.body.code]).toEqual([409, 'check_key_present']);
+    const c = await newAs();
+    const cw = await boot(c, { platform: fakeHost({ FAKE_TOUCH: 'cancel' }) });
+    const cAcct = await setUp(c, cw, { checkKey: false });
+    const cancelled = await cw.post('/auth/device/check-key/submit', { code: cAcct.code });
+    expect([cancelled.status, cancelled.body.code]).toEqual([409, 'cancelled']);
+    expect(recoveryRequests(c).filter(x => x.path.endsWith('/handoffs'))).toHaveLength(0);
+    expect(recoveryRequests(as).filter(x => x.path.endsWith('/handoffs'))).toHaveLength(0);
+  });
+
+  it('L3: a stage the Authority Server refuses keeps no key anywhere; a cancel after staging drops it from the vault', async () => {
+    const { as, w, acct } = await withoutCheckKey();
+    as.mailFails = true;
+    const failed = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    expect([failed.status, failed.body.code]).toEqual([502, 'mail_failed']);
+    expect(w.gw.vault.hasSecretSlot('deviceRecoveryPending') && w.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeFalsy();
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
+    as.mailFails = false;
+    const sub = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    expect(sub.status).toBe(200);
+    const slot = w.gw.vault.getSecretSlot<Record<string, unknown>>('deviceRecoveryPending')!;
+    expect(slot.kind).toBe('set');
+    expect(slot.checkKey).toBeTruthy(); // kept sealed while the email link is open, so a restart can finish
+    expect((await w.post('/auth/device/recover/cancel')).status).toBe(200);
+    expect(w.gw.vault.hasSecretSlot('deviceRecoveryPending') && w.gw.vault.getSecretSlot('deviceRecoveryPending')).toBeFalsy();
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
+  });
+
+  it('finish before the email link is confirmed stores nothing and says the chain does not hold it yet', async () => {
+    const { w, acct } = await withoutCheckKey();
+    const sub = await w.post('/auth/device/check-key/submit', { code: acct.code });
+    const fin = await w.post('/auth/device/check-key/finish', { recoveryId: sub.body.recoveryId });
+    expect([fin.status, fin.body.code]).toEqual([409, 'recovery_not_done']);
+    expect(new CheckKeyStore(w.gw.vault).has()).toBe(false);
   });
 });
 

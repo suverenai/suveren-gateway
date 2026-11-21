@@ -39,7 +39,8 @@ export function endDateText(nowMs: number, seconds: number): string {
   return new Date(nowMs + seconds * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export type GiveError = { code: string | undefined; reason?: string };
+/** `approverNames`: the names of the approvers without a device chain (approver_has_no_chain), when the page knows them. */
+export type GiveError = { code: string | undefined; reason?: string; approverNames?: string[] };
 
 /** The sentence for a refused give. Before-the-touch refusals say nothing changed; the AS and the touch have their own. */
 export function giveErrorText(e: GiveError): string {
@@ -47,7 +48,7 @@ export function giveErrorText(e: GiveError): string {
     case 'cap_exceeded': return S13.giveErrCap;
     case 'approvers_unavailable': case 'approver_unresolved': return S13.giveErrApprovers;
     case 'as_unreachable': case 'as_tls_mismatch': return S13.endOffline;
-    case 'approver_has_no_chain': return S13.giveErrNoChain;
+    case 'approver_has_no_chain': return e.approverNames && e.approverNames.length > 0 ? S13.giveErrNoChainNamed(e.approverNames) : S13.giveErrNoChain;
     case 'check_failed': return e.reason === 'user_cancelled' ? S13.giveErrCancelled : S13.giveErrTouch;
     case 'changed_since_prepare': case 'prepare_required': return S13.giveErrChanged;
     case 'delivery_failed': return S13.giveErrNotDelivered;
