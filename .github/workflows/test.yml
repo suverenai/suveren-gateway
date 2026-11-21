@@ -93,6 +93,12 @@ jobs:
         with:
           path: suveren-gateway
 
+      # The control-plane suite reads the published profiles from the sibling checkout, as in the test job.
+      - uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: hap-profiles
+
       - uses: pnpm/action-setup@v6
         with:
           version: 9
