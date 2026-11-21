@@ -440,7 +440,8 @@ describe('the helper itself: found, hashed, started', () => {
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_not_installed' });   // no list yet
     writeFileSync(join(here, 'helper-manifest.json'), JSON.stringify(manifest));
     const ok = locateHelper({ ...base, platform: 'darwin', arch: 'arm64' });
-    expect('spec' in ok && ok.spec.files.map(f => f.path.slice(app.length + 1)).sort()).toEqual(['Contents/Info.plist', 'Contents/MacOS/suveren-unlock-helper']);
+    // (separator-neutral: this case pretends to be a Mac, and on a Windows host `join` writes \\)
+    expect('spec' in ok && ok.spec.files.map(f => f.path.slice(app.length + 1).replaceAll('\\', '/')).sort()).toEqual(['Contents/Info.plist', 'Contents/MacOS/suveren-unlock-helper']);
     if ('spec' in ok) {
       expect(ok.spec.command).toBe(exe);
       expect(ok.spec.args).toEqual(['serve']);

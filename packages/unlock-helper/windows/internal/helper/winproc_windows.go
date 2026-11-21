@@ -153,22 +153,55 @@ func (p *ParentHandle) read(addr uintptr, n int) ([]byte, error) {
 	return buf, nil
 }
 
-// Environment reads the parent's environment block from its process parameters (64-bit layout:
-// PEB+0x20 ProcessParameters; RTL_USER_PROCESS_PARAMETERS+0x80 Environment, +0x3F0 EnvironmentSize).
-// The helper is built only for 64-bit Windows (amd64, arm64), and the gateway's node.exe is 64-bit.
-func (p *ParentHandle) Environment() ([]string, error) {
+// processParameters is the address of the parent's RTL_USER_PROCESS_PARAMETERS (64-bit: PEB+0x20).
+func (p *ParentHandle) processParameters() (uintptr, error) {
 	var pbi [48]byte // PROCESS_BASIC_INFORMATION: ExitStatus, PebBaseAddress, ...
 	var ret uint32
 	st, _, _ := procNtQueryInformationProcess.Call(uintptr(p.h), processBasicInformation, uintptr(unsafe.Pointer(&pbi[0])), uintptr(len(pbi)), uintptr(unsafe.Pointer(&ret)))
 	if st != 0 {
-		return nil, errors.New("basic information")
+		return 0, errors.New("basic information")
 	}
 	peb := uintptr(binary.LittleEndian.Uint64(pbi[8:16]))
 	pp, err := p.read(peb+0x20, 8)
 	if err != nil {
+		return 0, err
+	}
+	return uintptr(binary.LittleEndian.Uint64(pp)), nil
+}
+
+// Cwd reads the parent's working folder (RTL_USER_PROCESS_PARAMETERS+0x38 CurrentDirectory.DosPath, a UNICODE_STRING).
+func (p *ParentHandle) Cwd() (string, error) {
+	params, err := p.processParameters()
+	if err != nil {
+		return "", err
+	}
+	us, err := p.read(params+0x38, 16)
+	if err != nil {
+		return "", err
+	}
+	length := int(binary.LittleEndian.Uint16(us[0:2]))
+	if length == 0 || length > 65534 || length%2 != 0 {
+		return "", errors.New("working folder")
+	}
+	raw, err := p.read(uintptr(binary.LittleEndian.Uint64(us[8:16])), length)
+	if err != nil {
+		return "", err
+	}
+	u := make([]uint16, length/2)
+	for i := range u {
+		u[i] = binary.LittleEndian.Uint16(raw[2*i:])
+	}
+	return string(utf16.Decode(u)), nil
+}
+
+// Environment reads the parent's environment block from its process parameters (64-bit layout:
+// PEB+0x20 ProcessParameters; RTL_USER_PROCESS_PARAMETERS+0x80 Environment, +0x3F0 EnvironmentSize).
+// The helper is built only for 64-bit Windows (amd64, arm64), and the gateway's node.exe is 64-bit.
+func (p *ParentHandle) Environment() ([]string, error) {
+	params, err := p.processParameters()
+	if err != nil {
 		return nil, err
 	}
-	params := uintptr(binary.LittleEndian.Uint64(pp))
 	envPtr, err := p.read(params+0x80, 8)
 	if err != nil {
 		return nil, err
@@ -240,5 +273,9 @@ func CheckParent(parent *ParentHandle, allowed []AllowedCaller) string {
 	if err != nil {
 		return "cannot inspect parent"
 	}
-	return Evaluate(Parent{Exe: exe, Argv: argv, Env: env}, allowed)
+	cwd, err := parent.Cwd()
+	if err != nil {
+		return "cannot inspect parent"
+	}
+	return Evaluate(Parent{Exe: exe, Argv: argv, Env: env, Cwd: cwd}, allowed)
 }

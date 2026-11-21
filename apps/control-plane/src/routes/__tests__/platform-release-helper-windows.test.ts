@@ -61,6 +61,13 @@ run('the release Windows helper, started like the gateway starts it', () => {
     expect(existsSync(join(folder, WINDOWS_HELPER_CALLERS_FILE))).toBe(true);
   });
 
+  it('accepts the gateway started with its entry script relative to its working folder (as `node apps/control-plane/dist/index.mjs`)', () => {
+    const { here } = install();
+    // the helper is started from another folder, so only the parent's own working folder resolves the script
+    const r = spawnSync(process.execPath, ['main.mjs', here], { cwd: gatewayDir, encoding: 'utf8' });
+    expect(JSON.parse(r.stdout)).toMatchObject({ platform: 'windows', reason: 'no_secure_hardware' });
+  });
+
   it('refuses a binary that is not the one in the gateway\'s list, and starts again once it is restored', () => {
     const { here, folder } = install();
     const exe = join(folder, WINDOWS_HELPER_EXECUTABLE);

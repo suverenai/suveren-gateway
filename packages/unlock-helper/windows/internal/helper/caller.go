@@ -45,6 +45,8 @@ type Parent struct {
 	Exe  string
 	Argv []string
 	Env  []string
+	// Cwd is the parent's working folder: a script given by a relative path is resolved against it.
+	Cwd string
 }
 
 // Resolve gives a path in a comparable form: absolute, cleaned, links followed where possible.
@@ -83,6 +85,12 @@ func Evaluate(parent Parent, allowed []AllowedCaller) string {
 		if hasPrefixFold(e, "NODE_OPTIONS=") {
 			return "parent has NODE_OPTIONS set"
 		}
+	}
+	if !filepath.IsAbs(script) {
+		if parent.Cwd == "" || !filepath.IsAbs(parent.Cwd) {
+			return "parent script path cannot be resolved"
+		}
+		script = filepath.Join(parent.Cwd, script)
 	}
 	base := Resolve(rule.ScriptPrefix)
 	s := Resolve(script)

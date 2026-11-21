@@ -221,6 +221,10 @@ func TestCallerEvaluate(t *testing.T) {
 		{Parent{Exe: node, Argv: []string{node, filepath.Join(gw, "index.mjs")}, Env: []string{"NODE_OPTIONS=--inspect"}}, "parent has NODE_OPTIONS set"},
 		{Parent{Exe: node, Argv: []string{node, filepath.Join(root, "gw-evil", "index.mjs")}}, "parent script is outside the gateway install"},
 		{Parent{Exe: node, Argv: []string{node, filepath.Join(gw, "..", "evil.mjs")}}, "parent script is outside the gateway install"},
+		// a relative script is resolved against the PARENT's working folder, never the helper's
+		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}, Cwd: root}, ""},
+		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}, Cwd: filepath.Join(root, "elsewhere")}, "parent script is outside the gateway install"},
+		{Parent{Exe: node, Argv: []string{node, filepath.Join("gw", "index.mjs")}}, "parent script path cannot be resolved"},
 	}
 	for i, c := range cases {
 		if got := Evaluate(c.p, allowed); got != c.want {
