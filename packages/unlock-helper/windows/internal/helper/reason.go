@@ -24,6 +24,7 @@ func quoted(s string) string {
 }
 
 const (
+	reasonPasskey       = "add a passkey for your Suveren dashboard"
 	reasonEnableUnlock  = "turn on Windows Hello unlock for Suveren"
 	reasonDisableUnlock = "turn off Windows Hello unlock for Suveren"
 	reasonRemove        = "remove a device"
@@ -73,8 +74,10 @@ var (
 	unlockSwitchMembers   = set("typ", "v", "action", "nonce", "issued_at")
 	grantFixedMembers     = set("typ", "v", "op", "owner_did", "key_id", "chain_seq", "chain_head", "mandate_id", "mandate_version", "granted_at", "nonce")
 	identityCancelMembers = set("typ", "v", "aud", "root_did", "key_id", "request_id", "chain_seq", "chain_head", "issued_at")
-	anchorMembers         = set("typ", "v", "member_did", "team_id", "admin_did", "version", "prev", "key_id", "chain_seq", "chain_head", "created_at", "nonce")
-	memberListMembers     = set("typ", "v", "team_id", "version", "prev", "admin_did", "members", "handover", "key_id", "chain_seq", "chain_head", "created_at", "nonce")
+	// a dashboard passkey approval (AS step 17): exactly these members, no free text (Reason.swift passkeyRegisterMembers)
+	passkeyRegisterMembers = set("typ", "v", "root_did", "key_id", "chain_seq", "chain_head", "request_id", "cred_id", "rp_id", "issued_at")
+	anchorMembers          = set("typ", "v", "member_did", "team_id", "admin_did", "version", "prev", "key_id", "chain_seq", "chain_head", "created_at", "nonce")
+	memberListMembers      = set("typ", "v", "team_id", "version", "prev", "admin_did", "members", "handover", "key_id", "chain_seq", "chain_head", "created_at", "nonce")
 )
 
 func keysEqual(o map[string]any, want map[string]bool) bool {
@@ -165,6 +168,9 @@ func ReasonForObject(b []byte, focus *string, previous []byte) (string, error) {
 	}
 	if typ == "suveren-identity-cancel" && keysEqual(o, identityCancelMembers) {
 		return reasonCancelReset, nil
+	}
+	if typ == "suveren-passkey-register" && keysEqual(o, passkeyRegisterMembers) {
+		return reasonPasskey, nil
 	}
 	if typ == "suveren-team-anchor" && keysEqual(o, anchorMembers) {
 		if isNull(o, "admin_did") {

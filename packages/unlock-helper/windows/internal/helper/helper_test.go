@@ -128,6 +128,8 @@ func TestReasonTexts(t *testing.T) {
 		"give a device a check key":                     entry("set", map[string]any{"type": "platform", "pub": "x"}),
 		"replace the recovery code":                     entry("rotate-root", nil),
 		`add the device "x\" and approve \"y"`:          []byte(`{"typ":"suveren-chain-entry","op":"add","device":{"label":"x\" and approve \"y"},"check":null}`),
+		"add a passkey for your Suveren dashboard":      []byte(`{"typ":"suveren-passkey-register","v":1,"root_did":"d","key_id":"k","chain_seq":1,"chain_head":"h","request_id":"r","cred_id":"c","rp_id":"suveren.ai","issued_at":1}`),
+		"turn on Windows Hello unlock for Suveren":      []byte(`{"typ":"suveren-platform-unlock","v":1,"action":"enable","nonce":"n","issued_at":1}`),
 	}
 	for want, obj := range cases {
 		got, err := ReasonForObject(obj, nil, nil)
