@@ -51,8 +51,21 @@ describe('screen 1: password', () => {
 });
 
 describe('screen 4: unlock', () => {
-  const base: UnlockState = { phase: 'form', busy: false, touchBusy: false, touchAvailable: false, passwordOnly: false };
+  const base: UnlockState = { phase: 'form', busy: false, touchBusy: false, touchAvailable: false, passwordOnly: false, ready: true };
   const render = (s: Partial<UnlockState>) => html(<UnlockScreen state={{ ...base, ...s }} onPassword={noop} onTouch={noop} onRetry={noop} />);
+
+  it('DEC-98: until it knows whether Touch ID is on, a skeleton of the same layout — no button, no field, no reason text', () => {
+    const h = render({ ready: false, touchAvailable: false });
+    expect(h).toContain('skel-button');
+    expect(h).toContain('aria-busy="true"');
+    expect(text(h)).not.toContain(T.unlockTouchButton);
+    expect(text(h)).not.toContain(T.unlockWhy);
+    expect(h).not.toContain('id="unlock-password"');
+  });
+
+  it('DEC-98: once ready with Touch ID on, the Touch ID button is part of the first real paint', () => {
+    expect(text(render({ ready: true, touchAvailable: true }))).toContain(T.unlockTouchButton);
+  });
 
   it('password only: the why, the field, Unlock; no Touch ID button', () => {
     const t = text(render({}));

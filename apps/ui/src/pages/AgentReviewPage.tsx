@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelButton, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { autoTitleUnlessTyped } from '../lib/auto-title';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
@@ -80,6 +81,7 @@ export function AgentReviewPage() {
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
+  const [profileFailed, setProfileFailed] = useState(false);
   const sourceManifests = useSourceManifests();
   const simulation = useSimulationMode();
   // Review is the DEFAULT commitment mode: the agent proposes, the human
@@ -199,7 +201,8 @@ export function AgentReviewPage() {
           setAuthTitle(prev => autoTitleUnlessTyped(prev, title));
         }
       })
-      .catch(() => {});
+      // The review card shows without the profile (as before), never an endless skeleton (DEC-98).
+      .catch(() => setProfileFailed(true));
 
     // Resolve profile-config + approver display names for the Review surface.
     // Mirrors GateWizardPage so the creator sees the same people named both
@@ -442,7 +445,7 @@ export function AgentReviewPage() {
   useEffect(() => { if (driver.error) setError(driver.error); }, [driver.error]);
 
   if (!authData || !gateData) {
-    return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
+    return <GiveSkeleton />;
   }
   if (given) {
     // The gateway's own result stamp (DEC-86/88), then back to the mandate list, where the new mandate is marked.
@@ -558,6 +561,9 @@ export function AgentReviewPage() {
         if (s <= 3) navigate(`/mandates/new/intent?step=${s}`);
       }} />
 
+      {/* DEC-98: the whole review card appears once the profile and its team rules are in. */}
+      <LoadGate parts={['give']}>
+      <Gated part="give" ready={(!!profile || profileFailed) && profileConfigLoaded} skeleton={<GiveSkeleton bare />}>
       <div className="card">
         <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>Review &amp; Commit</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
@@ -949,7 +955,27 @@ export function AgentReviewPage() {
           {bottomNote}
         </div>
       </div>
+      </Gated>
+      </LoadGate>
     </>
   );
+}
+
+/** DEC-98: the review card greyed out — title, summary, the detail blocks and the give button, at the real sizes. */
+function GiveSkeleton({ bare }: { bare?: boolean }) {
+  const card = (
+    <div className="card" data-testid="give-skeleton">
+      <SkelArea>
+        <SkelLine w="35%" h="1.2rem" style={{ marginBottom: '0.5rem' }} />
+        <SkelLine w="55%" style={{ marginBottom: '1.5rem' }} />
+        <SkelLine w="80%" style={{ marginBottom: '1.25rem' }} />
+        <SkelBlock h="6rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+        <SkelBlock h="5rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+        <SkelBlock h="4rem" radius="0.75rem" style={{ marginBottom: '1.5rem' }} />
+        <SkelButton full large />
+      </SkelArea>
+    </div>
+  );
+  return bare ? card : <>{card}</>;
 }
 

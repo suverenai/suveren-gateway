@@ -3,6 +3,7 @@
  * "Add this computer" on the screen of a computer that is not set up yet. They connect the screens (PairingScreens.tsx) to the
  * control plane through the driver; the words are lib/pairing-texts.ts. Everything is behind the device-keys switch.
  */
+import { LoadGate, Gated, SkelBlock, SkelButton, SkelLine, SkelTitle, SkelArea, useNetworkSettled } from '@suveren/approval-card/components/LoadGate';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { DeviceClient, deviceClient, type DevicesAnswer } from '../../lib/device-client';
@@ -53,13 +54,40 @@ export function DevicesPage({ client = deviceClient }: { client?: DeviceClient }
     return <DashboardPasskeyScreen answer={passkeys.answer} client={client} onDone={() => { setPasskeyOpen(false); void passkeys.reload(); }} />;
   }
   return (
-    <>
-      <div style={{ maxWidth: '28rem', margin: '1rem auto 0', padding: '0 1rem' }}>
-        <DashboardPasskeyRow count={passkeys.answer?.pending.length ?? 0} onOpen={() => setPasskeyOpen(true)} />
-      </div>
-      <DevicesScreen devices={devices} nowSeconds={nowSeconds()} error={error}
-        onAddPhone={() => navigate('/devices/add-phone')} onRefresh={() => { void load(); void passkeys.reload(); }} onBack={() => navigate('/settings')} />
-    </>
+    <LoadGate parts={['devices']}>
+      <DevicesGated ready={devices !== null || error !== undefined}>
+        <div style={{ maxWidth: '28rem', margin: '1rem auto 0', padding: '0 1rem' }}>
+          <DashboardPasskeyRow count={passkeys.answer?.pending.length ?? 0} onOpen={() => setPasskeyOpen(true)} />
+        </div>
+        <DevicesScreen devices={devices} nowSeconds={nowSeconds()} error={error}
+          onAddPhone={() => navigate('/devices/add-phone')} onRefresh={() => { void load(); void passkeys.reload(); }} onBack={() => navigate('/settings')} />
+      </DevicesGated>
+    </LoadGate>
+  );
+}
+
+/** DEC-98: the device list and the passkey row appear together, once the list and every other load of the page are in. */
+function DevicesGated({ ready, children }: { ready: boolean; children: ReactNode }) {
+  const settled = useNetworkSettled();
+  return <Gated part="devices" ready={ready && settled} skeleton={<DevicesSkeleton />}>{children}</Gated>;
+}
+
+function DevicesSkeleton() {
+  return (
+    <div className="device-page"><div className="device-screen" data-testid="devices-skeleton">
+      <SkelArea>
+        <SkelTitle w="55%" />
+        {[0, 1].map(i => (
+          <div key={i} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.9rem' }}>
+            <SkelBlock w="2.25rem" h="2.25rem" radius="50%" />
+            <div style={{ flex: 1 }}><SkelLine w="45%" style={{ marginBottom: '0.4rem' }} /><SkelLine w="70%" h="0.7rem" /></div>
+          </div>
+        ))}
+        <SkelLine w="35%" style={{ margin: '1rem 0 0.5rem' }} />
+        <SkelBlock h="1.6rem" style={{ marginBottom: '1.25rem' }} />
+        <SkelButton full large />
+      </SkelArea>
+    </div></div>
   );
 }
 

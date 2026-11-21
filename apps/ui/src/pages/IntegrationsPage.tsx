@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { SkelBlock, SkelLine, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { IntegrationCard } from '../components/IntegrationCard';
 import { useIntegrationStatus, type IntegrationEntry } from '../contexts/IntegrationStatusContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
@@ -87,7 +88,8 @@ export function IntegrationsPage() {
 
       {/* Wait for the mode too: the two modes group the cards differently. */}
       {loading || simulationOn === null ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading connectors...</p>
+        // DEC-98: the connector cards greyed out until the list and the mode are in; then all cards at once.
+        <ConnectorsSkeleton />
       ) : mcpServerUp === false ? (
         <div className="status-banner status-banner-error">
           <span className="status-banner-icon">!</span>
@@ -170,5 +172,16 @@ function EmptyState({ manifestsError }: { manifestsError: boolean }) {
     <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', marginTop: '2rem' }}>
       No connectors available yet.
     </p>
+  );
+}
+
+function ConnectorsSkeleton() {
+  return (
+    <SkelArea>
+      <div data-testid="connectors-skeleton" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <SkelLine w="9rem" h="1.1rem" style={{ margin: '0.5rem 0' }} />
+        {[0, 1, 2, 3].map(i => <SkelBlock key={i} h="4.5rem" radius="0.75rem" />)}
+      </div>
+    </SkelArea>
   );
 }

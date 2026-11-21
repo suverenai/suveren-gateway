@@ -182,7 +182,11 @@ describe('the phone screens (both widths use the same markup and the same tokens
     const prop = (id: string, tool: string) => ({ id, tool, profileId: 'email@0.4', authorizationId: 'a1', createdAt: NOW - 600, expiresAt: NOW + 3600, status: 'pending' }) as never;
 
     it('says what is loading, what is empty, and that the person decides here', () => {
-      expect(text(html(<RequestsScreen proposals={null} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />))).toContain(P.listLoading);
+      // DEC-98: loading is the list's own rows greyed out, named for screen readers; no empty text while it loads.
+      const loading = html(<RequestsScreen proposals={null} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />);
+      expect(loading).toContain('data-testid="request-skeleton"');
+      expect(loading).toContain(`aria-label="${P.listLoading}"`);
+      expect(text(loading)).not.toContain(P.listEmpty);
       const empty = text(html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />));
       expect(empty).toContain(P.listEmpty);
       expect(empty).toContain(P.welcomeReadOnly);
@@ -287,7 +291,8 @@ describe('the phone screens (both widths use the same markup and the same tokens
 
       it('while the approval is read: the panel says so, and no card', () => {
         const m = panel({ shown: null });
-        expect(text(m)).toContain(P.listLoading);
+        expect(m).toContain('data-testid="panel-card-skeleton"');
+        expect(m).toContain(`aria-label="${P.listLoading}"`);
         expect(m).not.toContain('apr-stage');
       });
     });

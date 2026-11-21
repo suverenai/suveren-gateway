@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { replacedLine } from '../lib/replaced-mandate';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
 import { profileIdentity, shortProfileId } from '@suveren/approval-card/lib/profile-identity';
@@ -1140,6 +1141,9 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      {/* DEC-98: tabs, counts, filters and the list appear in one go once the mandates are in. */}
+      <LoadGate parts={['mandates']}>
+      <Gated part="mandates" ready={!loading} skeleton={<MandatesSkeleton />}>
       {/* Status filter tabs */}
       <div className="nav-tabs">
         {filterTabs.map(tab => (
@@ -1184,7 +1188,8 @@ export function AuthorizationsPage() {
       )}
 
       {loading && activeItems.length === 0 ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
+        // A later load (the Team tab's first fetch): the list's own skeleton, never "No mandates" while loading.
+        <MandatesSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={'☰'}
@@ -1230,6 +1235,9 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      </Gated>
+      </LoadGate>
+
       {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
       {deviceEnd && <HeldBackHost />}
       {changeTarget && (
@@ -1264,5 +1272,27 @@ export function AuthorizationsPage() {
         />
       )}
     </div>
+  );
+}
+
+/** DEC-98: the mandates page greyed out — the filter tabs and two area groups of cards, at the real sizes. */
+function MandatesSkeleton() {
+  return (
+    <SkelArea>
+      <div className="nav-tabs" style={{ gap: '1rem' }}>
+        {[4.5, 5, 5, 5.5].map((w, i) => <SkelLine key={i} w={`${w}rem`} h="1.1rem" style={{ margin: '0.6rem 0' }} />)}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }} data-testid="mandates-skeleton">
+        {[0, 1].map(g => (
+          <section key={g}>
+            <div className="area-group-h"><SkelLine w="12rem" h="1.1rem" /></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <SkelBlock h="6.5rem" radius="0.75rem" />
+              <SkelBlock h="6.5rem" radius="0.75rem" />
+            </div>
+          </section>
+        ))}
+      </div>
+    </SkelArea>
   );
 }

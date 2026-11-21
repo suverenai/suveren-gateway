@@ -24,6 +24,9 @@ export interface UnlockState {
   error?: string;
   /** The reason the last page session ended, shown above the form (items 89 to 91, 88). */
   notice?: string;
+  /** DEC-98: the screen knows whether Touch ID is on and why the page is locked. Until then it shows its skeleton, so
+   *  the Touch ID button and the reason never pop in after the first paint. */
+  ready: boolean;
 }
 
 export interface UnlockDeps {
@@ -38,7 +41,7 @@ export interface UnlockDeps {
 
 export class UnlockDriver extends Driver<UnlockState> {
   constructor(private readonly d: UnlockDeps, notice?: string) {
-    super({ phase: 'form', busy: false, touchBusy: false, touchAvailable: false, passwordOnly: false, ...(notice ? { notice } : {}) });
+    super({ phase: 'form', busy: false, touchBusy: false, touchAvailable: false, passwordOnly: false, ready: false, ...(notice ? { notice } : {}) });
   }
 
   async init(): Promise<void> {
@@ -47,7 +50,7 @@ export class UnlockDriver extends Driver<UnlockState> {
     // one, an OPEN vault means only this page lost its session (a reload, a new tab), never "the computer restarted";
     // a locked vault (or no answer) keeps the restart text.
     const pageOnly = !this.state.notice && v.ok && v.data?.vaultUnlocked === true;
-    this.set({ ...this.state, touchAvailable: r.ok && r.data.unlockEnabled === true, ...(pageOnly ? { notice: T.pageNeedsUnlock } : {}) });
+    this.set({ ...this.state, ready: true, touchAvailable: r.ok && r.data.unlockEnabled === true, ...(pageOnly ? { notice: T.pageNeedsUnlock } : {}) });
   }
 
   async withPassword(password: string): Promise<void> {
