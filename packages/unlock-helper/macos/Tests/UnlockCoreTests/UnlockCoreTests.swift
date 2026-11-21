@@ -155,6 +155,8 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
         #expect(reason(unlock("disable")) == "turn off Touch ID unlock for Suveren")
         let cancel = "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\",\"issued_at\":1}"
         #expect(reason(Data(cancel.utf8)) == "cancel the request for a new identity")
+        let passkey = "{\"typ\":\"suveren-passkey-register\",\"v\":1,\"root_did\":\"d\",\"key_id\":\"k\",\"chain_seq\":1,\"chain_head\":\"h\",\"request_id\":\"r\",\"cred_id\":\"c\",\"rp_id\":\"suveren.ai\",\"issued_at\":1}"
+        #expect(reason(Data(passkey.utf8)) == "add a passkey for your Suveren dashboard")
         func grant(_ op: String, _ profile: String = "email@0.9") -> Data {
             Data("{\"typ\":\"suveren-mandate-grant\",\"v\":1,\"op\":\"\(op)\",\"owner_did\":\"d\",\"key_id\":\"k\",\"chain_seq\":1,\"chain_head\":\"h\",\"mandate_id\":\"m\",\"mandate_version\":1,\"granted_at\":1,\"nonce\":\"n\",\"profile_id\":\"\(profile)\",\"bounds_hash\":\"x\"}".utf8)
         }
@@ -180,6 +182,9 @@ func sha256hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: 
                     // a cancel with a member too many or too few has no text
                     "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\",\"issued_at\":1,\"note\":\"x\"}",
                     "{\"typ\":\"suveren-identity-cancel\",\"v\":1,\"aud\":\"a\",\"root_did\":\"d\",\"key_id\":\"k\",\"request_id\":\"r\",\"chain_seq\":1,\"chain_head\":\"h\"}",
+                    // a passkey approval with a member too many (free text) or too few has no text
+                    "{\"typ\":\"suveren-passkey-register\",\"v\":1,\"root_did\":\"d\",\"key_id\":\"k\",\"chain_seq\":1,\"chain_head\":\"h\",\"request_id\":\"r\",\"cred_id\":\"c\",\"rp_id\":\"s\",\"issued_at\":1,\"note\":\"x\"}",
+                    "{\"typ\":\"suveren-passkey-register\",\"v\":1,\"root_did\":\"d\",\"key_id\":\"k\",\"chain_seq\":1,\"chain_head\":\"h\",\"request_id\":\"r\",\"cred_id\":\"c\",\"issued_at\":1}",
                     "{\"request_id\":\"a\",\"kind\":\"remove\",\"name\":\"g\",\"change_hash\":\"b\",\"gateway_key_id\":null,\"expires_at\":1,\"note\":\"x\"}"] {
             #expect(code(sign(k, Data(bad.utf8))) == "bad_request", "\(bad)")
         }

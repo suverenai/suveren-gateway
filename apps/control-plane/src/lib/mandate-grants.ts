@@ -239,6 +239,14 @@ export class MandateGrants {
     return { credential, stored, own };
   }
 
+  /**
+   * For other device-key flows on this computer (lib/dashboard-passkeys.ts): the signed-in device session with this person's chain
+   * verified from the genesis on against the pinned head. Throws {@link GrantRefusal} (locked, not set up, not signed in, removed).
+   */
+  async deviceSession(): Promise<Session> {
+    return this.session();
+  }
+
   /** The mandate id of the mandate an authorization was granted as, read from the Authority Server and verified against this person's chain. */
   async mandateIdFor(authorizationId: string): Promise<string> {
     const s = await this.session();

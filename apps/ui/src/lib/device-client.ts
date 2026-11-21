@@ -106,6 +106,13 @@ export type PairingView =
 
 export interface DevicesAnswer { rows: PairingDeviceRow[]; identityCode: string; origin: PairingOrigin | null; canGrant: boolean; hasRoom: boolean }
 
+export interface DashboardPasskey {
+  requestId: string; credId: string; rpId: string; code: string;
+  createdAt: number; credentialAt: number; expiresAt: number;
+  account: { email: string; name: string };
+}
+export interface DashboardPasskeysAnswer { canApprove: boolean; pending: DashboardPasskey[] }
+
 export class DeviceClient {
   constructor(private readonly send: Transport = (p, i) => spClient.request(p, i)) {}
 
@@ -166,6 +173,10 @@ export class DeviceClient {
 
   // Pairing with the phone app: the list, "Add a phone" (admit), "Add this computer" (join)
   devices() { return this.go<DevicesAnswer>('/auth/device/devices'); }
+  /** The dashboard passkeys waiting for one of this person's devices (AS step 17, the device side), and whether this computer can approve. */
+  dashboardPasskeys() { return this.go<DashboardPasskeysAnswer>('/auth/device/dashboard-passkeys'); }
+  /** Approve one with this computer's key and its check (one touch). */
+  approveDashboardPasskey(requestId: string) { return this.go<{ registered: true; credId: string; code: string }>(`/auth/device/dashboard-passkeys/${encodeURIComponent(requestId)}/approve`, json({})); }
   pairingStatus() { return this.go<{ view: PairingView }>('/auth/device/pairing/status'); }
   admitStart() { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/start', json({})); }
   admitChoose(code: string) { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/choose', json({ code })); }
