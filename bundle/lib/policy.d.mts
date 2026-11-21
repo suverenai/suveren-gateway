@@ -31,6 +31,9 @@ export interface ResolvedPolicy {
   /** Keys present in policy — these are LOCKED: the employee cannot
    *  override them locally. */
   locked: Set<PolicyKey>;
+  /** Which source each locked key came from (CLI-only, additive): the
+   *  machine registry hive, the user's own hive, or the policy file. */
+  sources: Partial<Record<PolicyKey, 'HKLM' | 'HKCU' | 'file'>>;
 }
 
 export declare function parseRegQueryOutput(stdout: string): Record<string, string | number>;

@@ -227,18 +227,19 @@ export function parseRegQueryOutput(stdout) {
 function readRegistryHive(hive) {
   const path = registryKeyPath(hive);
   const source = `the registry policy (${path})`;
+  const kind = hive; // 'HKLM' | 'HKCU' — see readPolicy's `sources`
   // Checked BEFORE the platform branch so the switch is testable on any OS,
   // not just Windows — see gateway-policy.test.ts.
-  if (process.env.SUVEREN_POLICY_REGISTRY === 'off') return { values: {}, source };
-  if (process.platform !== 'win32') return { values: {}, source };
+  if (process.env.SUVEREN_POLICY_REGISTRY === 'off') return { values: {}, source, kind };
+  if (process.platform !== 'win32') return { values: {}, source, kind };
   let result;
   try {
     result = spawnSync('reg', ['query', path], { encoding: 'utf8' });
   } catch {
-    return { values: {}, source };
+    return { values: {}, source, kind };
   }
-  if (!result || result.status !== 0 || !result.stdout) return { values: {}, source };
-  return { values: parseRegQueryOutput(result.stdout), source };
+  if (!result || result.status !== 0 || !result.stdout) return { values: {}, source, kind };
+  return { values: parseRegQueryOutput(result.stdout), source, kind };
 }
 
 // ─── Policy file ────────────────────────────────────────────────────────
@@ -261,7 +262,7 @@ export function policyFilePath() {
 function readPolicyFile() {
   const path = policyFilePath();
   const source = `the policy file (${path})`;
-  if (!existsSync(path)) return { values: {}, source };
+  if (!existsSync(path)) return { values: {}, source, kind: 'file' };
   let data;
   try {
     data = JSON.parse(readFileSync(path, 'utf8'));
@@ -272,7 +273,7 @@ function readPolicyFile() {
   for (const key of POLICY_KEYS) {
     if (Object.prototype.hasOwnProperty.call(data, key)) values[key] = data[key];
   }
-  return { values, source };
+  return { values, source, kind: 'file' };
 }
 
 // ─── Merge + validate ───────────────────────────────────────────────────
@@ -283,16 +284,18 @@ function readPolicyFile() {
 function mergeBySource(entries) {
   const merged = {};
   const sourceOf = {};
+  const kindOf = {};
   for (const key of POLICY_KEYS) {
     for (const entry of entries) {
       if (Object.prototype.hasOwnProperty.call(entry.values, key) && entry.values[key] !== undefined) {
         merged[key] = entry.values[key];
         sourceOf[key] = entry.source;
+        kindOf[key] = entry.kind;
         break;
       }
     }
   }
-  return { merged, sourceOf };
+  return { merged, sourceOf, kindOf };
 }
 
 let cached = null;
@@ -317,7 +320,7 @@ export function readPolicy() {
   const hkcu = readRegistryHive('HKCU');
   const file = readPolicyFile(); // may throw — propagated, not swallowed
 
-  const { merged, sourceOf } = mergeBySource([hklm, hkcu, file]);
+  const { merged, sourceOf, kindOf } = mergeBySource([hklm, hkcu, file]);
 
   const policy = {};
   const locked = new Set();
@@ -422,7 +425,17 @@ export function readPolicy() {
     locked.add('team');
   }
 
-  cached = { policy, locked };
+  // Which source each locked key came from: 'HKLM' | 'HKCU' | 'file'.
+  // Additive and CLI-only (read by `check`, which must know whether the
+  // user can change the source); the two apps' TS mirrors do not need it,
+  // and nothing about which value wins changes.
+  const sources = {};
+  for (const rawKey of Object.keys(kindOf)) {
+    const key = rawKey.charAt(0).toLowerCase() + rawKey.slice(1);
+    if (locked.has(key)) sources[key] = kindOf[rawKey];
+  }
+
+  cached = { policy, locked, sources };
   return cached;
 }
 
