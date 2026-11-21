@@ -225,12 +225,6 @@ export function evaluateChecks(checks: CheckDeclaration[] | undefined, ctx: Chec
 
 const PLACEHOLDER = /\{([^{}]+)\}/g;
 
-/** YYYY-MM-DD of `d` in this computer's time zone. */
-export function localDay(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
 function formatValue(v: unknown, fmt: string | undefined, currency: string | undefined): string {
   if (fmt === 'money') {
     const n = typeof v === 'number' ? v : Number(v);
@@ -240,10 +234,7 @@ function formatValue(v: unknown, fmt: string | undefined, currency: string | und
   if (fmt === 'percent') return `${show(v)}%`;
   if (fmt === 'date') {
     const d = new Date(String(v));
-    // The person's own day: the date on the computer the gateway runs on, not UTC (a check at 00:30 in Vienna showed
-    // yesterday's date). A bare date ("2026-11-21") is a calendar day already and is shown as written.
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return String(v);
-    return Number.isNaN(d.getTime()) ? show(v) : localDay(d);
+    return Number.isNaN(d.getTime()) ? show(v) : d.toISOString().slice(0, 10);
   }
   if (fmt === 'list' && Array.isArray(v)) return v.map(show).join(', ');
   if (fmt?.startsWith('count:')) {
