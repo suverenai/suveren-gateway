@@ -618,6 +618,9 @@ const phoneGiveInFlight = new Set<string>();
 /** Gives finished in this process, kept a little while so a later ask (the page after the background, or the reverse) hears "done". */
 const phoneGiveDone = new Map<string, { at: number; authorizationId: string; revokeError?: string }>();
 const PHONE_GIVE_DONE_KEEP_MS = 10 * 60_000;
+/** Gives REFUSED in this process, kept as long: whoever asks next (the page after the background completion) hears the same refusal, never
+ *  "nothing waits" — the person must see why nothing was given (a phone's grant over other values), not "Stopped". */
+const phoneGiveRefused = new Map<string, { at: number; err: unknown }>();
 
 async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
   const store = deps.grants!.phoneGives;
@@ -626,12 +629,19 @@ async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise
     // Finished a moment ago by the other asker (the page or the background completion): the same answer, not "nothing waits".
     const done = phoneGiveDone.get(mandateId);
     if (done && Date.now() - done.at < PHONE_GIVE_DONE_KEEP_MS) return { state: 'done', authorizationId: done.authorizationId, ...(done.revokeError ? { revokeError: done.revokeError } : {}) };
+    const refused = phoneGiveRefused.get(mandateId);
+    if (refused && Date.now() - refused.at < PHONE_GIVE_DONE_KEEP_MS) grantRefused(refused.err);
     return { state: 'unknown' };
   }
   let issued: Issued | null;
   try {
     issued = await deps.grants!.phoneGrant(p.give as unknown as PhoneGive);
-  } catch (err) { store.drop(mandateId); return grantRefused(err); }
+  } catch (err) {
+    store.drop(mandateId);
+    phoneGiveRefused.set(mandateId, { at: Date.now(), err });
+    for (const [id, r] of phoneGiveRefused) if (Date.now() - r.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveRefused.delete(id);
+    return grantRefused(err);
+  }
   if (!issued) return { state: 'waiting' };
   store.drop(mandateId);
   const rc = p.ctx as { kind?: unknown; req?: RenewRequest; asBody?: Record<string, unknown>; boundsHash?: string; scopeHash?: string };
