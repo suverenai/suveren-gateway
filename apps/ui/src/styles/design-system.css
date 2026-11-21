@@ -451,6 +451,12 @@ code {
    Not capped: dialogs and floating pieces, and the two-pane writing layouts. */
 :where(.dash-page, .ob-page, .su-page, .av3-page) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols)) { max-width: var(--box-max); }
 .page-inner > :where(.card, .step-indicator, .context-strip) { max-width: var(--box-max); }
+/* DEC-98: the page gate's wrappers (LoadGate, Gated, SkelArea) are display: contents; the caps above look through them,
+   so a gated page keeps its 760px column, greyed out and loaded alike. */
+:where(.dash-page, .ob-page, .su-page, .av3-page) > :where(.load-gate, .skel-area) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols, [data-gated], .skel-area)),
+:where(.dash-page, .ob-page, .su-page, .av3-page) > :where(.load-gate) > :where([data-gated], .skel-area) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols)) { max-width: var(--box-max); }
+.page-inner > :where(.load-gate) > :where(.card),
+.page-inner > :where(.load-gate) > :where([data-gated]) > :where(.card, .step-indicator, .context-strip) { max-width: var(--box-max); }
 
 .page-title {
   font-size: 1.5rem;

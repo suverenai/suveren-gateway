@@ -240,8 +240,6 @@ export function SettingsServicesPage() {
       {/* 4. Version */}
       <h2 className="su-sec">{SETTINGS_SECTIONS[3]}</h2>
       <VersionCard />
-      </SettingsCards>
-      </LoadGate>
 
       {/* 5. AI Assistant — last (Andreas, 2026-10-24): optional; until it is set up it shows as a
           missing setup step (Get started, dashboard, Settings nav count). */}
@@ -381,6 +379,8 @@ export function SettingsServicesPage() {
         {/* Advanced — AI assistant prompts (a fold, closed by default) */}
         <AdvancedAIPrompts />
       </article>
+      </SettingsCards>
+      </LoadGate>
     </div>
   );
 }
@@ -596,7 +596,7 @@ function SettingsCards({ children }: { children: React.ReactNode }) {
 function SettingsSkeleton() {
   return (
     <SkelArea>
-      <div data-testid="settings-skeleton">
+      <div data-testid="settings-skeleton" className="skel-stack">
         <SkelLine w="10rem" h="1.1rem" style={{ margin: '1.5rem 0 0.75rem' }} />
         <SkelCard lines={2} minHeight="9.5rem" />
         <SkelLine w="10rem" h="1.1rem" style={{ margin: '1.5rem 0 0.75rem' }} />
