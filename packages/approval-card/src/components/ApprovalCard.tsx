@@ -332,7 +332,9 @@ export function ApprovalCard({
               </div>
             </div>
           )}
-          <div className={`av3-btns${canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
+          {/* The give button names how it is given ("…with Touch ID", "…on your phone"): too long for a third of the row, so it
+              takes the whole first row and the others share the row below. */}
+          <div className={`av3-btns${giveWording && isMandate && !isChange && canApprove && !mandateEnded ? ' av3-btns-give' : canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => {
                 // A chain account gives a mandate with its device touch on the give page (one implementation, DEC-80/91 direction 2026-11-20).
