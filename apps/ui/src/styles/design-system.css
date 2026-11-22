@@ -47,6 +47,11 @@
    BASE
    ══════════════════════════════════════════════ */
 html { scroll-behavior: smooth; }
+/* The app frame keeps its content below the fixed top bar with a margin (.main-content); without this that margin
+   collapses through #root into <body>, so the body itself moves down whenever a page with that frame replaces one
+   without it (the unlock screen → the greyed-out dashboard → the dashboard: CLS 0.087, DEC-100). Nothing visible
+   changes: the content stays where it was, inside #root. */
+#root { display: flow-root; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -152,6 +157,14 @@ code {
   background: var(--accent-subtle);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* On a narrow screen the version gives way (shortened with …, its full text in the tooltip): the menu button at the
+   right must always stay on screen. */
+@media (max-width: 768px) {
+  .logo-group { flex-shrink: 1; min-width: 0; }
+  .logo, .version-badge { flex-shrink: 0; }
+  .gw-version { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .mobile-menu-btn { flex-shrink: 0; }
 }
 .gw-version[data-stale='true'] {
   color: var(--text-primary);

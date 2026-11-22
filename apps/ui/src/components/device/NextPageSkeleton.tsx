@@ -2,13 +2,14 @@ import { SkelArea, SkelLine, SkelBlock } from '@suveren/approval-card/components
 import { TopNav } from '../TopNav';
 import { UpdateBanner } from '../UpdateBanner';
 import { DashboardSkeleton } from '../../pages/DashboardPage';
-import { SettingsSkeleton, SETTINGS_SUBTITLE } from '../../pages/SettingsServicesPage';
+import { SettingsSkeleton } from '../../pages/SettingsServicesPage';
 
 /**
  * DEC-100 (Andreas, 2026-11-22): no turning mark while loading. Every wait between two pages shows the next page
  * greyed out: after the touch or the password the dashboard, after turning Touch ID on for approvals Settings. The
  * frame (top bar, sidebar, column, page title) sits where the real one will, so the page fills in without moving.
- * Nothing here reads data: the person is not signed in yet while it shows.
+ * Nothing here reads data: the person is not signed in yet while it shows. The page title is greyed out too: a real
+ * `.page-title` means a signed-in page (the e2e journeys and the app wait for it), and nobody is signed in yet.
  */
 export function ShellSkeleton({ page }: { page: 'dashboard' | 'settings' }) {
   return (
@@ -20,20 +21,27 @@ export function ShellSkeleton({ page }: { page: 'dashboard' | 'settings' }) {
         <div className="page-inner">
           {page === 'dashboard' ? (
             <div className="dash-page">
-              <div className="page-header"><h1 className="page-title">Dashboard</h1></div>
+              <div className="page-header"><PageTitleSkeleton /></div>
               <div className="load-gate"><DashboardSkeleton /></div>
             </div>
           ) : (
             <div className="su-page">
-              <div className="page-header">
-                <h1 className="page-title">Settings</h1>
-                <p className="page-subtitle">{SETTINGS_SUBTITLE}</p>
-              </div>
+              <div className="page-header"><PageTitleSkeleton subtitle /></div>
               <div className="load-gate"><SettingsSkeleton /></div>
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A page title (and subtitle) greyed out, as tall as the real ones. */
+function PageTitleSkeleton({ subtitle }: { subtitle?: boolean }) {
+  return (
+    <div className="page-header-text" aria-hidden="true">
+      <SkelLine w="9rem" h="1.8rem" style={{ marginBottom: '0.25rem' }} />
+      {subtitle && <SkelLine w="70%" h="0.9rem" style={{ marginTop: '0.4rem' }} />}
     </div>
   );
 }
