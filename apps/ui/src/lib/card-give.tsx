@@ -105,5 +105,6 @@ export function useCardMandateGive(proposal: { id: string; tool: string }, args:
         onBack: back,
         onClose: o.onClose,
       });
-  return { start, active, footer, problem };
+  const via = driver.prepared ? (driver.phoneOffered ? 'phone' as const : 'touch' as const) : null;
+  return { start, active, footer, problem, via };
 }

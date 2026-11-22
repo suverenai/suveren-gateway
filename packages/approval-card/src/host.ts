@@ -114,6 +114,8 @@ export interface MandateGive {
   /** The give's own footer: the touch wait, each step the gateway reports, the result stamp, or a refusal.
    *  `onGiven` (from the card) runs the moment the mandate is live, BEFORE the proposal is closed, so the card stays on screen with the stamp. */
   footer: ReactNode;
+  /** How this computer gives it: with Touch ID here, or on the phone (no check key). Null until the gateway has checked the plan. */
+  via?: 'touch' | 'phone' | null;
 }
 
 let configured: ApprovalHost | null = null;
