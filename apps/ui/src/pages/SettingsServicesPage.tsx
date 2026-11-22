@@ -187,7 +187,7 @@ export function SettingsServicesPage() {
     <div className="su-page">
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">{SETTINGS_SUBTITLE}</p>
+        <p className="page-subtitle">The connection to your Authority Server, this computer, security, version and your AI assistant.</p>
       </div>
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
@@ -592,9 +592,6 @@ function SettingsCards({ children }: { children: React.ReactNode }) {
     </Gated>
   );
 }
-
-/** Shown in the page header, and by the skeleton of this page shown before it (DEC-100). */
-export const SETTINGS_SUBTITLE = 'The connection to your Authority Server, this computer, security, version and your AI assistant.';
 
 export function SettingsSkeleton() {
   return (

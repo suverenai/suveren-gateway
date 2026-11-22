@@ -96,10 +96,11 @@ describe('screen 4: unlock', () => {
     for (const e of [T.wrongPassword, T.touchCancelled, T.touchNotRecognised, T.touchLocked, T.touchCannot, T.touchNoAsk, 'Too many tries. Try again in 10 minutes.']) expect(text(render({ error: e }))).toContain(e);
     const sh = render({ phase: 'signing-in' });
     const s = text(sh);
-    // DEC-100: the dashboard greyed out while signing in — its frame and title only, no turning mark, no sign-in text.
+    // DEC-100: the dashboard greyed out while signing in — its frame only, no turning mark, no sign-in text, and no real
+    // page title (a `.page-title` means a signed-in page).
     expect(sh).toContain('shell-skeleton-dashboard');
     expect(sh).not.toContain('brand-spin');
-    expect(s).toContain('Dashboard');
+    expect(sh).not.toContain('page-title');
     expect(s).not.toContain(T.unlockTitle);
     expect(s).not.toContain(T.unlockSigningIn);
     expect(s).not.toContain(T.passwordLabel);

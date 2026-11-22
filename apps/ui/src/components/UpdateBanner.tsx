@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useLayoutEffect } from 'react';
 import { useUpdateCheck, type InstallMethod } from '../hooks/useUpdateCheck';
 
 // Survives the reload: set to the new version just before reloading so the
@@ -126,9 +126,11 @@ export function UpdateBanner() {
     return () => document.body.classList.remove('is-updating');
   }, [updating]);
 
-  // Push sidebar + main content down by the visible bar's height (red or green).
+  // Push sidebar + main content down by the visible bar's height (red or green). A layout effect: set before the page
+  // paints, so a frame that replaces another (the greyed-out dashboard → the real one, DEC-100) never paints once
+  // without the bar's height and then jumps down by it.
   const showBar = (updateAvailable && !updating && !liveVersion) || (!!liveVersion && !updating);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!showBar) {
       document.documentElement.style.removeProperty('--update-banner-h');
       document.body.classList.remove('has-update-banner');

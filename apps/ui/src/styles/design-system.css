@@ -153,6 +153,14 @@ code {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* On a narrow screen the version gives way (shortened with …, its full text in the tooltip): the menu button at the
+   right must always stay on screen. */
+@media (max-width: 768px) {
+  .logo-group { flex-shrink: 1; min-width: 0; }
+  .logo, .version-badge { flex-shrink: 0; }
+  .gw-version { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .mobile-menu-btn { flex-shrink: 0; }
+}
 .gw-version[data-stale='true'] {
   color: var(--text-primary);
   background: transparent;
