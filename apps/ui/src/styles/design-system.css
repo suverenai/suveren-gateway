@@ -5198,7 +5198,7 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 /* ─── Device-key screens (unlock password, Connect, recovery code, confirm) ───────────────────────── */
 .device-screen { width: 100%; max-width: 28rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
 /* Gateway page only (the phone app has no fixed top bar): start the device column below the fixed .top-nav. */
-.device-page { padding-top: calc(var(--nav-height) + var(--update-banner-h, 0px)); }
+.device-page { padding-top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px)); }
 .device-screen h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin-bottom: 1rem; }
 .device-screen p { color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem; }
 .device-screen .btn + .btn { margin-top: 0.75rem; }
