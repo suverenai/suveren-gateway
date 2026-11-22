@@ -20,7 +20,9 @@ export const S13 = {
   giveSigned: 'Signed',
   giveRecorded: 'Recorded',
   giveResultClose: 'Close',
-  giveCardButton: 'Give this mandate', // DRAFT: the AI-proposal card's "Sign mandate"; the touch follows
+  giveCardButton: 'Give this mandate', // DRAFT: the AI-proposal card's "Sign mandate" only until the gateway knows how this computer gives it
+  /** The card's give button where this computer gives with Touch ID is `giveButton`; where it gives on the phone, this (Andreas 2026-11-22). */
+  giveCardPhoneButton: 'Give this mandate on your phone',
   giveCardApprove: 'Approve', // DRAFT: the card's "Approve and sign"
   giveTouchNote: 'Your device asks for your touch. It names only the area ({area}). The details are on this page.', // 212 (device, not Mac)
   giveHowLong: 'How long', // 206
@@ -49,7 +51,7 @@ export const S13 = {
   giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // 225
   // "Give on your phone" on a computer without Touch ID (DEC-90, mockup phone-d3-live.html v7, Gateway view). All DRAFT.
   givePhoneOffer: 'This computer has no Touch ID. Give this mandate on your phone: it shows you the same, and you give it there with your touch.', // DRAFT
-  givePhoneButton: 'Give on your phone', // DRAFT
+  givePhoneButton: 'Give this mandate on your phone', // Andreas 2026-11-22 (was "Give on your phone")
   givePhoneWaiting: 'Waiting for your phone… Open Suveren on your phone and give it there.', // DRAFT
   givePhoneWaitingNote: 'Nothing is given until you touch on your phone. You can close this page; the request waits 30 minutes.', // DRAFT
   givePhoneStop: 'Stop waiting', // DRAFT

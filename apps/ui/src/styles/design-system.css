@@ -4477,7 +4477,7 @@ video.document-preview-media { width: 100%; }
 .av3-check { width: 56px; height: 56px; stroke: var(--text-primary); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: av3-draw 0.35s ease forwards; }
 @keyframes av3-draw { to { stroke-dashoffset: 0; } }
 .av3-stamp-w { font-size: var(--text-h2); font-weight: 700; letter-spacing: -0.015em; }
-.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); font-family: var(--font-mono); }
+.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); }
 @media (prefers-reduced-motion: reduce) {
   .av3-stage, .av3-stage.av3-in, .av3-stage.av3-out { transition: none; animation: none; transform: none; }
   .av3-check { animation: none; stroke-dashoffset: 0; }
