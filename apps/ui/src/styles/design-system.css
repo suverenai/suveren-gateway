@@ -47,6 +47,11 @@
    BASE
    ══════════════════════════════════════════════ */
 html { scroll-behavior: smooth; }
+/* The app frame keeps its content below the fixed top bar with a margin (.main-content); without this that margin
+   collapses through #root into <body>, so the body itself moves down whenever a page with that frame replaces one
+   without it (the unlock screen → the greyed-out dashboard → the dashboard: CLS 0.087, DEC-100). Nothing visible
+   changes: the content stays where it was, inside #root. */
+#root { display: flow-root; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
