@@ -450,7 +450,7 @@ export function AgentReviewPage() {
   if (given) {
     // The gateway's own result stamp (DEC-86/88), then back to the mandate list, where the new mandate is marked.
     return (
-      <div className="card av3-card" style={{ maxWidth: 560 }} data-testid="give-done">
+      <div className="card av3-card av3-given-alone" style={{ maxWidth: 560 }} data-testid="give-done">
         <GiveTouchFooter view={{ s: 'given' }} onGive={() => {}} onBack={() => {}} onClose={() => navigate(`/mandates?highlight=${encodeURIComponent(given.authorizationId)}`)} />
       </div>
     );
