@@ -45,7 +45,8 @@ export function LoadGate({ parts, children, graceMs = GRACE_MS }: { parts: reado
 
   const value = { report, view };
   const busy = Object.values(states).some(s => s === 'loading');
-  return <Ctx.Provider value={value}><div aria-busy={busy || undefined} className="load-gate">{children}</div></Ctx.Provider>;
+  // `data-gate` is the stable signal for tests and tools: "loading" while a part is still waiting, "open" once all are in.
+  return <Ctx.Provider value={value}><div aria-busy={busy || undefined} data-gate={busy ? 'loading' : 'open'} className="load-gate">{children}</div></Ctx.Provider>;
 }
 
 /** A part of a gated page: its view now. Outside a gate, its own state at once. */
