@@ -60,13 +60,14 @@ export function ChangeMandateHost({ authorizationId, changes, onChanged, onClose
   return (
     <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'color-mix(in srgb, var(--bg-main) 70%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem', overflowY: 'auto' }}>
       <div style={{ maxWidth: 560, width: '100%' }}>
-        {prepared
+        {phone?.s === 'given' ? null : prepared
           ? <ChangeMandate profileName={prepared.profileName} diff={prepared.diff} team={teamDiff(prepared.before, prepared.after)} state={state} onChange={() => void change()} onCancel={onClose} />
           : state.phase === 'error'
             ? <div className="card"><p role="alert" className="msg-error">{changeErrorText(state.code)}</p><button type="button" className="btn btn-ghost" onClick={onClose}>{S13.changeCancel}</button></div>
             : <p>…</p>}
         {phone && (
-          <div className="card" data-testid="change-on-phone">
+          // Given on the phone: the shared result stamp alone in its card, centred above its Close (UI spec §17), as after a give.
+          <div className={phone.s === 'given' ? 'card av3-card av3-given-alone' : 'card'} data-testid="change-on-phone">
             <GivePhoneFooter
               view={phone.s === 'waiting' ? { s: 'waiting' } : phone.s === 'refused' ? { s: 'refused', message: phone.message } : phone.s === 'given' ? { s: 'given' } : { s: phone.s }}
               onGive={() => void sendToPhone()}
@@ -75,7 +76,7 @@ export function ChangeMandateHost({ authorizationId, changes, onChanged, onClose
             />
           </div>
         )}
-        {(state.phase === 'done' || phone?.s === 'given') && <button type="button" className="btn btn-ghost btn-full" onClick={onClose}>{S13.endClose}</button>}
+        {state.phase === 'done' && phone?.s !== 'given' && <button type="button" className="btn btn-ghost btn-full" onClick={onClose}>{S13.endClose}</button>}
       </div>
     </div>
   );

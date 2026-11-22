@@ -7,6 +7,7 @@
  * A refusal stays on the page as today's error above the footer and brings the offer back. Presentational: the host drives it.
  */
 import { S13 } from './texts';
+import { ResultStamp } from '../components/ResultStamp';
 
 export type GiveStage = 'touched' | 'requesting' | 'delivering';
 export type GiveTouchView =
@@ -37,19 +38,11 @@ export function GiveTouchFooter({ view, onGive, onBack, onClose, disabled }: {
   disabled?: boolean;
 }) {
   if (view.s === 'given') {
+    // The stamp fills the card's free area above the pinned Close and sits in its middle (UI spec §17: the stamp over
+    // the faded card). It was in the normal flow under the hidden card body, so on a tall card it sat at the bottom.
     return (
-      // The stamp fills the card's free area above the pinned Close and sits in its middle (UI spec §17: the stamp over
-      // the faded card). It was in the normal flow under the hidden card body, so on a tall card it sat at the bottom.
-      <div data-testid="give-touch-given" className="av3-given">
-        <div className="av3-stamp" role="status" data-testid="give-touch-stamp">
-          <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-          <div className="av3-stamp-w">{S13.giveSigned}</div>
-          <div className="av3-stamp-t">{S13.giveRecorded}</div>
-        </div>
-        <footer className="av3-foot">
-          <button type="button" className="av3-btn av3-btn-primary" style={{ width: '100%' }} onClick={onClose} data-testid="give-touch-close">{S13.giveResultClose}</button>
-        </footer>
-      </div>
+      <ResultStamp word={S13.giveSigned} line={S13.giveRecorded} testId="give-touch-given" stampTestId="give-touch-stamp"
+        close={{ label: S13.giveResultClose, onClose, testId: 'give-touch-close' }} />
     );
   }
   if (view.s === 'touch' || view.s === 'working') {

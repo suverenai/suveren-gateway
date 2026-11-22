@@ -443,6 +443,9 @@ export function AgentReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver.givenId]);
   useEffect(() => { if (driver.error) setError(driver.error); }, [driver.error]);
+  // The result replaces the long form: bring the page to its top, so the result card is seen whole below the header
+  // (the page kept the form's scroll position, and the card's top sat under the header).
+  useEffect(() => { if (given) window.scrollTo({ top: 0, behavior: 'auto' }); }, [given]);
 
   if (!authData || !gateData) {
     return <GiveSkeleton />;
@@ -909,7 +912,7 @@ export function AgentReviewPage() {
         )}
 
         {phoneOffered || phoneGive.s !== 'offered' ? (
-          <div className="card av3-card" data-testid="give-phone-card" style={{ position: 'relative' }}>
+          <div className={phoneGive.s === 'given' ? 'card av3-card av3-given-alone' : 'card av3-card'} data-testid="give-phone-card" style={{ position: 'relative' }}>
             <GivePhoneFooter
               view={phoneGive.s === 'refused' ? { s: 'refused', message: phoneGive.message } : { s: phoneGive.s }}
               disabled={!giveRequest || !prepared || approverBlocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
@@ -921,11 +924,6 @@ export function AgentReviewPage() {
                 driver.resetPhone();
               }}
             />
-            {phoneGive.s === 'given' && (
-              <div className="av3-foot">
-                <button type="button" className="av3-btn av3-btn-primary" style={{ width: '100%' }} onClick={() => navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`)} data-testid="give-phone-done">Go to my mandates</button>
-              </div>
-            )}
           </div>
         ) : chain ? (
           <div className="card av3-card" style={{ position: 'relative' }}>

@@ -25,11 +25,15 @@ describe('Give on your phone: the footer', () => {
     expect(h).toContain('data-testid="give-phone-stop"');
     expect(h).not.toContain('give-phone-send');
   });
-  it('given: the gateway\'s own result stamp, no buttons in it', () => {
+  // The shared result stamp (ResultStamp, DEC-86/88): over the card, the stamp centred, ONE full-width Close pinned below it,
+  // the same as after a give with Touch ID (the hosts no longer add their own "Go to my mandates" / Close).
+  it('given: the shared result stamp with one Close', () => {
     const h = draw({ s: 'given' });
+    expect(h).toContain('av3-given');
     expect(h).toContain('av3-stamp');
     expect(text(h)).toContain(S13.givePhoneGiven);
-    expect(h).not.toContain('<button');
+    expect(h.match(/<button/g)?.length).toBe(1);
+    expect(h).toContain('give-phone-done');
   });
   it('stopped: says nothing was given and offers it again', () => {
     const h = draw({ s: 'stopped' });

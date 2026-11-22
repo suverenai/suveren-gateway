@@ -4,6 +4,7 @@
  * stamp), stopped, refused. Presentational: the host drives the state (apps/ui/src/lib/give-on-phone-flow.ts).
  */
 import { S13 } from './texts';
+import { ResultStamp } from '../components/ResultStamp';
 
 export type GivePhoneView =
   | { s: 'offered' }
@@ -22,12 +23,10 @@ export function GivePhoneFooter({ view, onGive, onStop, onClose, disabled }: {
   disabled?: boolean;
 }) {
   if (view.s === 'given') {
+    // The shared result stamp over the whole card, centred above the pinned Close (UI spec §17), as after a give with Touch ID.
     return (
-      <div className="av3-stamp" role="status" data-testid="give-phone-given" style={{ position: 'static' }}>
-        <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-        <div className="av3-stamp-w">{S13.givePhoneGiven}</div>
-        <div className="av3-stamp-t">{S13.givePhoneGivenOn}</div>
-      </div>
+      <ResultStamp word={S13.givePhoneGiven} line={S13.givePhoneGivenOn} testId="give-phone-given" stampTestId="give-phone-stamp"
+        close={{ label: S13.endClose, onClose, testId: 'give-phone-done' }} />
     );
   }
   return (

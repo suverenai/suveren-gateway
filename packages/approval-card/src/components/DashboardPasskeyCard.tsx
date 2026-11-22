@@ -8,6 +8,8 @@
  * request (the person compares the two), when the passkey was made, until when it can be approved, and the account. Nothing the
  * dashboard or an AI writes reaches this screen.
  */
+import { ResultStamp } from './ResultStamp';
+
 export const PASSKEY_TEXT = {
   // DRAFT
   title: 'Add a passkey for your dashboard',
@@ -73,16 +75,11 @@ export function DashboardPasskeyCard({ request, view, canApprove, onApprove, onC
   onClose: () => void;
 }) {
   if (view.s === 'added') {
+    // The shared result stamp, centred in the card above the pinned Close (UI spec §17); it was in the flow at the card's top.
     return (
-      <div className="av3-card" data-testid="passkey-card-added">
-        <div className="av3-stamp" role="status" style={{ position: 'static' }}>
-          <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-          <div className="av3-stamp-w">{PASSKEY_TEXT.added}</div>
-          <div className="av3-stamp-t">{PASSKEY_TEXT.addedLine}</div>
-        </div>
-        <footer className="av3-foot">
-          <button type="button" className="av3-btn av3-btn-primary" style={{ width: '100%' }} onClick={onClose} data-testid="passkey-close">{PASSKEY_TEXT.close}</button>
-        </footer>
+      <div className="av3-card av3-given-alone" data-testid="passkey-card-added">
+        <ResultStamp word={PASSKEY_TEXT.added} line={PASSKEY_TEXT.addedLine} stampTestId="passkey-stamp"
+          close={{ label: PASSKEY_TEXT.close, onClose, testId: 'passkey-close' }} />
       </div>
     );
   }
