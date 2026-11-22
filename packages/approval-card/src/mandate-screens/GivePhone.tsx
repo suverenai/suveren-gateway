@@ -35,7 +35,7 @@ export function GivePhoneFooter({ view, onGive, onStop, onClose, disabled }: {
       {(view.s === 'offered' || view.s === 'sending') && (
         <>
           <p className="form-hint" style={{ margin: '0 0 var(--space-2)' }}>{S13.givePhoneOffer}</p>
-          <div className="av3-btns av3-btns-two">
+          <div className="av3-btns av3-btns-give">
             <button type="button" className="av3-btn av3-btn-primary" onClick={onGive} disabled={disabled || view.s === 'sending'} data-testid="give-phone-send">{S13.givePhoneButton}</button>
             <button type="button" className="av3-btn" onClick={onClose} disabled={view.s === 'sending'} data-testid="give-phone-cancel">{S13.givePhoneCancel}</button>
           </div>
