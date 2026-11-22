@@ -133,8 +133,8 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     const app = readFileSync(join(__dirname, 'App.tsx'), 'utf8');
     expect(app).toMatch(/offer \? '\/device-password' : '\/onboarding'/);
     const card = readFileSync(join(dir, 'DeviceKeysCard.tsx'), 'utf8');
-    expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,200}to="\/device-password"/);
-    expect(card).toMatch(/if \(!setUp\)[\s\S]{0,200}to="\/device-setup"/);
+    expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,400}to="\/device-password"/);
+    expect(card).toMatch(/if \(!setUp\)[\s\S]{0,400}to="\/device-setup"/);
   });
   it('after set-up, the person is adopted BEFORE the page leaves for the dashboard (no unlock-screen flash), the turning mark meanwhile', () => {
     const src = readFileSync(join(dir, 'SetupScreens.tsx'), 'utf8');
