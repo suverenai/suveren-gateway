@@ -1083,7 +1083,9 @@ export function AuthorizationsPage() {
           <div
             className="modal"
             onClick={e => e.stopPropagation()}
-            style={{ maxWidth: '960px', width: '90vw' }}
+            // DEC-98: the picker has its full height from the start (capped by .modal's max-height), so the grid of areas
+            // replacing its greyed-out version does not grow the dialog and move it on screen.
+            style={{ maxWidth: '960px', width: '90vw', height: '100%' }}
           >
             <div className="modal-header">
               <h2 className="modal-title">New mandate</h2>
