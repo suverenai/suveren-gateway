@@ -7,7 +7,7 @@ import type { ExecutionReceipt } from '../lib/sp-client';
 describe('first render while loading: a skeleton, not "Loading…"', () => {
   it('a ticket\'s "what was done" panel', () => {
     const receipt = { id: 'r1', tool: 'records__create_record', timestamp: Date.now() } as unknown as ExecutionReceipt;
-    const html = renderToString(<TicketWhatWasDone receipt={receipt} manifests={{}} />);
+    const html = renderToString(<TicketWhatWasDone receipt={receipt} manifests={[]} />);
     expect(html).toContain('data-bound="loading"');
     expect(html).toContain('skeleton');
     expect(html).not.toMatch(/Loading(…|\.\.\.)</);
