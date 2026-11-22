@@ -4465,6 +4465,12 @@ video.document-preview-media { width: 100%; }
   gap: var(--space-1); padding: var(--space-6); text-align: center; animation: av3-fade 0.2s ease;
 }
 @keyframes av3-fade { from { opacity: 0; } }
+/* The given result (GiveTouchFooter): over the whole card, the stamp centred in the space above the pinned Close. */
+.av3-given { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; background: var(--bg-elevated); }
+.av3-given > .av3-stamp { position: static; inset: auto; flex: 1; min-height: 0; }
+.av3-given > .av3-foot { flex: none; }
+/* The give page shows the result alone in its card: give that card a height to centre in. */
+.av3-card.av3-given-alone { min-height: 360px; }
 .av3-stamp-wait { flex-direction: row; gap: var(--space-2); font-size: var(--text-body); color: var(--text-muted); font-weight: 500; }
 .av3-spin { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--text-primary); border-radius: var(--radius-circle); animation: av3-spin 0.7s linear infinite; }
 @keyframes av3-spin { to { transform: rotate(360deg); } }

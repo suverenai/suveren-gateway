@@ -38,8 +38,10 @@ export function GiveTouchFooter({ view, onGive, onBack, onClose, disabled }: {
 }) {
   if (view.s === 'given') {
     return (
-      <div data-testid="give-touch-given">
-        <div className="av3-stamp" role="status" style={{ position: 'static' }}>
+      // The stamp fills the card's free area above the pinned Close and sits in its middle (UI spec §17: the stamp over
+      // the faded card). It was in the normal flow under the hidden card body, so on a tall card it sat at the bottom.
+      <div data-testid="give-touch-given" className="av3-given">
+        <div className="av3-stamp" role="status" data-testid="give-touch-stamp">
           <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
           <div className="av3-stamp-w">{S13.giveSigned}</div>
           <div className="av3-stamp-t">{S13.giveRecorded}</div>
