@@ -12,7 +12,7 @@ import { DeviceScreen, Notice, PrintScope, useDriver } from './DeviceScreen';
 import { RecoverPage } from './RecoverScreens';
 import { AddThisComputer } from './PairingPages';
 import { PT } from '../../lib/pairing-texts';
-import { PageLoading } from './StartScreens';
+import { ShellSkeleton } from './NextPageSkeleton';
 
 export interface SetupScreenProps {
   state: SetupState;
@@ -107,7 +107,7 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   const { adoptSessionUser, pageSessionOpen } = useAuth();
   const navigate = useNavigate();
   const [recover, setRecover] = useState(false);
-  /** After Continue on the done screen: the turning mark until the signed-in person is adopted, never a sign-in flash. */
+  /** After Continue on the done screen: the dashboard greyed out (DEC-100) until the signed-in person is adopted, never a sign-in flash. */
   const [leaving, setLeaving] = useState(false);
   // Read when the set-up begins: the driver is built once, so a started set-up is never dropped when this resolves.
   const wantCheckKey = useRef(false);
@@ -141,7 +141,7 @@ export function SetupPage({ client = deviceClient }: { client?: DeviceClient }) 
   }, [state.step, driver]);
 
   if (recover) return <RecoverPage kind="reset" onBack={() => setRecover(false)} />;
-  if (leaving) return <PageLoading />;
+  if (leaving) return <ShellSkeleton page="dashboard" />;
   return (
     <SetupScreen
       state={state}

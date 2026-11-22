@@ -94,8 +94,13 @@ describe('screen 4: unlock', () => {
   });
   it('error lines and the signing-in state', () => {
     for (const e of [T.wrongPassword, T.touchCancelled, T.touchNotRecognised, T.touchLocked, T.touchCannot, T.touchNoAsk, 'Too many tries. Try again in 10 minutes.']) expect(text(render({ error: e }))).toContain(e);
-    const s = text(render({ phase: 'signing-in' }));
-    expect(s.trim()).toBe("");  // only the turning mark (no text) while signing in
+    const sh = render({ phase: 'signing-in' });
+    const s = text(sh);
+    // DEC-100: the dashboard greyed out while signing in — its frame and title only, no turning mark, no sign-in text.
+    expect(sh).toContain('shell-skeleton-dashboard');
+    expect(sh).not.toContain('brand-spin');
+    expect(s).toContain('Dashboard');
+    expect(s).not.toContain(T.unlockTitle);
     expect(s).not.toContain(T.unlockSigningIn);
     expect(s).not.toContain(T.passwordLabel);
     const f = text(render({ phase: 'sign-in-failed', error: T.deviceRemoved }));
@@ -271,7 +276,9 @@ describe('turn on Touch ID for approvals (a computer set up without it)', () => 
     expect(w).toContain('654321');
     expect(w).toContain(DRAFT.recoverMail);
     expect(text(html(<CheckKeyScreen {...props} state={{ step: 'touch-unlock' }} />))).toContain(DRAFT.touchSetupWaiting);
-    expect(html(<CheckKeyScreen {...props} state={{ step: 'finishing' }} />)).toContain('brand-spin');
+    const fin = html(<CheckKeyScreen {...props} state={{ step: 'finishing' }} />);
+    expect(fin).toContain('shell-skeleton-settings');  // DEC-100: Settings greyed out, the page this step returns to
+    expect(fin).not.toContain('brand-spin');
     expect(text(html(<CheckKeyScreen {...props} state={{ step: 'done', unlockOn: true }} />))).toContain(DRAFT.addCheckDone);
     expect(text(html(<CheckKeyScreen {...props} state={{ step: 'done', unlockOn: false }} />))).toContain(DRAFT.addCheckDoneNoUnlock);
   });

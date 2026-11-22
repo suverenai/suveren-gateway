@@ -55,10 +55,11 @@ describe('AppRoutes wiring: which page /login shows (fix 1)', () => {
       expect(h).not.toContain('device-screen');
     }
   });
-  it('switch on without a password: nothing until the gateway says whether it is new (no flash of the sign-in before /start)', () => {
+  it('switch on without a password: the sign-in greyed out until the gateway says whether it is new (no flash of the sign-in before /start, no turning mark — DEC-100)', () => {
     const h = at('/login', <AppRoutes />, { access: 'legacy', deviceKeysSwitch: true, passwordSet: false });
     expect(h).not.toContain('Enter your API key');
-    expect(h).toContain('brand-spin');
+    expect(h).toContain('aria-busy="true"');
+    expect(h).not.toContain('brand-spin');
   });
   it('a password: the unlock screen, not the account-key form', () => {
     const h = at('/login', <AppRoutes />, { access: 'password', deviceKeysSwitch: true, passwordSet: true });
@@ -69,6 +70,8 @@ describe('AppRoutes wiring: which page /login shows (fix 1)', () => {
     const h = at('/login', <AppRoutes />, { access: null });
     expect(h).not.toContain('Enter your API key');
     expect(h).not.toContain(T.unlockTitle);
+    expect(h).toContain('aria-busy="true"');  // DEC-100: greyed out, not empty and not a turning mark
+    expect(h).not.toContain('brand-spin');
   });
   it('the set-up routes need a signed-in person on a password gateway', () => {
     for (const path of ['/device-setup', '/device-recovery-code', '/device-password']) {
@@ -136,10 +139,10 @@ describe('guards on the wiring (no DOM is available in this suite, so effects ca
     expect(card).toMatch(/if \(!passwordSet\)[\s\S]{0,400}to="\/device-password"/);
     expect(card).toMatch(/if \(!setUp\)[\s\S]{0,400}to="\/device-setup"/);
   });
-  it('after set-up, the person is adopted BEFORE the page leaves for the dashboard (no unlock-screen flash), the turning mark meanwhile', () => {
+  it('after set-up, the person is adopted BEFORE the page leaves for the dashboard (no unlock-screen flash), the dashboard greyed out meanwhile', () => {
     const src = readFileSync(join(dir, 'SetupScreens.tsx'), 'utf8');
     expect(src).toMatch(/setLeaving\(true\);[\s\S]{0,200}await adoptSessionUser\(\);\s*navigate\('\/', \{ replace: true \}\)/);
-    expect(src).toMatch(/if \(leaving\) return <PageLoading \/>;/);
+    expect(src).toMatch(/if \(leaving\) return <ShellSkeleton page="dashboard" \/>;/);
     expect(src).not.toMatch(/void adoptSessionUser\(\); navigate\('\/'/);
   });
   it('DEC-93: the ordinary sign-in stays reachable: the start page links to /login?account-key, which never moves to /start', () => {

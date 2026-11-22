@@ -7,7 +7,7 @@ import { turnOnTouchUnlock } from '../../lib/touch-unlock';
 import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice } from './DeviceScreen';
 import { PasswordScreen } from './PasswordScreen';
-import { BrandMark } from '../BrandMark';
+import { UnlockSkeleton } from './UnlockScreen';
 import { ConnectWaiting } from './ConnectWaiting';
 
 /** `/login?account-key`: the ordinary sign-in, without the move to /start (DEC-93's way back to today's sign-in). */
@@ -107,7 +107,7 @@ export function StartPage() {
 
 /**
  * The ordinary sign-in, unless this gateway may still start without an account key (DEC-93): then the start page.
- * With the switch on, nothing is shown until the gateway answered: a new gateway goes straight to /start, every other
+ * With the switch on, the sign-in greyed out (DEC-100) until the gateway answered: a new gateway goes straight to /start, every other
  * shows the sign-in. (Rendering the sign-in first made it flash for a second before /start on a new gateway.)
  * An unreadable answer shows the sign-in, never a blank page.
  */
@@ -126,16 +126,5 @@ export function LoginOrStart({ switchOn, children }: { switchOn: boolean; childr
     }, () => { if (live) setDecided(true); });
     return () => { live = false; };
   }, [switchOn, wantsAccountKey, navigate]);
-  return decided ? <>{children}</> : <PageLoading />;
-}
-
-/** While the gateway is asked which page to show: the top bar and the turning Suveren mark, never an empty page. */
-export function PageLoading() {
-  return (
-    <DeviceScreen>
-      <div role="status" aria-label={DRAFT.loading} style={{ display: 'flex', justifyContent: 'center', padding: '3rem 0' }}>
-        <span className="brand-spin" aria-hidden="true"><BrandMark size={40} /></span>
-      </div>
-    </DeviceScreen>
-  );
+  return decided ? <>{children}</> : <UnlockSkeleton pageUnknown />;
 }

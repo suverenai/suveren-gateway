@@ -4,7 +4,7 @@ import { DRAFT, T } from '../../lib/device-texts';
 import { deviceClient, type DeviceClient } from '../../lib/device-client';
 import { CheckKeyDriver, type CheckKeyState } from '../../lib/check-key-driver';
 import { CodeInput, DeviceScreen, Notice, useDriver } from './DeviceScreen';
-import { PageLoading } from './StartScreens';
+import { ShellSkeleton } from './NextPageSkeleton';
 
 export interface CheckKeyScreenProps {
   state: CheckKeyState;
@@ -54,7 +54,8 @@ export function CheckKeyScreen(p: CheckKeyScreenProps) {
         </DeviceScreen>
       );
     case 'finishing':
-      return <PageLoading />;
+      // DEC-100: Settings greyed out, the page this step returns to.
+      return <ShellSkeleton page="settings" />;
     case 'touch-unlock':
       return <DeviceScreen title={DRAFT.addCheckTitle}><Notice kind="info">{DRAFT.touchSetupWaiting}</Notice></DeviceScreen>;
     case 'done':

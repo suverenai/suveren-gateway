@@ -5265,6 +5265,3 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .mc-card.mc-flat .mc-in { padding: 0; }
 .av3-spin-inline { display: inline-block; vertical-align: middle; margin-right: var(--space-2); }
 
-/* Loading: the Suveren mark turning (PageLoading). Slower under reduced motion, like .av3-spin. */
-.brand-spin { display: inline-flex; color: var(--text-primary); animation: av3-spin 1.1s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .brand-spin { animation-duration: 4s; } }
