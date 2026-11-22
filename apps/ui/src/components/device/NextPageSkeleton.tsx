@@ -1,6 +1,7 @@
 import { SkelArea, SkelLine, SkelBlock } from '@suveren/approval-card/components/LoadGate';
 import { TopNav } from '../TopNav';
 import { UpdateBanner } from '../UpdateBanner';
+import { SimulationBanner } from '../SimulationBanner';
 import { DashboardSkeleton } from '../../pages/DashboardPage';
 import { SettingsSkeleton } from '../../pages/SettingsServicesPage';
 
@@ -16,6 +17,8 @@ export function ShellSkeleton({ page }: { page: 'dashboard' | 'settings' }) {
     <div data-testid={`shell-skeleton-${page}`}>
       <TopNav />
       <UpdateBanner />
+      {/* As in the real frame (AppShell): in simulation mode the banner is there from the first frame. */}
+      <SimulationBanner />
       <SidebarSkeleton />
       <div className="main-content">
         <div className="page-inner">

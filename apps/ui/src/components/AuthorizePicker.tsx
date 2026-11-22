@@ -17,6 +17,7 @@ import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import { ProfileIcon } from './ProfileIcon';
 import { useAreaCatalog } from '@suveren/approval-card/lib/area-catalog';
 import { useSpUrl, teamSettingsHref, ENABLE_IN_TEAM_SETTINGS } from '../lib/use-sp-url';
+import { SkelCard } from '@suveren/approval-card/components/LoadGate';
 
 interface Props {
   onDismiss?: () => void;
@@ -158,7 +159,10 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       `}</style>
 
       {loading ? (
-        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.9rem' }}>Loading...</p>
+        // DEC-98: the grid of areas greyed out at the real card size until the profiles are in.
+        <div className="profile-grid" data-testid="picker-skeleton" role="status" aria-busy="true" aria-label="Loading">
+          {[0, 1, 2, 3, 4, 5].map(i => <SkelCard key={i} lines={2} minHeight="11rem" />)}
+        </div>
       ) : entries.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>

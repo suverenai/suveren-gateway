@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 
 /**
@@ -18,7 +18,8 @@ export function SimulationBanner() {
   const simulation = useSimulationMode();
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  // Measured before paint (DEC-100): the sidebar and the page move down under the banner in the same frame it appears.
+  useLayoutEffect(() => {
     if (!simulation) {
       document.documentElement.style.removeProperty('--sim-banner-h');
       return;

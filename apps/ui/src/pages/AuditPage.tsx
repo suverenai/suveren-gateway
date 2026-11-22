@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelArea, useNetworkSettled } from '@suveren/approval-card/components/LoadGate';
 import {
   spClient,
   type ExecutionReceipt,
@@ -435,6 +436,10 @@ export function AuditPage() {
         </div>
       )}
 
+      {/* DEC-98: tabs with counts, area pills and the ticket list appear in one go, once the tickets and the names
+          they show (catalog, manifests, mandate titles) are in. */}
+      <LoadGate parts={['tickets']}>
+      <TicketsGated loading={loading}>
       {/* Mine | Team tab strip — Team is admin-only */}
       {isAdmin && (
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
@@ -603,7 +608,8 @@ export function AuditPage() {
       )}
 
       {loading && receipts.length === 0 ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
+        // A later load (the Team tab's first fetch): the list's own skeleton, never "No tickets" while loading.
+        <TicketListSkeleton />
       ) : filtered.length === 0 && noTicket.length === 0 ? (
         <EmptyState
           icon={'\u2315'}
@@ -666,10 +672,6 @@ export function AuditPage() {
         </>
       )}
 
-      {openReceipt && (
-        <ReceiptCompleteDialog receipt={openReceipt} onClose={() => setOpenReceipt(null)} />
-      )}
-
       {cursor && (
         <div style={{ textAlign: 'center', marginTop: '1rem' }}>
           <button className="btn btn-secondary btn-sm" onClick={loadOlder} disabled={loadingMore}>
@@ -677,6 +679,49 @@ export function AuditPage() {
           </button>
         </div>
       )}
+      </TicketsGated>
+      </LoadGate>
+
+      {openReceipt && (
+        <ReceiptCompleteDialog receipt={openReceipt} onClose={() => setOpenReceipt(null)} />
+      )}
+    </div>
+  );
+}
+
+/** DEC-98: the list part of the Tickets page waits for the tickets and for the page's other loads (names, catalog). */
+function TicketsGated({ loading, children }: { loading: boolean; children: ReactNode }) {
+  const settled = useNetworkSettled();
+  return <Gated part="tickets" ready={!loading && settled} skeleton={<TicketsSkeleton />}>{children}</Gated>;
+}
+
+/** DEC-98: the Tickets page greyed out below its title — the filter tabs with search, the area pills and the list. */
+function TicketsSkeleton() {
+  return (
+    <SkelArea>
+      <div className="tickets-toolbar" data-testid="tickets-skeleton">
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {[5.5, 5.5, 3].map((w, i) => <SkelLine key={i} w={`${w}rem`} h="1.1rem" style={{ margin: '0.6rem 0' }} />)}
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <SkelBlock w="12rem" h="2.25rem" radius="0.5rem" />
+          <SkelBlock w="4.5rem" h="2rem" radius="0.5rem" />
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0 1rem' }}>
+        {[3, 5, 5].map((w, i) => <SkelBlock key={i} w={`${w}rem`} h="1.75rem" radius="999px" />)}
+      </div>
+      <TicketListSkeleton />
+    </SkelArea>
+  );
+}
+
+function TicketListSkeleton() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }} role="status" aria-busy="true" aria-label="Loading">
+      <SkelLine w="5rem" h="0.8rem" />
+      <SkelLine w="7rem" h="0.9rem" style={{ marginTop: '0.5rem' }} />
+      {[0, 1, 2, 3].map(i => <SkelBlock key={i} h="4.25rem" radius="0.75rem" />)}
     </div>
   );
 }
