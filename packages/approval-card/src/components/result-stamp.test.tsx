@@ -20,11 +20,11 @@ describe('ResultStamp: the one result stamp', () => {
 
 describe('LoadGate: data-gate, the stable signal for tests', () => {
   it('says "loading" while a part waits', () => {
-    const h = renderToStaticMarkup(createElement(LoadGate, { parts: ['a'] }, 'x'));
+    const h = renderToStaticMarkup(<LoadGate parts={['a']}>x</LoadGate>);
     expect(h).toContain('data-gate="loading"');
   });
   it('says "open" when there is no part to wait for', () => {
-    const h = renderToStaticMarkup(createElement(LoadGate, { parts: [] }, 'x'));
+    const h = renderToStaticMarkup(<LoadGate parts={[]}>x</LoadGate>);
     expect(h).toContain('data-gate="open"');
   });
 });
