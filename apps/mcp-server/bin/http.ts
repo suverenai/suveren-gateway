@@ -48,6 +48,7 @@ import { CommittedExecutor, ExecutorLock, describeAutoExecutionLog } from '../sr
 import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
+import { controlPlaneProposalGive } from '../src/lib/cp-mandate';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
 import { resolveProposalFacts, controlPlaneDevice } from '../src/lib/device-decisions';
 import { readSignedMandate, latestSigned } from '../src/lib/mandate-change';
@@ -1680,7 +1681,15 @@ app.listen(port, bindHost, () => {
           approverRejectedBy: proposal.approverRejectedBy ? { ...proposal.approverRejectedBy, note } : undefined,
         };
         const entry = outcomeEntryFor(proposalWithDecryptedNote, submittedHere, who, Date.now());
-        if (entry) state.outcomeOutbox.recordIfNew(entry);
+        if (!entry) continue;
+        // An AI mandate (or change) proposal closed because the person GAVE it: say so, with the mandate now in force — the same
+        // words as check-pending-commitments. While the phone's give is still being taken in, wait for the next cycle.
+        if (entry.outcome === 'replaced' && (proposal.tool === 'setup__create_mandate' || proposal.tool === 'setup__change_mandate')) {
+          const g = await controlPlaneProposalGive(proposal.id);
+          if (g.waiting) continue;
+          if (g.given) entry.given = { authorizationId: g.given.authorizationId, isChange: proposal.tool === 'setup__change_mandate' };
+        }
+        state.outcomeOutbox.recordIfNew(entry);
       }
     } catch {
       // SP unreachable or no session — skip this cycle, same as executeCommittedProposals.

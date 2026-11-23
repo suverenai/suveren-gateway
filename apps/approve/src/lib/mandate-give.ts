@@ -224,17 +224,18 @@ export async function readGives(d: Pick<GiveDeps, 'keys' | 'api' | 'accounts' | 
   if (!r.ok) return { ok: false, code: r.status === 401 ? 'session_ended' : r.code };
   const items: GiveItem[] = [];
   const refused: GiveCheck[] = [];
-  for (const raw of Array.isArray(r.data.prepared) ? r.data.prepared : []) {
+  // Every prepared give is opened and checked side by side (one round trip for all their grants, not one after the other).
+  const checked = await Promise.all((Array.isArray(r.data.prepared) ? r.data.prepared : []).map(async (raw): Promise<GiveCheck | null> => {
     const row = (isObj(raw) ? raw : {}) as PreparedRow;
     let content: Record<string, unknown>;
-    try { content = await openSealedObject(row.ciphertext, row.device_key, d.keys); } catch { refused.push({ ok: false, code: 'give_unreadable' }); continue; }
+    try { content = await openSealedObject(row.ciphertext, row.device_key, d.keys); } catch { return { ok: false, code: 'give_unreadable' }; }
     // A v1 body is a mandate's body (granted on a computer, waiting for its body window), not a give: nothing to do here.
-    if (content.v === 1) continue;
+    if (content.v === 1) return null;
     const grants = typeof row.mandate_id === 'string' ? await d.api.grants(row.mandate_id, bearer) : null;
     const rows = grants && grants.ok && Array.isArray(grants.data.grants) ? grants.data.grants.filter(isObj) as GrantRowLike[] : [];
-    const c = await checkGive(content, row, { chain: s.chain, ownKeyId: account.key_id, now: d.now(), grants: rows });
-    if (c.ok) items.push(c.item); else refused.push(c);
-  }
+    return checkGive(content, row, { chain: s.chain, ownKeyId: account.key_id, now: d.now(), grants: rows });
+  }));
+  for (const c of checked) { if (!c) continue; if (c.ok) items.push(c.item); else refused.push(c); }
   items.sort((a, b) => a.preparedAt - b.preparedAt);
   return { ok: true, items, refused };
 }

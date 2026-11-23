@@ -115,6 +115,8 @@ export interface DeviceKeyMountOptions {
  */
 export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
   loginChangeGate: LoginChangeGate;
+  /** Decisions signed with this computer's device key (the page's /device-decision route uses the same). */
+  decisions?: DeviceDecisions;
   hasDeviceChain?: () => boolean;
   /** What the account-key login asks: 'present' refuses it, 'unreadable' refuses it with its own code. */
   deviceChainState?: () => 'none' | 'present' | 'unreadable';
@@ -135,6 +137,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
 } {
   if (!o.enabled) return { loginChangeGate: refusingGate };
   const json = o.jsonParser ?? express.json();
+  let decisions: DeviceDecisions | undefined;
   let device: { signin: DeviceSignin; setup: DeviceSetup; store: DeviceChainStore; client: DeviceAsClient; recovery: DeviceRecovery; alarm: IdentityResetAlarm; pins: DevicePinStore; grantStore: MandateGrantStore; grants: MandateGrants; teamJoin: TeamJoin; teamChanges: TeamListChanges; readers: DeviceReaders; rewrap: ProposalRewrap; pairing: DevicePairing; firstStart: FirstStart } | undefined;
   // One PlatformChecks for set-up, the confirmation route and the turn-on/off gate: they share what the helper last said about the key.
   const checks = o.platform ? new PlatformChecks(o.platform.host) : undefined;
@@ -263,21 +266,23 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
       },
     }));
     if (o.device?.decision) {
+      decisions = new DeviceDecisions({
+        vault: o.vault, store: device.store, client: device.client,
+        facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
+        now: o.device.now,
+      });
       app.use('/device-decision', json, createDeviceDecisionRouter({
         vault: o.vault,
         pageSession: o.pageSession,
         store: device.store,
-        decisions: new DeviceDecisions({
-          vault: o.vault, store: device.store, client: device.client,
-          facts: o.device.decision.facts, onDecided: o.device.decision.onDecided,
-          now: o.device.now,
-        }),
+        decisions,
       }));
     }
   }
   app.use('/internal', json, createInternalOsSignalRouter(o.internalSecret, createOsSignalHook(o.pageSession.sessions)));
   return {
     loginChangeGate: createLoginChangeGate(o.vault, o.pageSession.sessions, o.confirmations),
+    ...(decisions ? { decisions } : {}),
     ...(device ? { hasDeviceChain: () => device!.store.exists(), deviceChainState: () => device!.store.state(), signin: device.signin, grants: device.grants, teamTrust: device.grants.teamTrustPort(), teamMembers: () => device!.grants.teamMembers(), teamJoin: device.teamJoin, teamChanges: device.teamChanges, readers: device.readers, rewrap: device.rewrap } : {}),
   };
 }

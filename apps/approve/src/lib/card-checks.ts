@@ -140,6 +140,12 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
   const account = await d.accounts.read();
   if (!bearer || !open || !account) return no('session_ended');
 
+  // The two reads that need nothing from the content start now, beside the decryption, instead of one after the other (a phone over
+  // Tailscale pays ~150 ms per request: dev lane 2026-11-23, a tapped request took seconds to show). Every check below still runs, in
+  // the same order, on what they return: nothing is taken on trust, nothing is kept from an earlier card.
+  const mandatesRead = d.api.mandates(proposal.authorizationId, bearer);
+  const profileRead = d.api.profile(proposal.profileId);
+
   // 1. the request is the one asked for and still waits
   const head = readProposalHead(proposal, proposal.id);
   if (!head.ok) return no(head.code === 'proposal_not_pending' ? 'not_pending' : 'proposal_invalid');
@@ -167,7 +173,7 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
   if (!isMapping(context.execution_mapping)) return no('context_unreadable');
 
   // 4. the signed mandate
-  const mandates = await d.api.mandates(proposal.authorizationId, bearer);
+  const mandates = await mandatesRead;
   if (!mandates.ok) return no(readFailure(mandates, d.session));
   if (mandates.data.revoked) return no('mandate_ended');
   const blobs = (Array.isArray(mandates.data.mandates) ? mandates.data.mandates : [])
@@ -186,8 +192,9 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
   if (!payload) return no(firstFailure);
   if (payload.profile_id !== proposal.profileId) return no('mandate_invalid');
 
-  // 5. the profile bytes
-  const profile = await d.api.profile(payload.profile_id);
+  // 5. the profile bytes (read above under the proposal's profile id, which the signed mandate must name: checked just before)
+  const grantsRead = d.api.grants(payload.mandate_id, bearer);
+  const profile = await profileRead;
   if (!profile.ok) return no(profile.status === 404 ? 'profile_unavailable' : 'reads_failed');
   if ((await profileHashOf(profile.data)) !== payload.profile_hash) return no('profile_mismatch');
 
@@ -195,7 +202,7 @@ export async function checkCard(d: CheckDeps, proposal: Proposal): Promise<CardC
   if (payload.mandate_owners[0].did !== account.root_did) return no('owner_not_you');
 
   // 6a. the owner's grant of exactly this mandate, against this phone's own verified chain
-  const grants = await d.api.grants(payload.mandate_id, bearer);
+  const grants = await grantsRead;
   if (!grants.ok) return no(readFailure(grants, d.session));
   const rows = grantRowsOf(grants.data);
   if (!rows || !full) return no('reads_failed');

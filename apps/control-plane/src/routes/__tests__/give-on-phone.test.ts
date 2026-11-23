@@ -463,5 +463,15 @@ describe('give on the phone', () => {
     expect((await given('prop_unknown_01')).body).toEqual({});
     expect((await call(w.gw.port, 'GET', '/internal/mandate/given/prop_change_0001', {})).status).toBe(401);
   });
+
+  it('a page that asks after a give is waiting for it: the background completion leaves the request to that page (it shows Signed first)', async () => {
+    const { pageIsWaiting } = await import('../../lib/mandate-ceremony');
+    const w = await world();
+    await w.addPhone(await makePhone());
+    // the page that sent it waits for it from that moment (its first poll comes 2 s later; the phone can be quicker)
+    const { sent } = await prepareAndSend(w);
+    const id = String(sent.body.mandateId);
+    expect(pageIsWaiting(id)).toBe(true);
+  });
 });
 

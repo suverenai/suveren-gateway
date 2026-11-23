@@ -60,6 +60,9 @@ export async function closeReplacedProposal(proposalId: string, userId: string):
     else await spClient.resolveProposal(proposalId, 'reject', route.domain, replacedOutcomeArgs());
     return '';
   } catch (e) {
+    // Closed meanwhile by this gateway's own completion (a give taken in from the phone closes its request at once): nothing to do.
+    const now = await spClient.getProposal(proposalId).catch(() => null);
+    if (now && now.status !== 'pending') return '';
     return e instanceof Error ? e.message : 'unknown error';
   }
 }
