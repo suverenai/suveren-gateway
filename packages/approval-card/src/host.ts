@@ -97,7 +97,7 @@ export interface ApprovalHost {
    * exactly the arguments the card opened and shows — prepare, Touch ID or the phone, the progress lines, the result stamp. Null when
    * the host does not give mandates this way (no chain, no args yet, the phone app).
    */
-  useMandateGive?(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void }): MandateGive | null;
+  useMandateGive?(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void; onGiven: () => void }): MandateGive | null;
   /** A link to a page of the host (`to` is a host path). */
   Link: ComponentType<{ to: string; className?: string; children?: ReactNode }>;
 }
@@ -108,7 +108,11 @@ export interface MandateGive {
   start: () => void;
   /** Started and not back at the offer: the card shows `footer` instead of its buttons. */
   active: boolean;
-  /** The give's own footer: the touch wait, each step the gateway reports, the result stamp, or a refusal. */
+  /** It did not go through (refused, stopped, a touch that failed): the reason, shown at the top of the card with the mandate readable
+   *  below it and one full-width pinned button (DEC-88). Null while it runs or once it is given. */
+  problem: string | null;
+  /** The give's own footer: the touch wait, each step the gateway reports, the result stamp, or a refusal.
+   *  `onGiven` (from the card) runs the moment the mandate is live, BEFORE the proposal is closed, so the card stays on screen with the stamp. */
   footer: ReactNode;
 }
 

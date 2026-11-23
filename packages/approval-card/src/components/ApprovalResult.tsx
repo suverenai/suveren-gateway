@@ -40,6 +40,18 @@ export function UnknownTop({ word, line }: { word: string; line: string }) {
   );
 }
 
+/** A give that did not go through (refused, stopped, a touch that failed): the reason at the top of the card, the mandate stays readable below (DEC-88). */
+export function GiveProblemTop({ text }: { text: string }) {
+  return (
+    <div className="res-top" style={{ order: -1 }} role="alert" data-testid="card-give-refused">
+      <div className="refusal-result">
+        <WarnIcon />
+        <div><div className="refusal-result-w">{text}</div></div>
+      </div>
+    </div>
+  );
+}
+
 /** The pinned footer of a result that stays. `dismiss` is the host's "Next" / "Close" (absent where the host has none). */
 export function ResultFoot({ check, dismiss }: {
   /** Only for an outcome that is not known: read it again. */

@@ -203,6 +203,26 @@ describe('give on the phone', () => {
     expect(w.mandates.issued).toHaveLength(0);
   });
 
+  it('a refusal found first by the background completion is the answer the page hears too, never "nothing waits" (e2e: the card said Stopped)', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const { c } = await phoneOpens(w, phone);
+    const g = await phoneSigns(w, phone, c, m => { m.expires_at = (m.expires_at as number) + 60; });
+    expect(g.status, JSON.stringify(g.body)).toBe(201);
+    // the background completion (index.ts timer) gets there first and ends the give
+    const { completeWaitingGives } = await import('../../lib/mandate-ceremony');
+    const refusedSeen: string[] = [];
+    await completeWaitingGives({ ...w.gw.ceremony!(), newAuthorizationId: () => 'authz_test' }, () => {}, r => refusedSeen.push(r.mandateId));
+    expect(refusedSeen).toEqual([String(sent.body.mandateId)]);
+    // the page asks afterwards: the same refusal with its code, not state 'unknown'
+    const r = await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(r.body).toMatchObject({ code: 'grant_refused', grantCode: 'grant_invalid' });
+    expect(w.mandates.issued).toHaveLength(0);
+  });
+
   it('a give that changed since it was prepared is not sent', async () => {
     const w = await world();
     await w.addPhone(await makePhone());

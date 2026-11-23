@@ -66,7 +66,7 @@ export async function closeReplacedProposal(proposalId: string, userId: string):
 
 const closeProblemText = (problem: string) => `Your mandate is given and active. The AI's proposal could not be withdrawn (${problem}) — reject it under Approvals.`;
 
-export function useGive(request: GiveRequest | null, o: { chain: boolean; fromProposal?: string; userId: string }): GiveDriver {
+export function useGive(request: GiveRequest | null, o: { chain: boolean; fromProposal?: string; userId: string; onGiven?: () => void }): GiveDriver {
   const [prepared, setPrepared] = useState<PreparedMandate | null>(null);
   const [prepareError, setPrepareError] = useState('');
   const [tick, setTick] = useState(0);
@@ -103,9 +103,11 @@ export function useGive(request: GiveRequest | null, o: { chain: boolean; fromPr
     try {
       const { authorizationId, revokeError } = await spClient.signMandate({ ...request, planHash: prepared.planHash });
       const revokeProblem = replacedRevokeProblem(revokeError);
-      const closeProblem = o.fromProposal ? await closeReplacedProposal(o.fromProposal, o.userId) : '';
+      // The mandate is live: say so first (the card stays on screen with the stamp), then close the proposal it was for.
       setGivenId(authorizationId);
       setTouchView({ s: 'given' });
+      o.onGiven?.();
+      const closeProblem = o.fromProposal ? await closeReplacedProposal(o.fromProposal, o.userId) : '';
       if (revokeProblem) setError(revokeProblem);
       else if (closeProblem) setError(closeProblemText(closeProblem));
     } catch (e) {
@@ -163,6 +165,7 @@ export function useGive(request: GiveRequest | null, o: { chain: boolean; fromPr
   useEffect(() => {
     if (phoneGive.s !== 'given') return;
     setGivenId(phoneGive.authorizationId);
+    o.onGiven?.();
     if (phoneGive.revokeError) setError(replacedRevokeProblem(phoneGive.revokeError) || phoneGive.revokeError);
     if (o.fromProposal) void closeReplacedProposal(o.fromProposal, o.userId).then(p => { if (p) setError(closeProblemText(p)); });
     // eslint-disable-next-line react-hooks/exhaustive-deps

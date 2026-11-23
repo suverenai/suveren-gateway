@@ -377,6 +377,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
     scope: plainRecord(mandateArgs.scope),
     durationSeconds: typeof mandateArgs.duration_hours === 'number' ? Math.round(mandateArgs.duration_hours * 3600) : null,
     boundsSchema: targetProfile?.boundsSchema as SchemaLike | undefined,
+    scopeSchema: targetProfile?.scopeSchema as SchemaLike | undefined,
     hidden: hiddenTarget,
   }) : '';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
