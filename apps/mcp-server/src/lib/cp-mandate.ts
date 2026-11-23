@@ -48,3 +48,24 @@ export async function controlPlaneMandate(dryRun: boolean, request: Record<strin
     return { ok: false, message: `the control plane could not be reached (${err instanceof Error ? err.message : String(err)}).` };
   }
 }
+
+/**
+ * An AI proposed a mandate or a change: ask the control plane to prepare its give for the person's phone now (POST
+ * /internal/mandate/offer), so the phone shows it in the request's place. Best effort: no answer changes the proposal.
+ */
+export async function controlPlaneMandateOffer(o: { proposalId: string; tool: 'create' | 'change'; args: Record<string, unknown>; old?: unknown }): Promise<{ ok: boolean; code?: string }> {
+  const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
+  if (!secret) return { ok: false, code: 'no_control_plane' };
+  try {
+    const res = await fetch(`${CP_BASE}/internal/mandate/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': secret },
+      body: JSON.stringify(o),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = (await res.json().catch(() => ({}))) as { ok?: unknown; code?: unknown };
+    return { ok: res.ok && body.ok === true, ...(typeof body.code === 'string' ? { code: body.code } : {}) };
+  } catch {
+    return { ok: false, code: 'unreachable' };
+  }
+}

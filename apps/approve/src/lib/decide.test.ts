@@ -51,6 +51,13 @@ describe('approve and reject on the phone (step 12, phone part; DEC-47)', () => 
     expect(w.as.decisions[0].body).toMatchObject({ action: 'reject', outcome: 'rejected', domain: 'owner' });
   });
 
+  it('a request carried out by a give on this phone is closed as "replaced", not "rejected"', async () => {
+    const w = await cardWorld();
+    await w.rt.decider.decide(row(w), await ready(w), 'reject', { outcome: 'replaced' });
+    expect(w.as.decisions[0].decision.decision).toBe('reject');
+    expect(w.as.decisions[0].body).toMatchObject({ action: 'reject', outcome: 'replaced', domain: 'owner' });
+  });
+
   it('an above-cap approver uses the approve and reject routes, with no domain', async () => {
     const w = await cardWorld({ pendingApprovers: ['user-1'] });
     await w.rt.decider.decide(row(w), await ready(w), 'approve');

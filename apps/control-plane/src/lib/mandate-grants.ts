@@ -613,7 +613,7 @@ export class MandateGrants {
    * `previous`: for a change, the version it continues, in plaintext (limits, scope, intent, end, profile). The phone shows the crossed-out
    * diff from it and checks it first against the previous grant's hashes, so a wrong value here only gets the give refused there.
    */
-  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious }): Promise<PhoneGive> {
+  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious; proposalId?: string }): Promise<PhoneGive> {
     const dk = await deviceKeys();
     const s = await this.session();
     const plan = await this.planGrant(i, s, dk, false);
@@ -625,6 +625,8 @@ export class MandateGrants {
     const give = {
       op: plan.op, profile: i.profile, bounds: i.bounds, payload: plan.payload, place, title: shown.title.slice(0, 200),
       prepared_at: plan.now, ...(i.renewal ? { renewal: true } : {}),
+      // The AI proposal this give carries out: the phone shows the give in that request's place and closes the request once given.
+      ...(shown.proposalId ? { proposal_id: shown.proposalId } : {}),
       ...(plan.op === 'change' && shown.previous ? { previous: { ...shown.previous, mandate_version: plan.version - 1 } } : {}),
     };
     const readers = dk.activeDevices(s.own).map(x => ({ did: x.key_id, publicKey: dk.b64uDecode(x.read_pub) }));

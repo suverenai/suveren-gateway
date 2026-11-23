@@ -270,7 +270,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   // The card gives exactly what this body opened and shows (device-key gateway, lib/use-give.ts in the host).
   useEffect(() => {
     if (!onMandateArgs) return;
-    onMandateArgs(proposal.tool === CREATE_MANDATE_TOOL && readable ? (content.toolArgs as Record<string, unknown>) : null);
+    onMandateArgs((proposal.tool === CREATE_MANDATE_TOOL || proposal.tool === CHANGE_MANDATE_TOOL) && readable ? (content.toolArgs as Record<string, unknown>) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onMandateArgs, readable, proposal.id, content.toolArgs]);
   const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
@@ -383,18 +383,23 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {
+    // The host's lines above the card (a failed check on the phone, how this one is given) show on a change as on every other card.
+    const extras = topExtras ? <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div> : null;
     if (content.loading || !readable || !content.toolArgs) {
-      return <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div>;
+      return <>{extras}<div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div></>;
     }
     return (
-      <MandateChangeBody
-        proposalId={proposal.id}
-        args={content.toolArgs as ChangeArgs}
-        areaTitle={typeArea}
-        onChangeMyself={openMandateScreen ? () => void handleChangeMyself() : undefined}
-        editBusy={editingBeforeSigning}
-        editError={editError}
-      />
+      <>
+        {extras}
+        <MandateChangeBody
+          proposalId={proposal.id}
+          args={content.toolArgs as ChangeArgs}
+          areaTitle={typeArea}
+          onChangeMyself={openMandateScreen ? () => void handleChangeMyself() : undefined}
+          editBusy={editingBeforeSigning}
+          editError={editError}
+        />
+      </>
     );
   }
 

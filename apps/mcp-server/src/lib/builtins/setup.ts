@@ -38,7 +38,7 @@ import { builtinText, builtinStructured, type BuiltinIntegration, type MandateCa
 import { CONTEXT_MAX_BYTES, writeContextFile, readContextFile } from '../context-loader';
 import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
-import { controlPlaneMandate } from '../cp-mandate';
+import { controlPlaneMandate, controlPlaneMandateOffer } from '../cp-mandate';
 import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
 import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
@@ -636,6 +636,8 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           const check = await controlPlaneMandate(true, mandateRequest(args));
           return check.ok ? undefined : check.message;
         },
+        // A gateway with a device chain: the give goes to the person's phone at once, in the request's place (they give it there or on the card).
+        proposed: async (args, proposalId) => { await controlPlaneMandateOffer({ proposalId, tool: 'create', args }); },
         handler: async (args) => {
           // Approval can come long after the proposal: check the fixed rule again before creating.
           const fixed = proposalTargetRefusal(args);
@@ -654,6 +656,12 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         description: CHANGE_MANDATE_DESCRIPTION,
         inputSchema: CHANGE_MANDATE_INPUT_SCHEMA,
         prepare: async (args: Record<string, unknown>) => prepareChange(deps, args),
+        // As create_mandate: the changed mandate goes to the person's phone at once, with its differences.
+        proposed: async (args, proposalId) => {
+          const read = signedOldMandate(deps, args.mandate_id);
+          if ('refusal' in read) return;
+          await controlPlaneMandateOffer({ proposalId, tool: 'change', args, old: read.old });
+        },
         handler: async (args: Record<string, unknown>) => {
           // Approval can come long after the proposal: everything is checked again.
           const read = signedOldMandate(deps, args.mandate_id);

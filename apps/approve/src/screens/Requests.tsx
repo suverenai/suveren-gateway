@@ -113,8 +113,15 @@ export interface RequestCardProps {
  * `alreadyDecided` is the card's own way to hide them. "Ask for changes" is left out: the phone has no key of anyone else's to seal the
  * note for.
  */
+/** An AI-proposed mandate or change: given with the person's touch (a give prepared by the computer), never approved here. */
+export function isMandateProposal(tool: string): boolean {
+  return tool === 'setup__create_mandate' || tool === 'setup__change_mandate';
+}
+
 export function RequestCard({ proposal, userId, check, decide, onDecided, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal }: RequestCardProps) {
   const blocked = check !== null && !check.ok;
+  // Approving it would run the proposal, and a gateway with a device chain refuses that: the mandate is given, not created from an approval.
+  const giveOnly = isMandateProposal(proposal.tool);
   // What the card draws is what this phone checked: the arguments only from the sealed content (the shared card never shows the server's plain
   // `toolArgs` beside sealed content, and here it is dropped as well), and the execution context only as REBUILT from them.
   const shown: Proposal = check && check.ok
@@ -128,6 +135,7 @@ export function RequestCard({ proposal, userId, check, decide, onDecided, onBusy
       // Until the checks are done, and when one failed, no buttons.
       alreadyDecided={check === null || blocked}
       canAskChanges={false}
+      canApprove={!giveOnly}
       toolDisplay={check && check.ok ? check.ready.display : undefined}
       decide={check && check.ok ? decide : refuse}
       onDecided={onDecided}
@@ -148,6 +156,7 @@ export function RequestCard({ proposal, userId, check, decide, onDecided, onBusy
               </Notice>
             </div>
           )}
+          {check !== null && check.ok && giveOnly && <Notice kind="info"><span data-testid="give-not-here-yet">{P.mandateGivenNotApproved}</span></Notice>}
           {check !== null && check.ok && <p className="av3-quiet" data-testid="changes-elsewhere">{P.decideChangesElsewhere}</p>}
         </>
       )}

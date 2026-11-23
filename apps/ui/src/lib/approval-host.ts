@@ -12,6 +12,7 @@ import { useSSEEvent, type SSEEventType } from '../contexts/EventSourceContext';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { useDeviceChain } from './use-device-chain';
 import { useCardMandateGive } from './card-give';
+import { useCardChangeGive } from './card-change-give';
 
 function HostLink(props: { to: string; className?: string; children?: ReactNode }) {
   return createElement(Link, props);
@@ -47,7 +48,13 @@ configureApprovalHost({
   useSimulationMode,
   useGiveWording: useDeviceChain,
   // One give driver for the card and the give page (lib/use-give.ts): "Give this mandate" runs in place.
-  useMandateGive: useCardMandateGive,
+  // An AI-proposed change is given the same way (lib/card-change-give.ts); both hooks run on every card, the tool picks the one used.
+  useMandateGive(proposal, args, o) {
+    const isChange = proposal.tool === 'setup__change_mandate';
+    const create = useCardMandateGive(proposal, isChange ? null : args, o);
+    const change = useCardChangeGive(proposal, isChange ? args : null, o);
+    return isChange ? change : create;
+  },
   useOpenMandateScreen() {
     const navigate = useNavigate();
     return (handoff) => {

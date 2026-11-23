@@ -264,6 +264,17 @@ describe('the phone screens (both widths use the same markup and the same tokens
         expect(m).toContain('data-testid="approval-later"');
       });
 
+      it('an AI-proposed mandate or change is never approved here: no Approve, only Reject, and the line that it is given with the touch', () => {
+        for (const tool of ['setup__create_mandate', 'setup__change_mandate']) {
+          const m = panel({ shown: { proposal: { ...(proposal as object), tool } as never, card: { userId: 'u1', check: { ok: true, ready: readyCard }, decide: async () => ({}) } } });
+          expect(m).not.toContain('data-testid="btn-approve"');
+          expect(m).toContain('data-testid="btn-reject"');
+          expect(m).toContain('data-testid="give-not-here-yet"');
+          expect(text(m)).toContain(P.mandateGivenNotApproved);
+        }
+        expect(panel()).toContain('data-testid="btn-approve"');
+      });
+
       it('the card sits in the gateway\'s stage, with its buttons in the fixed footer', () => {
         const m = panel();
         expect(m).toContain('apr-body');

@@ -577,17 +577,35 @@ type StoredContext = Omit<GrantedContext, 'issueInput'>;
  * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
  * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
  */
-export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, o: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
+  // One give per AI proposal: the one already waiting (offered when the proposal arrived, or sent from the card) is the one the phone shows.
+  if (o.proposalId) {
+    const waiting = deps.grants!.phoneGives.byProposal(o.proposalId);
+    if (waiting) {
+      const g = waiting.record.give as { mandateVersion?: unknown; expiresAt?: unknown };
+      if (typeof g.mandateVersion === 'number' && typeof g.expiresAt === 'number') return { mandateId: waiting.mandateId, mandateVersion: g.mandateVersion, expiresAt: g.expiresAt };
+    }
+  }
   const plan = await planMandate(req, deps);
   const ctx = await grantedContext(req, plan, deps);
   let give: PhoneGive;
   try {
-    give = await deps.grants!.sendToPhone(ctx.issueInput, { title: plan.title, ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}) });
+    give = await deps.grants!.sendToPhone(ctx.issueInput, {
+      title: plan.title,
+      ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}),
+      ...(o.proposalId ? { proposalId: o.proposalId } : {}),
+    });
   } catch (err) { return grantRefused(err); }
   const { issueInput: _fn, ...stored } = ctx;
-  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown> });
+  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown>, ...(o.proposalId ? { proposalId: o.proposalId } : {}) });
   return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
+}
+
+/** Stop waiting for the give of this AI proposal on the phone (it was given on this computer instead). True when one was waiting. */
+export function dropProposalGive(proposalId: string, deps: CeremonyDeps): boolean {
+  const waiting = deps.grants?.phoneGives.byProposal(proposalId);
+  return waiting ? deps.grants!.phoneGives.drop(waiting.mandateId) : false;
 }
 
 /** The version a change continues, from this computer's own copy; undefined when it cannot be read (the grants refuse then). */
@@ -657,12 +675,12 @@ async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise
  * A change the person approved (an AI proposal, setup__change_mandate) on a computer that cannot grant it: the same checks as
  * `changeMandate` (the diff still the one approved), then sent to the phone like a give from the page (DEC-90).
  */
-export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps, o: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   const { diff, request } = await planMandateChange(req, deps);
   if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
     refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
   }
-  return giveOnPhone(request, deps);
+  return giveOnPhone(request, deps, o);
 }
 
 /** Can this gateway hand a grant to the person's phone (an active device of the chain, other than this one, with a check key)? */

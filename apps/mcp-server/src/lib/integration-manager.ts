@@ -1278,6 +1278,13 @@ export class IntegrationManager {
     return def?.prepare ? def.prepare(args) : { args };
   }
 
+  /** A built-in's own step once its call became a waiting proposal (`BuiltinTool.proposed`). Never throws, never waits for it. */
+  builtinProposed(tool: DiscoveredTool, args: Record<string, unknown>, proposalId: string): void {
+    const def = this.builtins.get(tool.integrationId)?.def.tools.find(t => t.name === tool.originalName);
+    if (!def?.proposed) return;
+    void def.proposed(args, proposalId).catch((err) => console.error(`[Suveren MCP] after proposal ${proposalId}: ${err instanceof Error ? err.message : String(err)}`));
+  }
+
   /**
    * The built-in's own refusal for this call, checked before the gate (no proposal,
    * no ticket): an `internal` tool (defence in depth — `index.ts` already never

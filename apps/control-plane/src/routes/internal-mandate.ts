@@ -18,7 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, giveOnPhone, changeOnPhone, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 import { eventBus } from '../lib/event-bus';
 
 /** The workspace the Setup tools' mandates go to (the same name builtins/setup.ts declares; keep the two in step). */
@@ -114,6 +114,36 @@ export function createInternalMandateRouter(
         return;
       }
       console.error('[Control Plane] /internal/mandate failed:', err);
+      res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  // POST /internal/mandate/offer — an AI proposed a mandate or a change (setup__create_mandate / setup__change_mandate) on a gateway with
+  // a device chain. The person gives it with their touch, on this computer's card or on their phone; so that the phone can show it at
+  // once, in the request's place, the give is prepared now and sealed to the person's devices, exactly as the card's "Give this mandate
+  // on your phone" does (one give per proposal: the card then waits for this one). Nothing is granted or signed here: the phone's grant
+  // is checked against what was planned, and the proposal is closed by whoever gives it. Body: `{ proposalId, tool, args, old? }`.
+  router.post('/mandate/offer', async (req, res) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const b = (req.body ?? {}) as { proposalId?: unknown; tool?: unknown; args?: unknown; old?: unknown };
+    const args = b.args && typeof b.args === 'object' && !Array.isArray(b.args) ? b.args as Record<string, unknown> : null;
+    if (typeof b.proposalId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(b.proposalId) || !args || (b.tool !== 'create' && b.tool !== 'change')) {
+      res.status(400).json({ error: 'bad_request', code: 'bad_request' });
+      return;
+    }
+    const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+    if (!d.grants?.active()) { res.json({ ok: false, code: 'no_chain' }); return; }
+    try {
+      const r = b.tool === 'change'
+        ? await changeOnPhone(changeRequestFrom(args, b.old).change, d, { proposalId: b.proposalId })
+        : await giveOnPhone(createRequestFrom(args), d, { proposalId: b.proposalId });
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      // Not offered (no phone that can give, the plan refused): the card on the computer still gives it; the phone shows the request.
+      if (err instanceof MandateRefused) { res.json({ ok: false, code: err.code ?? 'refused', message: err.message }); return; }
+      console.error('[Control Plane] /internal/mandate/offer failed:', err);
       res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
     }
   });

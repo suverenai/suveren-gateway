@@ -396,5 +396,37 @@ describe('give on the phone', () => {
     expect((await phoneSigns(w, phone, c)).status).toBe(201);
     expect((await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`)).body).toMatchObject({ state: 'done' });
   });
+
+  it('a give for an AI proposal carries its id to the phone, and asked again for that proposal the waiting give is the answer (one give per proposal)', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const p = await w.post('/api/mandate/prepare', REQ);
+    expect(p.status, p.text).toBe(200);
+    const first = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ, fromProposal: 'prop_offer_0001' });
+    expect(first.status, first.text).toBe(200);
+    const { c } = await phoneOpens(w, phone);
+    expect(c.give.proposal_id).toBe('prop_offer_0001');
+    const again = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ, fromProposal: 'prop_offer_0001' });
+    expect(again.status, again.text).toBe(200);
+    expect(again.body.mandateId).toBe(first.body.mandateId);
+    expect(w.mandates.bodies, 'nothing prepared a second time').toHaveLength(1);
+    // a give without a proposal (the person's own, from the give page) carries no id
+    const own = await w.post('/api/mandate/give-on-phone', { planHash: p.body.planHash, ...REQ });
+    expect(own.status, own.text).toBe(200);
+    expect(own.body.mandateId).not.toBe(first.body.mandateId);
+    const { c: c2 } = await phoneOpens(w, phone);
+    expect(c2.give.proposal_id).toBeUndefined();
+  });
+
+  it('the AI path offers its proposal to the phone (POST /internal/mandate/offer): only with the internal secret, never without a proposal id', async () => {
+    const w = await world();
+    await w.addPhone(await makePhone());
+    const no = await call(w.gw.port, 'POST', '/internal/mandate/offer', { body: { proposalId: 'prop_offer_0002', tool: 'create', args: {} } });
+    expect(no.status).toBe(401);
+    const bad = await call(w.gw.port, 'POST', '/internal/mandate/offer', { headers: { 'X-Internal-Secret': 'sekret' }, body: { tool: 'create', args: {} } });
+    expect(bad.status).toBe(400);
+    expect(w.mandates.bodies).toHaveLength(0);
+  });
 });
 

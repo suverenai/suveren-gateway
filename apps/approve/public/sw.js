@@ -109,6 +109,16 @@ function noticeOf(event) {
   }
 }
 
+async function tellOpenWindows(message) {
+  try {
+    for (const w of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if (new URL(w.url).origin === self.location.origin) w.postMessage(message);
+    }
+  } catch {
+    // nothing open, or not allowed: the app reads its list at its next refresh
+  }
+}
+
 self.addEventListener('push', (event) => {
   const notice = noticeOf(event);
   if (notice) {
@@ -136,6 +146,8 @@ self.addEventListener('push', (event) => {
     await Promise.all([
       kvUpdate(SEEN_KEY, (old) => [...(Array.isArray(old) ? old : []).filter((x) => !ids.includes(x)), ...ids].slice(-SEEN_MAX)),
       self.registration.showNotification(PUSH_TEXT.title, { body, tag: TAG, renotify: true, icon: '/icons/icon-192.png', data: { ids: all } }),
+      // An open app reads its list again at once (no ids: it reads them itself, with its own session).
+      tellOpenWindows({ t: 'pushed' }),
     ]);
   })());
 });

@@ -90,6 +90,16 @@ describe('reading a give on the phone', () => {
     expect(item.bounds).toEqual(BOUNDS);
   });
 
+  it('a give the computer prepared for an AI proposal names it (it stands in that request\'s place); an id of another shape is ignored', async () => {
+    const w = await world();
+    await w.prepare((c) => { c.give.proposal_id = 'prop_abc_12345'; });
+    expect((await onlyItem(w)).proposalId).toBe('prop_abc_12345');
+    await w.prepare((c) => { c.give.proposal_id = '<script>'; });
+    expect((await onlyItem(w)).proposalId).toBeUndefined();
+    await w.prepare();
+    expect((await onlyItem(w)).proposalId).toBeUndefined();
+  });
+
   it('the members it will sign are rebuilt here from the mandate (the gateway\'s rule)', async () => {
     const w = await world();
     const { payload } = await w.prepare();

@@ -74,6 +74,21 @@ describe('public/sw.js: push', () => {
     expect(w.stored.get('push:seen')).toEqual(['prop_1']);
   });
 
+  it('an open app is told at once, so it reads its list now and not at its next refresh (e2e: the card came ~5 s after the notice)', async () => {
+    const w = loadWorker();
+    const told: unknown[] = [];
+    let focused = 0;
+    w.setWindows([
+      { url: 'https://approve.example/', focus: async () => { focused++; }, postMessage: (m) => told.push(m) },
+      { url: 'https://elsewhere.example/', focus: async () => { focused++; }, postMessage: (m) => told.push({ wrongOrigin: m }) },
+    ]);
+    await w.push({ ids: ['prop_9'] });
+    // no ids in the message (the app reads them with its own session), never focused (the notice is still the person's to tap)
+    expect(told).toEqual([{ t: 'pushed' }]);
+    expect(focused).toBe(0);
+    expect(w.shown).toHaveLength(1);
+  });
+
   it('several ids: the count text, and every id recorded once', async () => {
     const w = loadWorker();
     await w.push({ ids: ['a'] });

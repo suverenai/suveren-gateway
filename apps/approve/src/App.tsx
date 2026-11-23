@@ -352,16 +352,36 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     return () => window.clearInterval(t);
   }, [load]);
 
+  // A push while the app is open: the service worker says so at once, and the list is read again now, not at the next refresh (30 s).
+  // The request then opens by itself under the same rule as on the gateway page ("Open automatically").
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onMsg = (e: MessageEvent) => { if ((e.data as { t?: unknown } | null)?.t === 'pushed') void load(false); };
+    navigator.serviceWorker.addEventListener('message', onMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', onMsg);
+  }, [load]);
+
   useEffect(() => {
     void loadAutoOpen(rt.kv).then((v) => { setAutoOpenState(v); setSettingRead(true); });
   }, [rt]);
 
   // A request a notification named: opened once in the panel (the gateway's mechanism), then forgotten. The list is read again so a
   // request that arrived with the notice is in it.
+  // An AI-proposed mandate or change whose give the computer prepared for this phone: the give stands in the request's place (one item,
+  // given with the touch). A give whose request is no longer waiting (given on the computer, rejected, run out) is not offered.
+  const waitingIds = useMemo(() => new Set((proposals ?? []).filter((p) => p.status === 'pending').map((p) => p.id)), [proposals]);
+  const shownGives = useMemo(() => gives.filter((g) => !g.proposalId || proposals === null || waitingIds.has(g.proposalId)), [gives, proposals, waitingIds]);
+  const givenInPlace = useMemo(() => new Set(shownGives.map((g) => g.proposalId).filter((x): x is string => !!x)), [shownGives]);
+  const listedProposals = useMemo(() => proposals === null ? null : proposals.filter((p) => !givenInPlace.has(p.id)), [proposals, givenInPlace]);
+
+  const givesRef = useRef<GiveItem[]>([]);
+  givesRef.current = shownGives;
   useEffect(() => {
     if (!openRequest) return;
     onOpened();
-    setCurrentId(openRequest.id);
+    // A notice names the AI's request; when its give is here, the give is what opens (it stands in the request's place).
+    const inPlace = openRequest.id ? givesRef.current.find((g) => g.proposalId === openRequest.id) : undefined;
+    setCurrentId(inPlace ? inPlace.key : openRequest.id);
     setPanel((p) => ({ ...p, open: true, owed: false }));
     void load(true);
   }, [openRequest, onOpened, load]);
@@ -369,12 +389,12 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   // The panel's order is the gateway's: oldest first. The list screen shows newest first. A change request is `chg:<request id>`;
   // mandates to give (`give:<key>`) come first, as on the D3 mockup.
   const ids = useMemo(() => [
-    ...gives.map((g) => g.key),
+    ...shownGives.map((g) => g.key),
     ...[
-      ...(proposals ?? []).map((p) => ({ id: p.id, at: p.createdAt })),
+      ...(listedProposals ?? []).map((p) => ({ id: p.id, at: p.createdAt })),
       ...changes.map((c) => ({ id: `${CHG}${c.requestId}`, at: c.createdAt })),
     ].sort((a, b) => a.at - b.at).map((x) => x.id),
-  ], [proposals, changes, gives]);
+  ], [listedProposals, changes, shownGives]);
   const idsRef = useRef(ids);
   idsRef.current = ids;
   const hold = settling !== null;
@@ -409,11 +429,28 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     if (chrome.panel && shownId && !shownId.startsWith(CHG) && !shownId.startsWith(GIVE) && !cards[shownId]) void openCard(shownId);
   }, [chrome.panel, shownId, cards, openCard]);
 
-  const shownGive = shownId && shownId.startsWith(GIVE) ? gives.find((g) => g.key === shownId) ?? null : null;
+  const shownGive = shownId && shownId.startsWith(GIVE) ? shownGives.find((g) => g.key === shownId) ?? null : null;
   useEffect(() => {
     const cur = giving.step !== 'idle' ? giving.item : null;
     if (shownGive && (!cur || cur.key !== shownGive.key) && !settling) giver.open(shownGive);
   }, [shownGive, giving, giver, settling]);
+  // Given on this phone: the AI's request it carried out is closed as `replaced`, signed by this phone like any decision (the gateway page
+  // does the same after a give from its card). A request already closed elsewhere is left as it is.
+  const closedFor = useRef(new Set<string>());
+  useEffect(() => {
+    const pid = (giving.step === 'signed' || giving.step === 'not_received') ? giving.item.proposalId : undefined;
+    if (!pid || closedFor.current.has(pid)) return;
+    closedFor.current.add(pid);
+    void (async () => {
+      const r = await rt.reader.get(pid, true);
+      if (!r.ok || r.data.status !== 'pending') return;
+      const check = await checkCard(rt.checks, r.data);
+      if (!check.ok) return;
+      await rt.decider.decide(r.data, check.ready, 'reject', { outcome: 'replaced' }).catch(() => {});
+      void load(false);
+    })();
+  }, [giving, rt, load]);
+
   // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
   useEffect(() => {
     if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
@@ -565,15 +602,15 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
       extra={(
         <>
           {notices.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
-          {gives.length > 0 && (
+          {shownGives.length > 0 && (
             <div className="dash-rows" data-testid="give-list">
-              {gives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
+              {shownGives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
             </div>
           )}
           <OwnMandates items={own} nowSeconds={now} onEnd={(m) => ender.open(m)} />
         </>
       )}
-      proposals={proposals} error={error} nowMs={Date.now()}
+      proposals={listedProposals} error={error} nowMs={Date.now()}
       changes={changes}
       onOpenChange={(rid) => { setCurrentId(`${CHG}${rid}`); setPanel((p) => ({ ...p, open: true, owed: false })); }}
       onOpen={(id) => { setCurrentId(id); setPanel((p) => ({ ...p, open: true, owed: false })); }}

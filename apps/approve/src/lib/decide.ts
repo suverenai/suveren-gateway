@@ -56,7 +56,7 @@ export class PhoneDecider {
    * Decide one card. Resolves only after the Authority Server accepted the decision. Rejects with a {@link DecideError}.
    * A session that ended (here or at the server) is opened again with the person's check, once; the card is read again after it.
    */
-  async decide(proposal: Proposal, ready: ReadyCard, what: PhoneDecision, extras: { shownHash?: string } = {}): Promise<DecisionResult> {
+  async decide(proposal: Proposal, ready: ReadyCard, what: PhoneDecision, extras: { shownHash?: string; outcome?: 'replaced' } = {}): Promise<DecisionResult> {
     let reopened = false;
     for (;;) {
       if (!this.d.session.bearer()) {
@@ -73,7 +73,7 @@ export class PhoneDecider {
     }
   }
 
-  private async attempt(proposal: Proposal, shown: ReadyCard, what: PhoneDecision, extras: { shownHash?: string }): Promise<DecisionResult | 'session_ended'> {
+  private async attempt(proposal: Proposal, shown: ReadyCard, what: PhoneDecision, extras: { shownHash?: string; outcome?: 'replaced' }): Promise<DecisionResult | 'session_ended'> {
     const d = this.d;
     let ready = shown;
     const bearer = d.session.bearer();
@@ -120,7 +120,8 @@ export class PhoneDecider {
     const route = ready.route;
     const extra: Record<string, unknown> = { ...(extras.shownHash ? { shown_hash: extras.shownHash } : {}) };
     if (route.kind === 'domain') { extra.domain = route.domain; extra.action = kind === 'commit' ? 'commit' : 'reject'; }
-    if (what === 'reject') extra.outcome = 'rejected';
+    // A request carried out by a give on this phone is closed as `replaced` (the person gave their mandate; nothing was rejected).
+    if (what === 'reject') extra.outcome = extras.outcome ?? 'rejected';
     const path = route.kind === 'approver' ? what : 'resolve';
     const reply = await d.api.decide(head.head.id, path, decisionBody({ extras: extra, contentHash: ready.contentHash, decision, sig }), bearer);
     if (!reply.ok) {

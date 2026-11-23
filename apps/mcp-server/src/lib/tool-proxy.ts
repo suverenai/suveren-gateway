@@ -1997,6 +1997,7 @@ function createGatedToolHandlerInner(
               actionType: declaredActionType,
               mandateId: auth.mandateId,
             });
+            integrationManager.builtinProposed?.(tool, enrichedArgs, proposal.id);
             return {
               content: [{
                 type: 'text',

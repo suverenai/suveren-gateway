@@ -274,7 +274,7 @@ export function ApprovalCard({
   // A chain account gives a mandate with its device touch (DEC-80): same words as the review step, shared text module.
   const giveWording = (approvalHost().useGiveWording ?? (() => false))();
   const approveWord = giveWording
-    ? (isChange ? S13.giveCardApprove : isMandate ? giveButtonText(hostGive?.via) : 'Approve')
+    ? (isMandate && hostGive ? giveButtonText(hostGive.via) : isChange ? S13.giveCardApprove : isMandate ? giveButtonText(hostGive?.via) : 'Approve')
     : isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
@@ -334,11 +334,12 @@ export function ApprovalCard({
           )}
           {/* The give button names how it is given ("…with Touch ID", "…on your phone"): too long for a third of the row, so it
               takes the whole first row and the others share the row below. */}
-          <div className={`av3-btns${giveWording && isMandate && !isChange && canApprove && !mandateEnded ? ' av3-btns-give' : canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
+          <div className={`av3-btns${giveWording && isMandate && (!isChange || !!hostGive) && canApprove && !mandateEnded ? ' av3-btns-give' : canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => {
                 // A chain account gives a mandate with its device touch on the give page (one implementation, DEC-80/91 direction 2026-11-20).
-                if (approveRoute({ giveWording, isMandate: proposal.tool === CREATE_MANDATE_TOOL, canGive: !!hostGive }) === 'give') { hostGive!.start(); return; }
+                // An AI-proposed change is given the same way: a chain gateway never executes the proposal itself (it would refuse).
+                if (approveRoute({ giveWording, isMandate, canGive: !!hostGive }) === 'give') { hostGive!.start(); return; }
                 void run('approve');
               }}>
                 {approveWord}

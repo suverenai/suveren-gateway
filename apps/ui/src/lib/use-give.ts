@@ -101,7 +101,7 @@ export function useGive(request: GiveRequest | null, o: { chain: boolean; fromPr
     setError('');
     setTouchView({ s: 'touch' });
     try {
-      const { authorizationId, revokeError } = await spClient.signMandate({ ...request, planHash: prepared.planHash });
+      const { authorizationId, revokeError } = await spClient.signMandate({ ...request, planHash: prepared.planHash, ...(o.fromProposal ? { fromProposal: o.fromProposal } : {}) });
       const revokeProblem = replacedRevokeProblem(revokeError);
       // The mandate is live: say so first (the card stays on screen with the stamp), then close the proposal it was for.
       setGivenId(authorizationId);
@@ -129,7 +129,7 @@ export function useGive(request: GiveRequest | null, o: { chain: boolean; fromPr
     setError('');
     setPhoneGive({ s: 'sending' });
     try {
-      const r = await spClient.giveOnPhone({ ...request, planHash: prepared.planHash });
+      const r = await spClient.giveOnPhone({ ...request, planHash: prepared.planHash, ...(o.fromProposal ? { fromProposal: o.fromProposal } : {}) });
       setPhoneGive({ s: 'waiting', mandateId: r.mandateId, expiresAt: r.expiresAt });
     } catch (e) {
       const code = e instanceof MandateSignError ? e.code : undefined;

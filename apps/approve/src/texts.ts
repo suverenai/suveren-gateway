@@ -154,6 +154,8 @@ export const P = {
   cardBlockedNothing: 'Nothing was decided.', // DRAFT
   decideAskTouch: 'Your break ended the session. Touch to go on with your decision.', // DRAFT (the check comes before the decision, DEC-47)
   decideChangesElsewhere: 'To ask your AI for changes, use your computer.', // DRAFT (the note cannot be sealed for your AI from this phone yet)
+  // DRAFT: an AI-proposed mandate (or change) whose give the computer has not sent here (yet): the person gives it with their touch, never by approving.
+  mandateGivenNotApproved: 'You give this mandate with your touch. It appears here as soon as your computer has prepared it, or give it on your computer.',
   listFailed: 'The list could not be read. Nothing changed. Try again.', // DRAFT
 
   // ─── Time ─────────────────────────────────────────────────────────────────────

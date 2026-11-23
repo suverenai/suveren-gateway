@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, dropProposalGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 import { eventBus } from '../lib/event-bus';
@@ -31,6 +31,15 @@ export interface MandateReads {
 }
 
 const NOT_SET_UP = { error: 'not_set_up', message: 'Device keys are not set up.', code: 'not_set_up' };
+
+/** The AI proposal a give on the page carries out (`fromProposal`), taken out of the body so it is never part of what is planned. */
+function takeProposalId(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const b = body as { fromProposal?: unknown };
+  const id = b.fromProposal;
+  delete b.fromProposal;
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(id) ? id : undefined;
+}
 
 export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthorizationId'>, reads?: MandateReads): Router {
   const router = Router();
@@ -105,6 +114,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     try {
       const d = deps();
       if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const proposalId = takeProposalId(req.body);
       const b = (req.body ?? {}) as { authorizationId?: unknown; changes?: unknown; sealedDiff?: unknown };
       const changes = parseChanges(b.changes ?? {});
       const got = await readOld(b.authorizationId);
@@ -112,6 +122,8 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
       const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
       const r = await changeMandate({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full);
+      // Given here with Touch ID: the same proposal no longer waits on the phone (it would give it a second time).
+      if (proposalId) dropProposalGive(proposalId, full);
       void d.resyncGates?.().catch(() => {});
       res.json({ ok: true, authorizationId: r.authorizationId });
     } catch (err) { answerRefusal(res, err); }
@@ -123,13 +135,14 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
     try {
       const d = deps();
       if (!d.grants?.active() || !reads) { res.status(409).json(NOT_SET_UP); return; }
+      const proposalId = takeProposalId(req.body);
       const b = (req.body ?? {}) as { authorizationId?: unknown; changes?: unknown; sealedDiff?: unknown };
       const changes = parseChanges(b.changes ?? {});
       const got = await readOld(b.authorizationId);
       if (!changes || 'bad' in got || !b.sealedDiff || typeof b.sealedDiff !== 'object') { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
       if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
       const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
-      res.json({ ok: true, ...(await changeOnPhone({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full)) });
+      res.json({ ok: true, ...(await changeOnPhone({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full, { proposalId })) });
     } catch (err) { answerRefusal(res, err); }
   });
 
@@ -144,6 +157,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
   });
 
   router.post('/sign', async (req, res) => {
+    const proposalId = takeProposalId(req.body);
     const request = (req.body ?? {}) as MandateRequest;
     try {
       // The page shows each step of a give with Touch ID (never a silent wait): the stage only, no content.
@@ -156,11 +170,14 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
         if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was signed. Look at it again.' }); return; }
       }
       const { authorizationId, revokeError, oldStoppedLocally } = await createMandate(request, d);
+      // Given here with Touch ID: the same proposal no longer waits on the phone (it would give it a second time).
+      if (proposalId) dropProposalGive(proposalId, d);
       res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}), ...(oldStoppedLocally ? { oldStoppedLocally } : {}) });
     } catch (err) { answerRefusal(res, err); }
   });
   // Give on the phone (plan 4.4 "Transport", DEC-86): the same prepared plan as /sign, sealed to the person's devices; the phone grants it.
   router.post('/give-on-phone', async (req, res) => {
+    const proposalId = takeProposalId(req.body);
     const request = (req.body ?? {}) as MandateRequest;
     try {
       const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
@@ -169,7 +186,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if (typeof echoed !== 'string') { res.status(422).json({ error: 'mandate_refused', code: 'prepare_required', message: 'The mandate was not prepared on this page; nothing was sent.' }); return; }
       const now = await prepareMandate(request, d);
       if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was sent. Look at it again.' }); return; }
-      res.json({ ok: true, ...(await giveOnPhone(request, d)) });
+      res.json({ ok: true, ...(await giveOnPhone(request, d, { proposalId })) });
     } catch (err) { answerRefusal(res, err); }
   });
   router.get('/give-on-phone/:mandateId', async (req, res) => {

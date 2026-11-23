@@ -1197,9 +1197,9 @@ class SPClient {
   }
 
   /** Sign the change with this computer's check (Touch ID). `sealedDiff` is the diff that was shown: a different change is refused. */
-  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'no_check_key' | 'other' }> {
+  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown, fromProposal?: string): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'no_check_key' | 'other' }> {
     let res: Response;
-    try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) }); } catch { return { ok: false, code: 'other' }; }
+    try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff, ...(fromProposal ? { fromProposal } : {}) }) }); } catch { return { ok: false, code: 'other' }; }
     if (res.ok) return { ok: true };
     const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
     if (body.grantCode === 'check_failed') return { ok: false, code: 'cancelled' };
@@ -1209,8 +1209,8 @@ class SPClient {
   }
 
   /** The same change sent to the phone (DEC-90): this computer has no Touch ID. Then wait with `pollGiveOnPhone`. A refusal throws. */
-  async changeOnPhone(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
-    const res = await this.fetch('/api/mandate/change-on-phone', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff }) });
+  async changeOnPhone(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown, fromProposal?: string): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+    const res = await this.fetch('/api/mandate/change-on-phone', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff, ...(fromProposal ? { fromProposal } : {}) }) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const b = body as { code?: string; grantCode?: string; reason?: string };
@@ -2482,6 +2482,8 @@ class SPClient {
     replaces?: string;
     /** A chain gateway: the hash of the plan `prepareMandate` returned for this request. */
     planHash?: string;
+    /** The AI proposal this give carries out: its give waiting on the phone is dropped (given here instead). */
+    fromProposal?: string;
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
@@ -2496,7 +2498,7 @@ class SPClient {
    * Give on the phone (DEC-90): the same prepared plan as `signMandate` (echo `planHash`), sealed to the person's devices; nothing is granted
    * here. A refusal throws {@link MandateSignError} like a give.
    */
-  async giveOnPhone(request: Record<string, unknown> & { planHash: string }): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  async giveOnPhone(request: Record<string, unknown> & { planHash: string; fromProposal?: string }): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
     const res = await this.fetch('/api/mandate/give-on-phone', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {

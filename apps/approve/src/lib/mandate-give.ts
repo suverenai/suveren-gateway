@@ -41,6 +41,7 @@ import { errorText } from '../texts';
 const { grantMembersOf } = createGrantMembers(buildMandateProjection);
 const AUTHZ = /^authz_[0-9a-f-]{36}$/;
 const MANDATE_ID = /^[A-Za-z0-9_-]{8,64}$/;
+const PROPOSAL_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isScalars = (v: unknown): v is Record<string, string | number> =>
   isObj(v) && Object.keys(v).length <= 64 && Object.values(v).every((x) => typeof x === 'string' ? x.length <= 4000 : typeof x === 'number' && Number.isFinite(x));
@@ -71,6 +72,9 @@ export interface GiveItem {
   diff?: MandateDiff;
   /** A renewal: only the end date moves (checked); shown as "Extend the mandate for …". */
   renewal?: boolean;
+  /** The AI proposal this give carries out (setup__create_mandate / setup__change_mandate), as the computer named it: the give is shown
+   *  in that request's place, and the request is closed once it is given. Never part of what is signed. */
+  proposalId?: string;
 }
 
 export type GiveCode =
@@ -192,6 +196,7 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
       scope: content.scope as Record<string, string | number>, intent: content.intent, payload, members,
       expiresAt: payload.expires_at, lastsSeconds: Math.max(0, payload.expires_at - ctx.now),
       ...(previous ? { previous } : {}), ...(diff ? { diff } : {}), ...(g.op === 'change' && g.renewal === true ? { renewal: true } : {}),
+      ...(typeof g.proposal_id === 'string' && PROPOSAL_ID.test(g.proposal_id) ? { proposalId: g.proposal_id } : {}),
     },
   };
 }

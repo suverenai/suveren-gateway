@@ -72,7 +72,13 @@ export class PhoneGiveStore {
       .sort((a, b) => a.startedAt - b.startedAt);
   }
 
-  /** The give waiting for an approved proposal, or null. */
+  /** The give waiting for this AI proposal (setup__create_mandate / setup__change_mandate), or null. */
+  byProposal(proposalId: string): { mandateId: string; record: PhoneGiveRecord } | null {
+    if (!isId(proposalId)) return null;
+    const f = this.live(this.read());
+    for (const [mandateId, r] of Object.entries(f.gives)) if (r.proposalId === proposalId) return { mandateId, record: r };
+    return null;
+  }
 
   /** Stop waiting for it. True when one was waiting. */
   drop(mandateId: string): boolean {
