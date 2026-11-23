@@ -467,11 +467,18 @@ describe('give on the phone', () => {
   it('a page that asks after a give is waiting for it: the background completion leaves the request to that page (it shows Signed first)', async () => {
     const { pageIsWaiting } = await import('../../lib/mandate-ceremony');
     const w = await world();
-    await w.addPhone(await makePhone());
     // the page that sent it waits for it from that moment (its first poll comes 2 s later; the phone can be quicker)
+    const phone = await makePhone();
+    await w.addPhone(phone);
     const { sent } = await prepareAndSend(w);
     const id = String(sent.body.mandateId);
     expect(pageIsWaiting(id)).toBe(true);
+    // once the page has heard the end of its give it no longer waits — a later version of the same mandate (a change keeps the
+    // id) is then the background completion's to close
+    const { c } = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, c)).status).toBe(201);
+    expect((await w.get(`/api/mandate/give-on-phone/${id}`)).body).toMatchObject({ state: 'done' });
+    expect(pageIsWaiting(id)).toBe(false);
   });
 });
 
