@@ -703,6 +703,11 @@ export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDep
   return giveOnPhone(request, deps, o);
 }
 
+/** Is any give waiting on the person's phone? (The completion checks every second while one waits, every 5 s otherwise.) */
+export function anyGiveWaiting(deps: CeremonyDeps): boolean {
+  try { return !!deps.grants?.active() && deps.grants.phoneGives.list().length > 0; } catch { return false; }
+}
+
 /** Can this gateway hand a grant to the person's phone (an active device of the chain, other than this one, with a check key)? */
 export function isNoCheckKeyRefusal(err: unknown): boolean {
   return err instanceof MandateRefused && err.code === 'grant_refused' && (err.detail as { grantCode?: unknown } | undefined)?.grantCode === 'no_check_key';
@@ -712,14 +717,14 @@ export function isNoCheckKeyRefusal(err: unknown): boolean {
  * Finish every give that waits on the phone, page or not (an approved AI proposal has no page that polls): what the timer in index.ts
  * runs. A give whose phone grant arrived is requested and delivered; a refusal ends it. `onDone` is told of each mandate that went live.
  */
-export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string }) => void, onRefused?: (r: { mandateId: string; message: string }) => void): Promise<void> {
+export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string; proposalId?: string }) => void, onRefused?: (r: { mandateId: string; message: string }) => void): Promise<void> {
   if (!deps.grants?.active()) return;
-  let waiting: Array<{ mandateId: string }>;
+  let waiting: Array<{ mandateId: string; proposalId?: string }>;
   try { waiting = deps.grants.phoneGives.list(); } catch { return; }
   for (const g of waiting) {
     try {
       const r = await pollPhoneGive(g.mandateId, deps);
-      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId });
+      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId, ...(g.proposalId ? { proposalId: g.proposalId } : {}) });
     } catch (err) {
       onRefused?.({ mandateId: g.mandateId, message: err instanceof Error ? err.message : String(err) });
     }

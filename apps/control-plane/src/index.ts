@@ -93,7 +93,7 @@ import { createInternalMandateRouter } from './routes/internal-mandate';
 import { createMandateRouter } from './routes/mandate';
 import { createTeamJoinRouter } from './routes/team-join';
 import { createTeamChangesRouter } from './routes/team-changes';
-import { completeWaitingGives, type CeremonyDeps } from './lib/mandate-ceremony';
+import { completeWaitingGives, anyGiveWaiting, type CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
@@ -262,7 +262,7 @@ const sessionExpiryScheduler = new SessionExpiryScheduler(
 
 // ─── Auth routes (/auth/*) ──────────────────────────────────────────────
 
-const { loginChangeGate, deviceChainState, signin: deviceSignin, grants: deviceGrants, teamJoin: deviceTeamJoin, teamChanges: deviceTeamChanges, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
+const { loginChangeGate, decisions: deviceDecisions, deviceChainState, signin: deviceSignin, grants: deviceGrants, teamJoin: deviceTeamJoin, teamChanges: deviceTeamChanges, readers: deviceReaders, rewrap: deviceRewrap } = mountDeviceKeyRoutes(app, {
   enabled: deviceKeys,
   vault,
   pageSession: pageSessionDeps,
@@ -602,16 +602,50 @@ startReplacedRevokeRetry(replacedRetryDeps());
 
 // Gives waiting on the person's phone (DEC-86/DEC-90) are finished here too, not only by the give page that polls: the person may
 // have left that page before the phone gave it. Every 5 seconds, only while signed in with a device chain; one check per give at a time.
+// While a give waits on the phone it is checked every second (the card on the page and the phone's own wait see it at once);
+// with nothing waiting, every 5 seconds as before. (Dev lane 2026-11-23: the card stayed ~10 s after the phone gave it.)
 const PHONE_GIVE_COMPLETE_MS = 5_000;
+const PHONE_GIVE_WAITING_MS = 1_000;
+let lastGiveCheck = 0;
+let giveCheckRunning = false;
 setInterval(() => {
-  if (!vault.isUnlocked() || !vault.getSpCookie()) return;
+  if (giveCheckRunning || !vault.isUnlocked() || !vault.getSpCookie()) return;
   const d: CeremonyDeps = { ...mandateCeremonyDeps(), newAuthorizationId: () => `authz_${randomUUID()}` };
   if (!d.grants?.active()) return;
+  if (!anyGiveWaiting(d) && Date.now() - lastGiveCheck < PHONE_GIVE_COMPLETE_MS) return;
+  lastGiveCheck = Date.now();
+  giveCheckRunning = true;
   void completeWaitingGives(d,
-    () => { eventBus.emit('attestation-changed'); void resyncGates().catch(() => {}); },
+    (r) => {
+      eventBus.emit('attestation-changed');
+      void resyncGates().catch(() => {});
+      // The AI's request this give carried out is closed here as `replaced`, at once, signed with this computer's key — as the
+      // page does after a give from its card. The list, the card and the badge then move on the same moment (the phone would
+      // close it too, a few seconds later, once it sees the receipt; it finds it closed and leaves it).
+      if (r.proposalId) void closeGivenProposal(r.proposalId).catch((err) => console.warn(`[Control Plane] the request ${r.proposalId} given on the phone could not be closed here: ${err instanceof Error ? err.message : String(err)}`));
+    },
     r => console.warn(`[Control Plane] a give waiting on the phone ended: ${r.message}`),
-  ).catch(() => {});
-}, PHONE_GIVE_COMPLETE_MS).unref?.();
+  ).catch(() => {}).finally(() => { giveCheckRunning = false; });
+}, PHONE_GIVE_WAITING_MS).unref?.();
+
+/** Close an AI proposal a give carried out (outcome `replaced`), by this computer's device decision; then tell the page. */
+async function closeGivenProposal(proposalId: string): Promise<void> {
+  if (!deviceDecisions) return;
+  const userId = vault.getSessionUser()?.id ?? '';
+  const d: CeremonyDeps = { ...mandateCeremonyDeps(), newAuthorizationId: () => '' };
+  const got = await d.as('GET', `/api/proposals/${encodeURIComponent(proposalId)}`);
+  const p = (got.body?.proposal ?? got.body) as { status?: string; pendingDomains?: string[]; pendingApprovers?: string[] } | undefined;
+  if (got.status !== 200 || !p || p.status !== 'pending') return;
+  const approver = (p.pendingApprovers ?? []).includes(userId);
+  const domains = p.pendingDomains ?? [];
+  const domain = domains.includes(userId) ? userId : domains.includes('owner') ? 'owner' : null;
+  if (!approver && !domain) return;
+  const r = approver
+    ? await deviceDecisions.decide(proposalId, 'reject', { outcome: 'replaced' })
+    : await deviceDecisions.decide(proposalId, 'resolve', { action: 'reject', domain, outcome: 'replaced' });
+  if (r.status >= 200 && r.status < 300) eventBus.emit('proposal-resolved');
+  else throw new Error(`the Authority Server answered ${r.status}`);
+}
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.
