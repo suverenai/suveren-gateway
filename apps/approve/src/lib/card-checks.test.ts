@@ -9,11 +9,7 @@ type World = Awaited<ReturnType<typeof cardWorld>>;
 const check = (w: World) => checkCard(w.rt.checks, w.as.byId.get(PROPOSAL_ID) as never);
 const reason = async (w: World): Promise<CardReason | 'ok'> => { const c = await check(w); return c.ok ? 'ok' : c.reason; };
 
-// Each case builds one or more full card worlds (a registered phone, a fake Authority Server, signed mandate,
-// grant and sealed content). Locally a world takes ~15-50 ms; on the windows-latest runner the file took
-// 20-34 s for 30 cases (bundle-smoke runs 45090277313, 45094813561), so the 4-world case at line ~73
-// crossed vitest's 5 s default. The checks themselves are unchanged; only the time allowed per case is.
-describe('the checks before a decision is offered (plan 8; step 12)', { timeout: 30_000 }, () => {
+describe('the checks before a decision is offered (plan 8; step 12)', () => {
   it('passes for a request whose every part is what it claims, and says what a decision will name', async () => {
     const w = await cardWorld();
     const c = await check(w);
