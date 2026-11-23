@@ -167,8 +167,9 @@ runCallerCheck('real helper refuses a caller that is not the gateway', () => {
     c.stdout.on('data', (d) => out += d); c.stderr.on('data', (d) => err += d);
     c.stdin.on('error', () => {});
     c.stdin.write(JSON.stringify({ id: 1, op: 'hello' }) + '\\n');
-    c.on('exit', (code) => { console.log(JSON.stringify({ code, out, err })); });
-    setTimeout(() => c.stdin.end(), 700);
+    // The timer only ends stdin for a helper that serves; a refusing helper exits at once and must not wait for it.
+    const t = setTimeout(() => c.stdin.end(), 700);
+    c.on('exit', (code) => { clearTimeout(t); console.log(JSON.stringify({ code, out, err })); });
   `);
   const callersFile = (prefix: string, name: string) => {
     const f = join(tmp, name);
