@@ -22,39 +22,48 @@ export function DeviceKeysCard() {
 
   if (!passwordSet) {
     return (
-      <div className="card">
-        <h3 className="card-title">{T.passwordTitle}</h3>
-        <Link className="btn btn-primary" to="/device-password" style={{ textDecoration: 'none' }}>{T.passwordTitle}</Link>
-      </div>
+      <article className="ob-card su-card">
+        <div className="su-row">
+          <div><h3 className="ob-title">{T.passwordTitle}</h3></div>
+          <div className="ob-btns"><Link className="ob-btn is-solid" to="/device-password">{T.passwordTitle}</Link></div>
+        </div>
+      </article>
     );
   }
   if (access !== 'password' || setUp === null) return null;
   if (!setUp) {
     return (
-      <div className="card">
-        <h3 className="card-title">{T.nameTitle}</h3>
-        <Link className="btn btn-primary" to="/device-setup" style={{ textDecoration: 'none' }}>{T.nameTitle}</Link>
-        <div style={{ marginTop: '1.5rem' }}><TouchUnlockSection /></div>
-      </div>
+      <article className="ob-card su-card">
+        <div className="su-row">
+          <div><h3 className="ob-title">{T.nameTitle}</h3></div>
+          <div className="ob-btns"><Link className="ob-btn is-solid" to="/device-setup">{T.nameTitle}</Link></div>
+        </div>
+        <TouchUnlockSection />
+      </article>
     );
   }
+  // The same card as its siblings on Settings (ob-card su-card: title, one muted line, grey buttons at the side).
   return (
-    <div className="card" data-testid="device-keys-card">
+    <article className="ob-card su-card" data-testid="device-keys-card">
       {/* DEC-96: the card is about devices first (it was titled only "Recovery code"); Devices also has its own menu entry. */}
-      <h3 className="card-title">{DRAFT.deviceKeysCardTitle}</h3>
       <AddCheckKeySection />
-      {setUp && (
-        <>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{PT.devSettingsBody}</p>
-          <Link className="btn btn-secondary" to="/devices" style={{ textDecoration: 'none' }}>{PT.devSettingsLink}</Link>
-          <h3 className="card-title" style={{ marginTop: '1.5rem' }}>{DRAFT.deviceCardTitle}</h3>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>{DRAFT.deviceCardBody}</p>
-          <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.rotateWhy}</p>
-          <Link className="btn btn-secondary" to="/device-recovery-code" style={{ textDecoration: 'none' }}>{DRAFT.rotateTitle}</Link>
-        </>
-      )}
-      <div style={{ marginTop: '1.5rem' }}><TouchUnlockSection /></div>
-    </div>
+      <div className="ob-part su-row">
+        <div>
+          <h3 className="ob-title">{DRAFT.deviceKeysCardTitle}</h3>
+          <p className="ob-one">{PT.devSettingsBody}</p>
+        </div>
+        <div className="ob-btns"><Link className="ob-btn" to="/devices">{PT.devSettingsLink}</Link></div>
+      </div>
+      <div className="ob-part su-row">
+        <div>
+          <h3 className="ob-title">{DRAFT.deviceCardTitle}</h3>
+          <p className="ob-one">{DRAFT.deviceCardBody}</p>
+          <p className="ob-one">{DRAFT.rotateWhy}</p>
+        </div>
+        <div className="ob-btns"><Link className="ob-btn" to="/device-recovery-code">{DRAFT.rotateTitle}</Link></div>
+      </div>
+      <TouchUnlockSection />
+    </article>
   );
 }
 
@@ -71,10 +80,10 @@ function TouchUnlockSection() {
   if (!caps || !caps.available) return null;
   if (caps.on || done) {
     return (
-      <>
-        <h3 className="card-title">{DRAFT.touchCardTitle}</h3>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: 0 }}>{done ? DRAFT.touchCardDone : DRAFT.touchCardOn}</p>
-      </>
+      <div className="ob-part">
+        <h3 className="ob-title">{DRAFT.touchCardTitle}</h3>
+        <p className="ob-one">{done ? DRAFT.touchCardDone : DRAFT.touchCardOn}</p>
+      </div>
     );
   }
   const turnOn = async () => {
@@ -88,19 +97,21 @@ function TouchUnlockSection() {
     setDone(true);
   };
   return (
-    <>
-      <h3 className="card-title">{DRAFT.touchCardTitle}</h3>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.touchCardBody}</p>
+    <div className="ob-part">
+      <h3 className="ob-title">{DRAFT.touchCardTitle}</h3>
+      <p className="ob-one">{DRAFT.touchCardBody}</p>
       {error && <Notice kind="error">{error}</Notice>}
       {busy && <Notice kind="info">{DRAFT.touchSetupWaiting}</Notice>}
-      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+      <div className="form-group" style={{ margin: '0.75rem 0' }}>
         <label className="form-label" htmlFor="touch-unlock-password">{T.passwordLabel}</label>
         <input id="touch-unlock-password" className="form-input" type="password" autoComplete="current-password"
           value={password} onChange={e => setPassword(e.target.value)} disabled={busy}
           onKeyDown={e => e.key === 'Enter' && void turnOn()} />
       </div>
-      <button className="btn btn-primary" onClick={() => void turnOn()} disabled={busy || !password}>{DRAFT.touchCardButton}</button>
-    </>
+      <div className="ob-btns" style={{ marginTop: 0 }}>
+        <button type="button" className="ob-btn is-solid" onClick={() => void turnOn()} disabled={busy || !password}>{DRAFT.touchCardButton}</button>
+      </div>
+    </div>
   );
 }
 
@@ -112,10 +123,12 @@ function AddCheckKeySection() {
   }, []);
   if (!show) return null;
   return (
-    <div style={{ marginBottom: '1.5rem' }} data-testid="addcheck-section">
-      <h3 className="card-title">{DRAFT.addCheckTitle}</h3>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>{DRAFT.addCheckCardBody}</p>
-      <Link className="btn btn-primary" to="/device-check-key" style={{ textDecoration: 'none' }}>{DRAFT.addCheckButton}</Link>
+    <div className="ob-part su-row" data-testid="addcheck-section">
+      <div>
+        <h3 className="ob-title">{DRAFT.addCheckTitle}</h3>
+        <p className="ob-one">{DRAFT.addCheckCardBody}</p>
+      </div>
+      <div className="ob-btns"><Link className="ob-btn is-solid" to="/device-check-key">{DRAFT.addCheckButton}</Link></div>
     </div>
   );
 }

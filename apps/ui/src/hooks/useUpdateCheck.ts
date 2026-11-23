@@ -18,11 +18,32 @@ export type InstallMethod = 'docker' | 'npm' | 'dev' | 'managed' | 'msi';
  * a baked-in build version — is the reload trigger, so it works the same under
  * npm (semver), Docker (git SHA), and dev ('dev', which never changes).
  */
+/**
+ * The last answer of /health in this page (DEC-100). Every top bar and update bar mounts with it instead of empty, so
+ * a frame that replaces another (the dashboard greyed out after the sign-in → the real dashboard) starts with the
+ * version and the update bar already there and nothing moves. It is only a starting point: each mount asks /health
+ * again at once, and an answer that never comes leaves only what this page itself was told seconds before.
+ */
+interface HealthSeen { updateAvailable: boolean; installMethod?: InstallMethod; version?: string; latestVersion?: string | null }
+let lastHealth: HealthSeen | null = null;
+/** Tests only. */
+export function resetHealthSeenForTests(): void { lastHealth = null; }
+
+/** Notes an answer of /health for the next mount (kept: an update once seen stays seen, as in each mount). */
+export function noteHealth(data: { updateAvailable?: boolean; installMethod?: InstallMethod; version?: string; latestVersion?: string | null }): void {
+  lastHealth = {
+    updateAvailable: Boolean(data.updateAvailable) || (lastHealth?.updateAvailable ?? false),
+    installMethod: data.installMethod ?? lastHealth?.installMethod,
+    version: data.version ?? lastHealth?.version,
+    latestVersion: typeof data.latestVersion !== 'undefined' ? data.latestVersion : lastHealth?.latestVersion,
+  };
+}
+
 export function useUpdateCheck({ signedOut = false }: { signedOut?: boolean } = {}) {
-  const [updateAvailable, setUpdateAvailable] = useState(false);
-  const [installMethod, setInstallMethod] = useState<InstallMethod>('docker');
-  const [version, setVersion] = useState<string>('');
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(() => lastHealth?.updateAvailable ?? false);
+  const [installMethod, setInstallMethod] = useState<InstallMethod>(() => lastHealth?.installMethod ?? 'docker');
+  const [version, setVersion] = useState<string>(() => lastHealth?.version ?? '');
+  const [latestVersion, setLatestVersion] = useState<string | null>(() => lastHealth?.latestVersion ?? null);
   const [serverRestarted, setServerRestarted] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [fast, setFast] = useState(false);
@@ -39,6 +60,7 @@ export function useUpdateCheck({ signedOut = false }: { signedOut?: boolean } = 
         .then(r => r.json())
         .then(data => {
           if (cancelled) return;
+          noteHealth(data);
           if (data.installMethod) setInstallMethod(data.installMethod);
           if (typeof data.latestVersion !== 'undefined') setLatestVersion(data.latestVersion);
           if (data.updateAvailable) setUpdateAvailable(true);

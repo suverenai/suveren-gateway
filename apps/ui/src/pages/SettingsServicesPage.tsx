@@ -593,7 +593,7 @@ function SettingsCards({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SettingsSkeleton() {
+export function SettingsSkeleton() {
   return (
     <SkelArea>
       <div data-testid="settings-skeleton" className="skel-stack">

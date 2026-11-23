@@ -6,7 +6,7 @@ import { sessionEndText } from '../../lib/access';
 import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice, useDriver } from './DeviceScreen';
 import { NotSetUpScreen } from './SetupScreens';
-import { PageLoading } from './StartScreens';
+import { ShellSkeleton } from './NextPageSkeleton';
 import { SkelBlock, SkelButton, SkelLine, SkelArea } from '@suveren/approval-card/components/LoadGate';
 
 export interface UnlockScreenProps {
@@ -31,8 +31,8 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
   const failed = state.phase === 'sign-in-failed';
 
   if (signingIn) {
-    // After the touch or the password: the turning Suveren mark until the dashboard, no text that flashes for a second.
-    return <PageLoading />;
+    // DEC-100: after the touch or the password, the dashboard greyed out until it is there; no text that flashes.
+    return <ShellSkeleton page="dashboard" />;
   }
   if (failed) {
     return (
@@ -47,22 +47,7 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
     // in one go, with the Touch ID button there from its first paint. Same blocks, same sizes: nothing moves. Whether
     // this browser saw Touch ID last time decides if the skeleton holds its place (a hint for the layout only; the
     // real button waits for the gateway's answer). A reason already known is shown at once, it does not change.
-    const touchHint = readTouchHint();
-    return (
-      <DeviceScreen title={T.unlockTitle}>
-        {state.notice && <Notice kind="info">{state.notice}</Notice>}
-        <SkelArea>
-          {!state.notice && <><SkelLine w="92%" style={{ marginBottom: '0.5rem' }} /><SkelLine w="70%" style={{ marginBottom: '1rem' }} /></>}
-          {touchHint && <>
-            <SkelButton full large />
-            <div className="login-divider" style={{ visibility: 'hidden' }}>{T.unlockOr}</div>
-          </>}
-          <SkelLine w="30%" h="0.8rem" style={{ marginBottom: '0.5rem' }} />
-          <SkelBlock h="2.9rem" style={{ marginBottom: '1.5rem' }} />
-          <SkelButton full large={!touchHint} />
-        </SkelArea>
-      </DeviceScreen>
-    );
+    return <UnlockSkeleton notice={state.notice} />;
   }
   const showTouch = state.touchAvailable && !state.passwordOnly;
   writeTouchHint(showTouch);
@@ -88,6 +73,32 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
         onClick={() => onPassword(password)} disabled={state.busy || !password}>
         {T.unlockButton}
       </button>
+    </DeviceScreen>
+  );
+}
+
+/**
+ * DEC-98/DEC-100: the unlock screen greyed out — its own layout until it knows whether Touch ID is on, and (with
+ * `pageUnknown`) while the gateway decides which page to open. A reason already known is shown at once.
+ */
+export function UnlockSkeleton({ notice, pageUnknown }: { notice?: string; pageUnknown?: boolean }) {
+  const touchHint = readTouchHint();
+  // While it is not known yet which page opens (unlock, account-key sign-in or start), its title is greyed out too:
+  // never the title of a page that may not come.
+  return (
+    <DeviceScreen title={pageUnknown ? undefined : T.unlockTitle}>
+      {pageUnknown && <SkelArea><SkelLine w="45%" h="1.6rem" style={{ marginBottom: '1rem' }} /></SkelArea>}
+      {notice && <Notice kind="info">{notice}</Notice>}
+      <SkelArea>
+        {!notice && <><SkelLine w="92%" style={{ marginBottom: '0.5rem' }} /><SkelLine w="70%" style={{ marginBottom: '1rem' }} /></>}
+        {touchHint && <>
+          <SkelButton full large />
+          <div className="login-divider" style={{ visibility: 'hidden' }}>{T.unlockOr}</div>
+        </>}
+        <SkelLine w="30%" h="0.8rem" style={{ marginBottom: '0.5rem' }} />
+        <SkelBlock h="2.9rem" style={{ marginBottom: '1.5rem' }} />
+        <SkelButton full large={!touchHint} />
+      </SkelArea>
     </DeviceScreen>
   );
 }

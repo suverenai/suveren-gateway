@@ -185,7 +185,17 @@ function Screens() {
 
   switch (view.t) {
     case 'boot':
-      return <div className="device-screen"><p role="status">{P.listLoading}</p></div>;
+      // DEC-100: before the app knows which screen opens (welcome, open, requests), a screen greyed out, never a text.
+      return (
+        <div className="device-screen" data-testid="boot-skeleton">
+          <SkelArea label={P.listLoading}>
+            <SkelLine w="55%" h="1.6rem" style={{ marginBottom: '1rem' }} />
+            <SkelLine w="90%" style={{ marginBottom: '0.5rem' }} />
+            <SkelLine w="70%" style={{ marginBottom: '1.5rem' }} />
+            <SkelButton full large />
+          </SkelArea>
+        </div>
+      );
     case 'needs':
       return <NeedsScreen needs={view.needs} />;
     case 'welcome':

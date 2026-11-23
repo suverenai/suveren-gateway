@@ -289,7 +289,7 @@ export function DashboardPage() {
 }
 
 /** DEC-98: the dashboard's three core columns, greyed out — the same grid and row heights as the real ones. */
-function DashboardSkeleton() {
+export function DashboardSkeleton() {
   return (
     <SkelArea>
       <div className="core-cols dash-cols" data-testid="dash-skeleton">
