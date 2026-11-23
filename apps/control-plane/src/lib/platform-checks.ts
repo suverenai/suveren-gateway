@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 import type { Vault, PlatformGate } from './vault';
 import type { DeviceChainStore } from './device-chain-store';
 import { canonicalJson } from './change-confirmation';
-import { CHECK_POLICY, type PlatformHelper } from './platform-helper';
+import { checkPolicyFor, type PlatformHelper } from './platform-helper';
 
 const SLOT = 'deviceCheckKey';
 
@@ -93,7 +93,7 @@ export class PlatformChecks {
 
   constructor(private readonly host: PlatformHelper) {}
 
-  /** Is a check key possible here? Touch ID is needed for `biometry-current-set`. */
+  /** Is a check key possible here? Only macOS with Touch ID (`biometry-current-set`); never on Windows or Linux (DEC-99). */
   async possible(): Promise<{ ok: true } | { ok: false; code: string }> {
     const s = await this.host.status();
     if (!s.available) return { ok: false, code: s.reason ?? 'helper_failed' };
@@ -107,7 +107,7 @@ export class PlatformChecks {
     if (!p.ok) throw new CheckError(p.code);
     try {
       return await this.host.use(async (c, info) => {
-        const k = await c.createCheckKey(CHECK_POLICY);
+        const k = await c.createCheckKey(checkPolicyFor());
         return { v: 1 as const, backend: info.backend, policy: k.policy, keyBlob: k.keyBlob, publicKey: k.publicKey };
       });
     } catch (err) {

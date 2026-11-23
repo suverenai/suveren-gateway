@@ -46,9 +46,10 @@ import { Vault } from '../../lib/vault';
 import { tmpDir, FAST, PW } from '../../__tests__/helpers/device-rig';
 
 const PKG = '../../../../../packages/unlock-helper/';
-const SOFT = fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
+// SUVEREN_TEST_HELPER: another debug build of the helper with a software backend (the Windows helper, windows/ in Go).
+const SOFT = process.env.SUVEREN_TEST_HELPER ?? fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
 const FAKE = fileURLToPath(new URL(`${PKG}test/fake-helper.mjs`, import.meta.url));
-const haveSoft = process.platform === 'darwin' && existsSync(SOFT);
+const haveSoft = (process.env.SUVEREN_TEST_HELPER !== undefined || process.platform === 'darwin') && existsSync(SOFT);
 const sit = it.skipIf(!haveSoft);
 
 const open: Array<{ close: () => Promise<void> }> = [];
@@ -60,7 +61,7 @@ afterEach(async () => {
 });
 
 const host = (spec: HelperSpec): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ({ spec }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ({ spec }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };

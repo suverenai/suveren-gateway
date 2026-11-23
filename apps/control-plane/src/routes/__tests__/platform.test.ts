@@ -27,9 +27,10 @@ import { PLATFORM_UNLOCK_OPENS_PAGE_SESSION } from '../platform';
 import { unwrapKey, wrapKey, newKey } from '../../../../../packages/unlock-helper/test/fake-helper.mjs';
 
 const PKG = '../../../../../packages/unlock-helper/';
-const SOFT = fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
+// SUVEREN_TEST_HELPER: another debug build of the helper with a software backend (the Windows helper, windows/ in Go).
+const SOFT = process.env.SUVEREN_TEST_HELPER ?? fileURLToPath(new URL(`${PKG}macos/.build/debug/suveren-unlock-helper`, import.meta.url));
 const FAKE = fileURLToPath(new URL(`${PKG}test/fake-helper.mjs`, import.meta.url));
-const haveSoft = process.platform === 'darwin' && existsSync(SOFT);
+const haveSoft = (process.env.SUVEREN_TEST_HELPER !== undefined || process.platform === 'darwin') && existsSync(SOFT);
 const soft = describe.skipIf(!haveSoft);
 /** A test that needs the real Swift helper (debug build) skips where it was not built (Linux CI). */
 const sit = it.skipIf(!haveSoft);
@@ -43,7 +44,7 @@ afterEach(async () => {
 });
 
 const host = (spec: HelperSpec | Located): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ('spec' in spec || 'unavailable' in spec ? spec : { spec }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ('spec' in spec || 'unavailable' in spec ? spec : { spec }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };
@@ -406,6 +407,7 @@ describe('the helper itself: found, hashed, started', () => {
     writeFileSync(script, body);
     const spec: HelperSpec = { command: process.execPath, args: [FAKE], files: [{ path: script, sha256: good }] };
     const h2 = new PlatformHelper({
+      platform: 'darwin', 
       locate: () => ({ spec }),
       startClient: async (s) => {
         writeFileSync(script, `${body}# swapped in the gap\n`);
@@ -433,12 +435,14 @@ describe('the helper itself: found, hashed, started', () => {
     const base = { here, scriptPath: join(here, 'index.mjs'), execPath: process.execPath, env: {} };
     writeFileSync(join(here, 'index.mjs'), '');
     expect(locateHelper({ ...base, platform: 'linux', arch: 'arm64' })).toEqual({ unavailable: 'unsupported_platform' });
-    expect(locateHelper({ ...base, platform: 'win32', arch: 'x64' })).toEqual({ unavailable: 'unsupported_platform' });
+    expect(locateHelper({ ...base, platform: 'win32', arch: 'ia32' })).toEqual({ unavailable: 'unsupported_arch' });
+    expect(locateHelper({ ...base, platform: 'win32', arch: 'x64' })).toEqual({ unavailable: 'helper_not_installed' });   // no helper/windows-x64 here
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'x64' })).toEqual({ unavailable: 'unsupported_arch' });
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_not_installed' });   // no list yet
     writeFileSync(join(here, 'helper-manifest.json'), JSON.stringify(manifest));
     const ok = locateHelper({ ...base, platform: 'darwin', arch: 'arm64' });
-    expect('spec' in ok && ok.spec.files.map(f => f.path.slice(app.length + 1)).sort()).toEqual(['Contents/Info.plist', 'Contents/MacOS/suveren-unlock-helper']);
+    // (separator-neutral: this case pretends to be a Mac, and on a Windows host `join` writes \\)
+    expect('spec' in ok && ok.spec.files.map(f => f.path.slice(app.length + 1).replaceAll('\\', '/')).sort()).toEqual(['Contents/Info.plist', 'Contents/MacOS/suveren-unlock-helper']);
     if ('spec' in ok) {
       expect(ok.spec.command).toBe(exe);
       expect(ok.spec.args).toEqual(['serve']);
@@ -450,6 +454,37 @@ describe('the helper itself: found, hashed, started', () => {
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_modified' });
     writeFileSync(join(here, 'helper-manifest.json'), '{ nope');
     expect(locateHelper({ ...base, platform: 'darwin', arch: 'arm64' })).toEqual({ unavailable: 'helper_modified' });
+  });
+
+  it('on 64-bit Windows it is found in helper/windows-<arch>, with the hashes of the gateway\'s own list', () => {
+    for (const arch of ['x64', 'arm64']) {
+      const root = tmpDir();
+      const here = join(root, 'dist', 'control-plane');
+      const folder = join(root, 'helper', `windows-${arch}`);
+      mkdirSync(here, { recursive: true });
+      mkdirSync(folder, { recursive: true });
+      writeFileSync(join(folder, 'suveren-unlock-helper.exe'), 'exe');
+      writeFileSync(join(here, 'index.mjs'), '');
+      const base = { here, scriptPath: join(here, 'index.mjs'), execPath: process.execPath, env: {}, platform: 'win32' as const, arch };
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_not_installed' });   // no list yet
+      // the Mac's list does not count for Windows, and a list without the .exe is "modified"
+      writeFileSync(join(here, 'helper-manifest.json'), JSON.stringify({ v: 1, files: { 'suveren-unlock-helper.exe': createHash('sha256').update('exe').digest('hex') } }));
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_not_installed' });
+      const list = join(here, `helper-manifest-windows-${arch}.json`);
+      writeFileSync(list, JSON.stringify({ v: 1, files: { 'Contents/MacOS/suveren-unlock-helper': createHash('sha256').update('exe').digest('hex') } }));
+      expect(locateHelper(base)).toEqual({ unavailable: 'helper_modified' });
+      writeFileSync(list, JSON.stringify({ v: 1, files: { 'suveren-unlock-helper.exe': createHash('sha256').update('exe').digest('hex') } }));
+      const ok = locateHelper(base);
+      expect('spec' in ok).toBe(true);
+      if ('spec' in ok) {
+        expect(ok.spec.command).toBe(join(folder, 'suveren-unlock-helper.exe'));
+        expect(ok.spec.args).toEqual(['serve']);
+        expect(ok.spec.files).toEqual([{ path: join(folder, 'suveren-unlock-helper.exe'), sha256: createHash('sha256').update('exe').digest('hex') }]);
+        // the Windows helper reads its list of callers beside its own .exe
+        expect(ok.spec.callers!.path).toBe(join(folder, 'allowed-callers.json'));
+        expect(JSON.parse(ok.spec.callers!.body)).toMatchObject({ v: 1, callers: [{ scriptPrefix: expect.stringContaining('control-plane') }] });
+      }
+    }
   });
 
   it('a computer with no usable helper reports it, and everything else works with the password as before', async () => {
@@ -884,7 +919,9 @@ describe('item 3: turning Touch ID unlock on or off asks for the unlock password
     });
     expect((await w.post('/auth/platform/enable', { password: PW })).status).toBe(200);
     expect((await w.post('/auth/platform/disable', { password: PW })).status).toBe(200);
-    expect(shown).toEqual(['turn on Touch ID unlock for Suveren', 'turn off Touch ID unlock for Suveren']);
+    // the Windows helper names its own platform authenticator (DEC-99 wording: never "Touch ID" on Windows)
+    const auth = process.platform === 'win32' ? 'Windows Hello' : 'Touch ID';
+    expect(shown).toEqual([`turn on ${auth} unlock for Suveren`, `turn off ${auth} unlock for Suveren`]);
   });
 
   it('a cancelled check turns nothing on and nothing off; the password alone is not enough where a check key exists', async () => {
@@ -1131,6 +1168,7 @@ describe('item 9: the vault key is wrapped in Node; the helper never receives it
     const lines: string[] = [];
     const spec: HelperSpec = { command: SOFT, args: ['serve', '--backend', 'software', '--allow-any-caller'], files: [] };
     const h = new PlatformHelper({
+      platform: 'darwin', 
       locate: () => ({ spec }),
       startClient: async (s) => {
         const c = await UnlockHelperClient.start({ command: s.command, args: s.args });
@@ -1152,5 +1190,26 @@ describe('item 9: the vault key is wrapped in Node; the helper never receives it
     expect(sent).not.toContain('"op":"wrap"');
     const raw = Buffer.from(keyHex, 'hex');
     for (const needle of [keyHex, raw.toString('base64'), raw.toString('base64url')]) expect(sent).not.toContain(needle);
+  });
+});
+
+// DEC-97: on Windows the check key accepts Windows Hello with the PIN as well as a fingerprint or face; macOS stays biometric.
+describe('the check key\'s policy (DEC-99: macOS only, biometric; FAKE helper)', () => {
+  it('macOS: biometry, and a Mac without Touch ID gets no check key', async () => {
+    const mac = new PlatformChecks(fakeHost());
+    expect(await mac.possible()).toEqual({ ok: true });
+    expect((await mac.createKey()).policy).toBe('biometry-current-set');
+    const noTouchId = new PlatformChecks(fakeHost({ FAKE_BIOMETRY: '0' }));
+    expect(await noTouchId.possible()).toEqual({ ok: false, code: 'no_biometry' });
+    await expect(noTouchId.createKey()).rejects.toMatchObject({ code: 'no_biometry' });
+  });
+
+  it('DEC-99: a helper that calls itself "windows" cannot lower the policy; a check key is always biometric', async () => {
+    // The OS decides (macOS here), never the helper's own report: a key is only ever asked for with biometry-current-set,
+    // which the fake Windows helper refuses (as Windows' key storage does) — so no user-presence check key ever exists.
+    const win = new PlatformChecks(fakeHost({ FAKE_PLATFORM: 'windows' }));
+    await expect(win.createKey()).rejects.toBeTruthy();
+    const noBio = new PlatformChecks(fakeHost({ FAKE_PLATFORM: 'windows', FAKE_BIOMETRY: '0' }));
+    expect(await noBio.possible()).toEqual({ ok: false, code: 'no_biometry' });
   });
 });

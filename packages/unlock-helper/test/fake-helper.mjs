@@ -83,7 +83,9 @@ export function reasonFor(bytes, focus, previous) {
   } else if (Object.keys(o).sort().join(',') === CHANGE_MEMBERS && (o.kind === 'replace' || o.kind === 'remove') && typeof o.name === 'string' && o.name) {
     text = `${o.kind === 'replace' ? 'replace' : 'remove'} the login of ${quoted(o.name)}`;
   } else if (o.typ === 'suveren-platform-unlock' && Object.keys(o).sort().join(',') === SWITCH_MEMBERS && (o.action === 'enable' || o.action === 'disable')) {
-    text = o.action === 'enable' ? 'turn on Touch ID unlock for Suveren' : 'turn off Touch ID unlock for Suveren';
+    // the Windows helper names Windows Hello, never Touch ID (reason.go); the reference follows the OS it runs on
+    const auth = process.platform === 'win32' ? 'Windows Hello' : 'Touch ID';
+    text = o.action === 'enable' ? `turn on ${auth} unlock for Suveren` : `turn off ${auth} unlock for Suveren`;
   } else if (o.typ === 'suveren-identity-cancel' && Object.keys(o).sort().join(',') === CANCEL_MEMBERS) {
     text = 'cancel the request for a new identity';
   } else if (o.typ === 'suveren-passkey-register' && Object.keys(o).sort().join(',') === PASSKEY_MEMBERS) {
@@ -165,9 +167,12 @@ const b = (s, k) => { if (typeof s[k] !== 'string' || !/^[A-Za-z0-9_-]*$/.test(s
 async function run(r) {
   switch (r.op) {
     case 'hello':
-      return { helper: 'fake-helper', version: '0.0.0', protocol: 1, platform: 'macos', backend: 'fake', secureHardware: true, biometry: true, userPresence: true };
+      // FAKE_PLATFORM=windows plays the Windows helper (its key storage can only ask "is it you?", never biometry only);
+      // FAKE_BIOMETRY=0 a computer without a fingerprint reader or camera.
+      return { helper: 'fake-helper', version: '0.0.0', protocol: 1, platform: process.env.FAKE_PLATFORM ?? 'macos', backend: 'fake', secureHardware: true, biometry: process.env.FAKE_BIOMETRY !== '0', userPresence: true };
     case 'wrap.create': case 'check.create': {
       if (!['user-presence', 'biometry-current-set', 'biometry-any'].includes(r.policy)) throw err('bad_request', 'policy');
+      if (process.env.FAKE_PLATFORM === 'windows' && r.policy !== 'user-presence') throw err('no_biometry', 'This key storage cannot require biometry only.');
       const k = newKey();
       return { keyBlob: k.blob, publicKey: k.pub.toString('base64url'), policy: r.policy };
     }

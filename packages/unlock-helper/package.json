@@ -2,7 +2,7 @@
   "name": "@suveren/unlock-helper",
   "version": "0.0.1",
   "private": true,
-  "description": "Node client for the native unlock helper: a second wrap of the vault key behind Touch ID / Windows Hello, and the computer's check key. The helper itself is in macos/ (Swift); Windows is designed, not built. See DESIGN.md.",
+  "description": "Node client for the native unlock helper: a second wrap of the vault key behind Touch ID / Windows Hello, and the computer's check key. The helper itself is in macos/ (Swift) and windows/ (Go; Windows Hello not yet measured). See DESIGN.md.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:swift": "./macos/test.sh",
     "build:helper": "cd macos && swift build -c release",
+    "build:windows-helper": "node windows/build.mjs",
     "build": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {

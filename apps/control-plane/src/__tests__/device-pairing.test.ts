@@ -35,7 +35,7 @@ const hosts: PlatformHelper[] = [];
 afterEach(() => { for (const h of hosts.splice(0)) h.close(); });
 
 const fakeHost = (): PlatformHelper => {
-  const h = new PlatformHelper({ locate: () => ({ spec: { command: process.execPath, args: [FAKE], env: { ...process.env }, files: [] } }), idleMs: 30, touchTimeoutMs: 20_000 });
+  const h = new PlatformHelper({ platform: 'darwin',  locate: () => ({ spec: { command: process.execPath, args: [FAKE], env: { ...process.env }, files: [] } }), idleMs: 30, touchTimeoutMs: 20_000 });
   hosts.push(h);
   return h;
 };

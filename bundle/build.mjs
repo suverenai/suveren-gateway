@@ -35,7 +35,7 @@ import { execSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync, realpathSync, lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkHelperBuild } from './lib/helper-check.mjs';
+import { checkHelperBuild, checkWindowsHelperBuild, WINDOWS_ARCHS } from './lib/helper-check.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -50,6 +50,16 @@ if (withHelper) {
   const problems = checkHelperBuild(HELPER_BUILT);
   if (problems.length) {
     for (const p of problems) console.error(`[bundle] --with-helper: ${p}`);
+    process.exit(1);
+  }
+}
+// The Windows helper (opt-in), from packages/unlock-helper/windows/build.mjs: the same checks.
+const withWindowsHelper = process.argv.includes('--with-windows-helper');
+const WINDOWS_HELPER_BUILT = process.env.SUVEREN_WINDOWS_HELPER_BUILD_DIR ?? join(REPO_ROOT, 'packages/unlock-helper/windows/dist');
+if (withWindowsHelper) {
+  const problems = checkWindowsHelperBuild(WINDOWS_HELPER_BUILT);
+  if (problems.length) {
+    for (const p of problems) console.error(`[bundle] --with-windows-helper: ${p}`);
     process.exit(1);
   }
 }
@@ -107,6 +117,15 @@ if (withHelper) {
   cpSync(join(built, 'helper-manifest.json'), join(OUT, 'dist', 'control-plane', 'helper-manifest.json'));
   chmodSync(join(OUT, 'helper', 'Suveren.app', 'Contents', 'MacOS', 'suveren-unlock-helper'), 0o755);
   console.log('[bundle] ✓ native helper (Suveren.app) included');
+}
+// Windows: helper/windows-<arch>/suveren-unlock-helper.exe, its hashes in the control plane's folder (not beside it).
+// Until Windows Hello is measured (DESIGN.md section 8) this helper says "no secure hardware" and the password stays.
+if (withWindowsHelper) {
+  for (const arch of WINDOWS_ARCHS) {
+    cpSync(join(WINDOWS_HELPER_BUILT, `windows-${arch}`, 'suveren-unlock-helper.exe'), join(OUT, 'helper', `windows-${arch}`, 'suveren-unlock-helper.exe'));
+    cpSync(join(WINDOWS_HELPER_BUILT, `helper-manifest-windows-${arch}.json`), join(OUT, 'dist', 'control-plane', `helper-manifest-windows-${arch}.json`));
+  }
+  console.log('[bundle] ✓ Windows helper (x64, arm64) included');
 }
 
 // Ship integration manifests so the UI's Integrations page works

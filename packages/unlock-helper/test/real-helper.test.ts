@@ -13,9 +13,19 @@ import { reasonFor, unwrapKey, wrapKey } from './fake-helper.mjs';
 //  - software backend: real process, real protocol, P-256 keys without hardware (no touch)
 //  - Secure Enclave backend with SUVEREN_HELPER_NO_PROMPT=1: keys are really made in the Secure
 //    Enclave, but every use is refused instead of asking for a touch
-const HELPER = fileURLToPath(new URL('../macos/.build/debug/suveren-unlock-helper', import.meta.url));
-const have = process.platform === 'darwin' && existsSync(HELPER);
+//
+// SUVEREN_TEST_HELPER=<path> runs the same tests against another debug build of the helper: the
+// Windows helper (windows/, Go, `go build -tags debug`). Its software backend must give the same
+// answers; the Secure Enclave block is macOS-only, the caller-refusal block needs a real parent
+// check (macOS helper, or the Windows helper on Windows).
+const OVERRIDE = process.env.SUVEREN_TEST_HELPER;
+const HELPER = OVERRIDE ?? fileURLToPath(new URL('../macos/.build/debug/suveren-unlock-helper', import.meta.url));
+const MAC_HELPER = OVERRIDE === undefined;
+const have = (MAC_HELPER ? process.platform === 'darwin' : true) && existsSync(HELPER);
 const run = describe.skipIf(!have);
+const runMac = describe.skipIf(!have || !MAC_HELPER);
+const runCallerCheck = describe.skipIf(!have || (!MAC_HELPER && process.platform !== 'win32'));
+const runWindows = describe.skipIf(!have || MAC_HELPER || process.platform !== 'win32');
 
 const tmp = mkdtempSync(join(tmpdir(), 'unlock-helper-test-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -123,7 +133,7 @@ run('real helper, software keys: same code path as the Secure Enclave, no touch'
   });
 });
 
-run('real helper, Secure Enclave, prompts switched off', () => {
+runMac('real helper, Secure Enclave, prompts switched off', () => {
   const env = { SUVEREN_HELPER_NO_PROMPT: '1' };
   it('describes the computer, makes keys, wraps, and refuses every touch-bound use', async () => {
     const c = await start(['--allow-any-caller'], env);
@@ -143,7 +153,7 @@ run('real helper, Secure Enclave, prompts switched off', () => {
   });
 });
 
-run('real helper refuses a caller that is not the gateway', () => {
+runCallerCheck('real helper refuses a caller that is not the gateway', () => {
   const gw = join(tmp, 'gw');
   mkdirSync(gw);
   const launcher = join(gw, 'launcher.mjs');
@@ -172,7 +182,7 @@ run('real helper refuses a caller that is not the gateway', () => {
 
   it('serves the gateway', () => {
     const r = launch([], callersFile(gw, 'ok.json'));
-    expect(r.code).toBe(0);
+    expect(r.code, r.err).toBe(0);   // on a refusal the helper's stderr names the reason
     expect(JSON.parse(r.out.split('\n')[0]!)).toMatchObject({ ok: true, protocol: 1 });
   });
   it('refuses a parent whose script is outside the gateway install', () => {
@@ -191,5 +201,19 @@ run('real helper refuses a caller that is not the gateway', () => {
     // this test process is the parent, and it is not the "gateway"
     await expect(start(['--backend', 'software', '--allowed-callers', callersFile(gw, 'ok4.json')]))
       .rejects.toBeInstanceOf(HelperError);
+  });
+});
+
+runWindows('real Windows helper, TPM backend, not yet measured', () => {
+  // Until Windows Hello prompting is measured on real hardware (DESIGN.md section 8), the TPM path
+  // says it has no secure hardware and refuses to make keys, so the gateway keeps the password.
+  it('reports no secure hardware and makes no keys', async () => {
+    const c = await start(['--allow-any-caller'], { SUVEREN_HELPER_NO_PROMPT: '1' });
+    try {
+      const info = await c.hello();
+      expect(info).toMatchObject({ platform: 'windows', secureHardware: false, backend: 'tpm-platform-crypto-unmeasured' });
+      await expect(c.createWrapKey('user-presence')).rejects.toMatchObject({ code: 'no_secure_hardware' });
+      await expect(c.createCheckKey('user-presence')).rejects.toMatchObject({ code: 'no_secure_hardware' });
+    } finally { c.close(); }
   });
 });

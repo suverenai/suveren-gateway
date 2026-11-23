@@ -30,7 +30,7 @@ beforeAll(() => {
   if (r.status !== 0) throw new Error(`tsup failed: ${r.stderr}`);
   writeFileSync(join(gatewayDir, 'main.mjs'), `
     import { PlatformHelper, locateHelper } from './platform-helper.mjs';
-    const host = new PlatformHelper({ locate: () => locateHelper({ here: process.argv[2], env: {} }) });
+    const host = new PlatformHelper({ platform: 'darwin',  locate: () => locateHelper({ here: process.argv[2], env: {} }) });
     console.log(JSON.stringify(await host.status()));
     host.close();`);
 }, 120_000);

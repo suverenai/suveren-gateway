@@ -1,7 +1,8 @@
 # Native unlock helper — design (step 5a, DEC-38 and DEC-47)
 
 Status: design, a working macOS helper, and its integration into the gateway's control plane (step 5a, behind
-`SUVEREN_DEVICE_KEYS=on`). Windows is designed, not built.
+`SUVEREN_DEVICE_KEYS=on`). Windows: a helper is built (`windows/`, section 8) with its TPM path switched off until
+Windows Hello is measured on real hardware; until then it reports no secure hardware and the password stays.
 Measured on a MacBook Air M5, macOS 26.6.2, Swift 6.3.3, command-line tools only (no Xcode).
 
 The helper does two things for the Suveren gateway:
@@ -28,7 +29,8 @@ What the person needs to know: they touch the sensor, and the system says what f
 | Swift helper for macOS (`macos/`), Secure Enclave keys, wrap/unwrap, check signature, caller refusal | built, runs |
 | Node client (`src/`) and protocol types | built, tested against a fake and against the real helper |
 | Touch prompts (unwrap, sign) on the real Secure Enclave | **not run**: they need a touch. Manual checks for the maintainer: section 9 |
-| Windows helper | designed (section 8), not built, not measured |
+| Windows helper (`windows/`, Go): protocol, reason text, wrap, caller refusal, software test backend | built, tested on a Windows CI runner (section 8, 11) |
+| Windows TPM keys behind Windows Hello (Platform Crypto Provider) | written, **switched off and not measured**: no Windows machine with Hello has run it (section 8) |
 | The prompt text built by the helper from the object | built (section 5, 3.3) |
 | The provider in `vault.ts` (third way to the vault key), the computer's check key, the per-change confirmation | built in `apps/control-plane` (section 12), tested with the helper's software backend and a fake |
 | The helper as an ad-hoc signed `Suveren.app` inside the npm package, hashes checked before every start | built (`macos/build-app.sh`, `bundle/build.mjs --with-helper`, section 12) |
@@ -447,7 +449,59 @@ inside it afterwards does not (this is why the list of callers sits beside the `
 
 ---
 
-## 8. Windows design (not built, not measured)
+## 8. Windows
+
+### 8.0 What is built (2026-11-21)
+
+**DEC-99 (the maintainer, 2026-11-21): on Windows and Linux the computer has NO check key and no Hello/biometric
+unlock — password unlock, every grant via the phone — until S1** (the gateway under its own OS user). The control
+plane decides by its own `process.platform`, never by what a helper reports about itself: off macOS it never locates
+or starts a helper (`platformKeysAllowed` in `apps/control-plane/src/lib/platform-helper.ts`; status says
+`unsupported_platform`), so no check key, no unlock wrap and no touch exist there even if a working helper is
+installed. Why: a key in the person's Windows key storage is usable by any program of that user, the caller check
+included (section 4 and the security review of 2026-11-21), and Windows cannot require biometry only, so a PIN typed
+by anything that drives the screen would count. DEC-97's Windows `user-presence` check-key policy is removed;
+`checkPolicyFor` is `biometry-current-set` only. The Windows helper below stays in the repository, shipped off, and is
+hardened for S1 (review items M1–M6, listed after the table).
+
+`windows/` is the Windows helper: the same protocol, the same reason texts and the same wrap format as the macOS helper,
+in **Go**. Why Go: one static `.exe` with no runtime to install; it cross-compiles for x64 and arm64 from any system with
+no C compiler and no paid tool, so `windows-latest` and a Mac build the same file; the standard library has every
+primitive the protocol needs (P-256 ECDH and ECDSA, HKDF, AES-GCM) and calls the Windows APIs directly
+(`ncrypt.dll`, `kernel32.dll`, `ntdll.dll`, `shell32.dll`). One outside package: `golang.org/x/text` (Unicode NFC for
+the reason check, BSD-3, from the Go project). C++ and Rust were the alternatives: Rust needs the MSVC linker on
+Windows, C++ a Visual Studio toolchain.
+
+| Part | State |
+|---|---|
+| Protocol, `check.sign` with the reason built from the object, `reason` refused, digest checked first | built; the helper client's tests and the control plane's 140 route tests pass with it in place of the Swift helper |
+| Wrap format `0x01` (ECIES P-256, HKDF, AES-GCM, aad) | built; opens what Node wraps (`src/wrap.ts`) |
+| Caller refusal: parent from a process snapshot, its image (`QueryFullProcessImageNameW`), command line (`NtQueryInformationProcess` class 60, `CommandLineToArgvW`) and environment (read from its process parameters); stdin must be a pipe; checked at start and before every request; paths compared without case | built; tested against real parent processes on a Windows runner |
+| Software backend, `--allow-any-caller`, `--allowed-callers` | debug builds only (`-tags debug`); the bundle refuses an `.exe` that contains them |
+| TPM keys: `NCryptCreatePersistedKey` (`ECDSA_P256`, `ECDH_P256`) in the Platform Crypto Provider, `NCRYPT_UI_POLICY` with protect + force-high-protection, sign (P1363 → DER), secret agreement (raw secret, reversed to big-endian) | written, **switched off**: the release build reports `backend: tpm-platform-crypto-unmeasured`, `secureHardware: false`, and refuses to make keys. `-tags hellomeasured` switches it on, for the measurement below and only after it passed |
+| In the gateway | `locateHelper` finds `helper/windows-<arch>/suveren-unlock-helper.exe` with its hashes in `dist/control-plane/helper-manifest-windows-<arch>.json`; `bundle/build.mjs --with-windows-helper`; `windows/build.mjs` builds both architectures |
+
+**Hardening for S1 (security review 2026-11-21).**
+
+- **M1a** the stdin pipe's other end must be the parent (`GetNamedPipeServerProcessId` / `GetNamedPipeClientProcessId`), since the snapshot's parent id can be chosen by whoever creates the process.
+- **M1b** paths compare after canonicalisation, folding ASCII letters only (no Unicode folding: `ſ` is not `s`).
+- **M1c** a rooted (`\x.js`) or drive-relative (`C:x.js`) script is refused, and the script must exist as a regular file in the install (this also refuses `node inspect`).
+- **M1d** NODE_OPTIONS is checked in the parent's environment at start and before each request. The limit: a value put into the running gateway's own environment afterwards does nothing to the running Node, so it is not a way in, but an inspector attached to the running process is, and no check by the helper sees that (section 4). Only S1 closes it.
+- **M3** `open()` refuses a request that does not allow interaction before any key is touched.
+- **M4** a key's UI policy is read back on every open; a key without protect and force-high-protection is refused.
+- **M5** `ncrypt.dll` and `shell32.dll` are loaded by full path from the system folder, never from beside the `.exe`.
+- **M6** a request or object with any data after the one JSON value is refused.
+- The bundle refuses a Windows `.exe` that lacks the `tpm-platform-crypto-unmeasured` marker (a `hellomeasured` build).
+- The Windows reason texts say "Windows Hello", never "Touch ID".
+
+**Why switched off.** The design below already says it: whether the Platform Crypto Provider asks for Windows Hello at
+every use of a TPM key is unknown, and the UI policy may be a software-provider mechanism only. A key whose use does not
+ask the person must never become a `platform` check (DEC-47). And the helper's reason text does **not** reach the
+Windows prompt on this route: CNG takes no per-use text, so the person would see Windows' own wording, not "add the
+device …". The first is for the measurement; the text was accepted (DEC-97): Windows shows its own wording, the page shows the content.
+
+### 8.1 Design (from documentation)
+
 
 Same process model, same protocol, same Node client. The helper is `suveren-unlock-helper.exe`, started by
 the gateway with anonymous pipes. Everything below is **design from documentation, not run**.
@@ -585,9 +639,13 @@ gateway to a second Mac: expect `key_invalid` on the unlock, not a prompt, and t
 4. **Helper-derived reason text** (section 5): built (3.3) for chain entries and connector-login changes. Still to
    do: the mandate grant's text when steps 13 and 14 freeze its object; and your wording for every text in 3.3 (O19).
 5. **Intel Macs:** password only for now (the control plane reports `unsupported_arch`); a universal build was not tried.
-6. **Windows:** a Windows machine with Hello to measure the routes in section 8; the language
-   (C++ or Rust); an Authenticode certificate (the MSI is signed by IT today; the helper `.exe` inside
-   needs its own signature or the same signing step) and SmartScreen reputation.
+6. **Windows:** a Windows 11 machine with Hello and a TPM 2.0 to measure Route A (section 8.0, 8.1) before
+   `-tags hellomeasured` may ship; an Authenticode code-signing certificate for `suveren-unlock-helper.exe` (the
+   MSI's signing step can sign it; the hashes must then be taken AFTER signing, because signing changes the file)
+   and SmartScreen reputation. Decided (DEC-97): Go with `golang.org/x/text`; Windows' own Hello prompt wording is
+   accepted (the helper's reason text cannot reach it; the page shows the content); DEC-97's
+   Windows `user-presence` check key is withdrawn by DEC-99: no check key and no platform unlock on Windows or Linux
+   until S1 (section 8.0); macOS stays `biometry-current-set`.
 7. **Where `allowed-callers.json` is written and who can change it.** In the user's own folder it is only
    a guard against another program, not against the user's AI (section 4). A system-wide install with
    a root-owned list is the S1/S2 answer (O29).
