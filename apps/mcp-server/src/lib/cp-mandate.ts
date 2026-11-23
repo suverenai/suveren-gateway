@@ -64,7 +64,10 @@ export async function controlPlaneMandateOffer(o: { proposalId: string; tool: 'c
       signal: AbortSignal.timeout(30_000),
     });
     const body = (await res.json().catch(() => ({}))) as { ok?: unknown; code?: unknown };
-    return { ok: res.ok && body.ok === true, ...(typeof body.code === 'string' ? { code: body.code } : {}) };
+    const out = { ok: res.ok && body.ok === true, ...(typeof body.code === 'string' ? { code: body.code } : {}) };
+    // Not offered: the card on the computer still gives it. Said once in the log, by code only (no content).
+    if (!out.ok && out.code !== 'no_chain') console.warn(`[Suveren MCP] proposal ${o.proposalId}: not offered to the phone (${out.code ?? res.status})`);
+    return out;
   } catch {
     return { ok: false, code: 'unreachable' };
   }

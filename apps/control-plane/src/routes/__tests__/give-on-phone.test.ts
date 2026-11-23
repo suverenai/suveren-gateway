@@ -428,5 +428,32 @@ describe('give on the phone', () => {
     expect(bad.status).toBe(400);
     expect(w.mandates.bodies).toHaveLength(0);
   });
+
+  it('an AI-proposed CHANGE is offered to the phone when it arrives: op change, naming the proposal, with the version it continues', async () => {
+    const w = await world();
+    const phone = await makePhone();
+    await w.addPhone(phone);
+    const { sent } = await prepareAndSend(w);
+    const first = await phoneOpens(w, phone);
+    expect((await phoneSigns(w, phone, first.c)).status).toBe(201);
+    const authz1 = String((await w.get(`/api/mandate/give-on-phone/${String(sent.body.mandateId)}`)).body.authorizationId);
+    const v1Grant = (w.mandates.rows.at(-1)! as unknown as { grant: Record<string, unknown> }).grant;
+    const old = { authorizationId: authz1, profileId: SALES.id, groupId: String(first.c.give.place.group_id), ownerDid: w.rootDid, bounds: { profile: SALES.id, ...LIMITS }, context: REQ.scope, intent: REQ.intent, mode: 'review', expiresAt: v1Grant.expires_at, title: 'Quotes' };
+    w.held.set(authz1, old);
+    // what the Setup tool seals into the proposal: the old mandate's id, the changes, the resulting mode, the diff it computed
+    const prev = await w.get(`/api/mandate/change-preview?authorizationId=${authz1}&changes=${encodeURIComponent(JSON.stringify({ limits: { value_max: 3000 } }))}`);
+    expect(prev.status, prev.text).toBe(200);
+    const args = { mandate_id: authz1, limits: { value_max: 3000 }, mode: 'review', change: prev.body.diff };
+    const r = await call(w.gw.port, 'POST', '/internal/mandate/offer', { headers: { 'X-Internal-Secret': 'sekret' }, body: { proposalId: 'prop_change_0001', tool: 'change', args, old } });
+    expect(r.status, r.text).toBe(200);
+    expect(r.body, r.text).toMatchObject({ ok: true, mandateVersion: 2 });
+    const { c } = await phoneOpens(w, phone);
+    expect(c.give.op).toBe('change');
+    expect(c.give.proposal_id).toBe('prop_change_0001');
+    expect(c.give.bounds.value_max).toBe(3000);
+    expect(c.give.previous).toMatchObject({ mandate_version: 1 });
+    expect((await phoneSigns(w, phone, c)).status).toBe(201);
+    expect((await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`)).body).toMatchObject({ state: 'done' });
+  });
 });
 
