@@ -41,6 +41,9 @@ export interface OutcomeOutboxEntry {
   decidedAt: number;
   /** Unix ms when this entry was appended to a tool reply. Absent = not yet delivered. */
   deliveredAt?: number;
+  /** A `replaced` AI mandate (or change) proposal the person GAVE as proposed (the gateway knows: GET /internal/mandate/given):
+   *  the mandate it put in force. Absent = the person's own version (Edit before signing), or not known here. */
+  given?: { authorizationId: string; isChange: boolean };
 }
 
 interface StoreFile { version: 1; entries: OutcomeOutboxEntry[]; }
@@ -213,6 +216,7 @@ export class OutcomeOutbox {
 export function formatOutcomeLine(e: OutcomeOutboxEntry): string {
   const what =
     e.outcome === 'change_needed' ? `SENT BACK FOR A CHANGE by ${e.who}: "${e.note ?? ''}"`
+    : e.outcome === 'replaced' && e.given ? `GIVEN: the person gave ${e.given.isChange ? 'the change' : 'the mandate'} you proposed with their touch, exactly as proposed. It is in force now as ${e.given.authorizationId}`
     : e.outcome === 'replaced' ? `REPLACED by the person's own mandate`
     : `REJECTED by ${e.who}`;
   return `[Suveren gateway] Since your last call: proposal ${e.proposalId} was ${what}.`;

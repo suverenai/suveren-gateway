@@ -1,8 +1,11 @@
 // Service worker of the phone approval app (device-keys plan section 8, "Updates").
 //
-// It keeps the app's own static files (the shell) so the app opens without a network, and fetches a new
-// version in the background: a file is answered from the cache at once and refreshed behind it, so a new
-// version is used from the next start. It does not call skipWaiting().
+// It keeps the app's own static files so the app opens without a network. The page itself (index.html, which names
+// the build's files) is asked from the network FIRST, and only answered from the cache when there is no network: an
+// app opened after an update runs the new build on that open, never the previous one (dev lane 2026-11-23: a closed
+// and reopened app ran the old build once, so the person tested — and decided with — old code). The build's other
+// files carry their content hash in their names: they are answered from the cache at once and refreshed behind it.
+// It does not call skipWaiting().
 //
 // It never touches the Authority Server: only same-origin GET requests are handled, and the server is another
 // origin. It never stores decrypted content (the app never hands it any) and no response of a signed-in call.
@@ -28,7 +31,24 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
   // Every page request is the one shell page.
-  const key = req.mode === 'navigate' ? new Request('/') : req;
+  if (req.mode === 'navigate') {
+    const shell = new Request('/');
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      try {
+        const res = await fetch(req, { cache: 'no-store' });
+        if (res.ok) await cache.put(shell, res.clone());
+        return res;
+      } catch (err) {
+        // No network: the last page this phone had (the app can show what it holds; a decision needs the server anyway).
+        const cached = await cache.match(shell);
+        if (cached) return cached;
+        throw err;
+      }
+    })());
+    return;
+  }
+  const key = req;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(key);
