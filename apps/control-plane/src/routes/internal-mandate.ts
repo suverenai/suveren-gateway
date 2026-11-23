@@ -18,7 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, giveOnPhone, changeOnPhone, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, giveOnPhone, changeOnPhone, proposalGiveState, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 import { eventBus } from '../lib/event-bus';
 
 /** The workspace the Setup tools' mandates go to (the same name builtins/setup.ts declares; keep the two in step). */
@@ -146,6 +146,14 @@ export function createInternalMandateRouter(
       console.error('[Control Plane] /internal/mandate/offer failed:', err);
       res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
     }
+  });
+  // GET /internal/mandate/given/:proposalId — what became of an AI proposal's give (see proposalGiveState): the AI path names the
+  // mandate its proposal put in force instead of "the person signed their own version".
+  router.get('/mandate/given/:proposalId', (req, res) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+    const id = req.params.proposalId;
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { res.status(400).json({ error: 'bad_request' }); return; }
+    res.json(proposalGiveState(id, { ...deps(), newAuthorizationId: () => '' }));
   });
   return router;
 }

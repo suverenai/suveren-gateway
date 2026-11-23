@@ -633,6 +633,25 @@ export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Prom
 }
 
 const phoneGiveInFlight = new Set<string>();
+
+/**
+ * AI proposals a give carried out, by proposal id: the mandate now in force and whether it was a change. The proposal is closed as
+ * `replaced` (the Authority Server knows no other word for "closed because the person gave a mandate"); this tells the AI path that
+ * it was ITS proposal that went into force, not a version of the person's own. Kept a day in this process: a restart forgets it and
+ * the AI then hears the generic "replaced" line, which names list-authorizations.
+ */
+const givenForProposal = new Map<string, { at: number; authorizationId: string; op: 'grant' | 'change' }>();
+const GIVEN_KEEP_MS = 24 * 3600_000;
+export function noteProposalGiven(proposalId: string, authorizationId: string, op: 'grant' | 'change'): void {
+  givenForProposal.set(proposalId, { at: Date.now(), authorizationId, op });
+  for (const [id, g] of givenForProposal) if (Date.now() - g.at >= GIVEN_KEEP_MS) givenForProposal.delete(id);
+}
+/** What became of an AI proposal's give: in force (`given`), still waiting on the phone (`waiting`), or nothing known here. */
+export function proposalGiveState(proposalId: string, deps: CeremonyDeps): { given: { authorizationId: string; op: 'grant' | 'change' } } | { waiting: true } | Record<string, never> {
+  const g = givenForProposal.get(proposalId);
+  if (g && Date.now() - g.at < GIVEN_KEEP_MS) return { given: { authorizationId: g.authorizationId, op: g.op } };
+  return deps.grants?.phoneGives.byProposal(proposalId) ? { waiting: true } : {};
+}
 /** Gives finished in this process, kept a little while so a later ask (the page after the background, or the reverse) hears "done". */
 const phoneGiveDone = new Map<string, { at: number; authorizationId: string; revokeError?: string }>();
 const PHONE_GIVE_DONE_KEEP_MS = 10 * 60_000;
@@ -667,6 +686,7 @@ async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise
     ? await requestRenewal(rc.req!, rc.asBody!, rc.boundsHash!, rc.scopeHash!, issued, deps)
     : await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
   phoneGiveDone.set(mandateId, { at: Date.now(), authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) });
+  if (p.proposalId) noteProposalGiven(p.proposalId, r.authorizationId, (p.give as { op?: unknown }).op === 'change' ? 'change' : 'grant');
   for (const [id, d] of phoneGiveDone) if (Date.now() - d.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveDone.delete(id);
   return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
 }

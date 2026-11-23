@@ -210,6 +210,8 @@ export interface GiveDeps {
   now: () => number;
   /** How often and how long the phone looks for a computer's receipt right after the grant. */
   receiptPoll?: { tries: number; everyMs: number };
+  /** After "not received": asking on by itself (tests set it short). */
+  receiptLater?: { tries: number; everyMs: number };
 }
 
 /** The gives waiting for this phone, each checked; the ones that fail a check come back with their code (never shown as a give). */
@@ -263,6 +265,11 @@ export type GiveState =
   | { step: 'signed'; item: GiveItem; receivedBy: string }
   | { step: 'not_received'; item: GiveItem; grant: MandateGrant; checking: boolean; checkedOnce: boolean }
   | { step: 'failed'; item: GiveItem | null; error: string };
+
+/** How long the phone waits for the computer's receipt before it says "not received yet": a minute, asked every 2 seconds. */
+export const GIVE_RECEIPT_WAIT = { tries: 30, everyMs: 2000 };
+/** After that, it asks on by itself every 5 seconds for ten minutes. */
+export const GIVE_RECEIPT_LATER = { tries: 120, everyMs: 5000 };
 
 export class GiveDriver extends Driver<GiveState> {
   private gen = 0;
@@ -328,15 +335,33 @@ export class GiveDriver extends Driver<GiveState> {
     }
   }
 
+  /**
+   * The computer takes a phone's grant in on its own (the gateway checks waiting gives every 5 seconds, then requests the mandate and
+   * answers with its receipt): usually 5 to 15 seconds. Until then the phone keeps "Signing…" and asks every 2 seconds; only after a
+   * minute without a receipt does it say the computer has not received it (dev lane 2026-11-23: after 4 seconds it said so, the
+   * person tried again, and the gateway had it a few seconds later). Then it goes on asking by itself for ten minutes, so the state
+   * turns to "received" when the computer is opened again, without a tap.
+   */
   private async waitForReceipt(item: GiveItem, grant: MandateGrant, gen: number): Promise<void> {
-    const poll = this.d.receiptPoll ?? { tries: 3, everyMs: 2000 };
+    const poll = this.d.receiptPoll ?? GIVE_RECEIPT_WAIT;
     for (let i = 0; i < poll.tries; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, poll.everyMs));
       if (gen !== this.gen) return;
       const by = await receivedBy(this.d, grant);
       if (by) { this.set({ step: 'signed', item, receivedBy: by }); return; }
     }
-    if (gen === this.gen) this.set({ step: 'not_received', item, grant, checking: false, checkedOnce: false });
+    if (gen !== this.gen) return;
+    this.set({ step: 'not_received', item, grant, checking: false, checkedOnce: false });
+    const later = this.d.receiptLater ?? GIVE_RECEIPT_LATER;
+    for (let i = 0; i < later.tries; i++) {
+      await new Promise((r) => setTimeout(r, later.everyMs));
+      const st = this.state;
+      if (gen !== this.gen || st.step !== 'not_received') return;
+      if (st.checking) continue;
+      const by = await receivedBy(this.d, grant);
+      if (gen !== this.gen || this.state.step !== 'not_received') return;
+      if (by) { this.set({ step: 'signed', item, receivedBy: by }); return; }
+    }
   }
 
   /** "Check again" in the not-received state. */

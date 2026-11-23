@@ -32,7 +32,13 @@ export function scopeLabel(key: string, schema: SchemaLike | undefined): string 
 export function durationText(seconds: number): string {
   if (seconds % 86400 === 0) { const d = seconds / 86400; return `${d} ${d === 1 ? 'day' : 'days'}`; }
   if (seconds % 3600 === 0) { const h = seconds / 3600; return `${h} ${h === 1 ? 'hour' : 'hours'}`; }
-  return `${Math.round(seconds / 60)} minutes`;
+  // What is left of a mandate (a change or an extension shows it) is rarely whole hours: "8 hours 15 minutes", never "495 minutes".
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const hours = `${h} ${h === 1 ? 'hour' : 'hours'}`;
+  return m === 0 ? hours : `${hours} ${m} ${m === 1 ? 'minute' : 'minutes'}`;
 }
 
 export function endDateText(nowMs: number, seconds: number): string {

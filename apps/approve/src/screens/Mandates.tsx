@@ -38,7 +38,7 @@ function ChangeBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }
       {summary && <p className="sum-line" data-testid="mandate-summary">{summary}</p>}
       <p className="from" data-testid="give-from">{P.giveFrom(item.preparedBy, whenText(item.preparedAt, nowSeconds))}</p>
       <p>{S13.changeOnlyListed}</p>
-      <div data-testid="change-diff">{item.diff && <MandateChangeDiff diff={item.diff} intentByAi={false} />}</div>
+      <div className="mc-block" data-testid="change-diff">{item.diff && <MandateChangeDiff diff={item.diff} intentByAi={false} />}</div>
       <p className="form-hint">{S13.changeOnlyOwner}</p>
     </>
   );
