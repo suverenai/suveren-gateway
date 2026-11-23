@@ -593,23 +593,18 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     );
   }
   const now = rt.now();
-  const notices = [
-    ...own.filter((m) => m.givenOn && m.givenAt !== null && now - (m.givenAt ?? 0) < 14 * 86400).map((m) => P.noticeGiven(m.title, m.givenOn!)),
-    ...endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by)),
-  ];
+  // Notes about mandates are never waiting items: a mandate given on another device is already in "Your mandates"; one ended on another
+  // device is said once, under "Your mandates" (Andreas, 2026-11-23: notes under "Waiting for you" read as things to do).
+  const endedNotes = endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by));
   return (
     <RequestsScreen
-      extra={(
-        <>
-          {notices.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
-          {shownGives.length > 0 && (
-            <div className="dash-rows" data-testid="give-list">
-              {shownGives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
-            </div>
-          )}
-          <OwnMandates items={own} nowSeconds={now} onEnd={(m) => ender.open(m)} />
-        </>
-      )}
+      waiting={shownGives.length > 0 ? (
+        <div className="dash-rows" data-testid="give-list">
+          {shownGives.map((g) => <GiveRow key={g.key} item={g} nowSeconds={now} onOpen={() => { setCurrentId(g.key); setPanel((p) => ({ ...p, open: true, owed: false })); }} />)}
+        </div>
+      ) : undefined}
+      waitingCount={shownGives.length}
+      below={<OwnMandates items={own} notes={endedNotes} onEnd={(m) => ender.open(m)} />}
       proposals={listedProposals} error={error} nowMs={Date.now()}
       changes={changes}
       onOpenChange={(rid) => { setCurrentId(`${CHG}${rid}`); setPanel((p) => ({ ...p, open: true, owed: false })); }}

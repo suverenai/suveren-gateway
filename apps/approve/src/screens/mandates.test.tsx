@@ -84,9 +84,25 @@ describe('ending a mandate on the phone', () => {
   const m: OwnMandate = { authorizationId: 'authz_x', mandateId: 'mandate-1', version: 1, title: 'Quotes', expiresAt: NOW + 86400, fields: {}, givenOn: null, givenAt: null };
 
   it('the list offers End on each of the person\'s mandates (44 px)', () => {
-    const html = renderToStaticMarkup(<OwnMandates items={[m]} nowSeconds={NOW} onEnd={noop} />);
+    const html = renderToStaticMarkup(<OwnMandates items={[m]} onEnd={noop} />);
     expect(html).toContain('data-testid="btn-end"');
     expect(html).toContain('min-height:44px');
+  });
+
+  it('a row shows the mandate\'s own title (the gateway\'s), no "The mandate for" prefix, and the end as a local date and time (B2)', () => {
+    const setup: OwnMandate = { ...m, title: 'Setup: calendar, records, email', expiresAt: NOW + 3600 };
+    const html = renderToStaticMarkup(<OwnMandates items={[setup]} onEnd={noop} />);
+    expect(html).toMatch(/data-testid="own-mandate-title"[^>]*>Setup: calendar, records, email</);
+    expect(html).not.toContain('The mandate for');
+    const until = new Date((NOW + 3600) * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    expect(html).toContain(P.mineActiveUntil(until));
+    expect(html).not.toContain('today');
+  });
+
+  it('a mandate ended on another device is said under "Your mandates", not as a waiting item', () => {
+    const html = renderToStaticMarkup(<OwnMandates items={[]} notes={[P.noticeEnded('Calendar', 'Office Mac')]} onEnd={noop} />);
+    expect(html.indexOf(P.mineTitle)).toBeLessThan(html.indexOf(P.noticeEnded('Calendar', 'Office Mac')));
+    expect(renderToStaticMarkup(<OwnMandates items={[]} onEnd={noop} />)).toBe('');
   });
 
   it('the end screen is the gateway\'s screen 4: warning, "Keep it" above the button that names what ends; no touch (B2)', () => {

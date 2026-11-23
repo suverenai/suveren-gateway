@@ -25,3 +25,13 @@ body.ap-blank #root { visibility: hidden; }
 /* Touch targets (UI review, DEC-88): every control a thumb taps is at least 44 px (tabs, Remove, small buttons, the panel head). */
 .ap-shell .ftab, .ap-shell .btn-sm, .ap-panel .apr-btn, .ap-panel .apr-ico { min-height: 44px; min-width: 44px; }
 .ap-shell .btn, .ap-shell .av3-btn { min-height: 48px; }
+
+/* The list screen (mockup phone-d3-live.html, ".scr"): the gateway's device screen, with the phone's tighter top and the mockup's heading
+   sizes; "Your mandates" is a section heading, smaller than the screen's "Waiting for you". */
+.ap-shell .device-screen { padding-top: var(--space-4); }
+.ap-shell .device-screen .ap-h2 { font-size: var(--text-body); font-weight: 700; margin: var(--space-6) 0 var(--space-2); }
+.ap-shell .ap-mrow { display: flex; align-items: center; gap: var(--space-3); }
+.ap-shell .ap-mrow-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ap-shell .ap-mrow-text .form-hint { margin: 0; }
+/* A long title (a set-up mandate names every area) stays two lines; the whole title is in the row's tooltip and on the end screen. */
+.ap-shell .ap-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

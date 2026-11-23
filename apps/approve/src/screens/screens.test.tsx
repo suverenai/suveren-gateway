@@ -192,6 +192,16 @@ describe('the phone screens (both widths use the same markup and the same tokens
       expect(empty).toContain(P.welcomeReadOnly);
     });
 
+    it('"Nothing is waiting for you." sits right under the heading, before "Your mandates"; never when a mandate waits to be given', () => {
+      const below = <section data-testid="own-mandates"><h2>{P.mineTitle}</h2></section>;
+      const h = html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} below={below} />);
+      expect(h.indexOf('data-testid="list-empty"')).toBeGreaterThan(h.indexOf(P.listTitle));
+      expect(h.indexOf('data-testid="list-empty"')).toBeLessThan(h.indexOf('data-testid="own-mandates"'));
+      const giving = html(<RequestsScreen proposals={[]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} waiting={<div data-testid="give-list" />} waitingCount={1} below={below} />);
+      expect(giving).not.toContain('data-testid="list-empty"');
+      expect(giving.indexOf('data-testid="give-list"')).toBeLessThan(giving.indexOf('data-testid="own-mandates"'));
+    });
+
     it('a row is the gateway page\'s row markup, with the action name and its age', () => {
       const m = html(<RequestsScreen proposals={[prop('p1', 'email__send_message')]} nowMs={NOW * 1000} onOpen={noop} onRefresh={noop} />);
       expect(m).toContain('data-testid="approval-row"');
