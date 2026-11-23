@@ -2,6 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { spClient, type ProfileConfig } from '../lib/sp-client';
 import { StepIndicator } from '../components/StepIndicator';
+import { SkelLine, SkelBlock, SkelButton, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { ContextStrip } from '../components/ContextStrip';
 import { BoundsEditor } from '../components/BoundsEditor';
 import { AssistantChatPanel } from '../components/AssistantChatPanel';
@@ -236,7 +237,28 @@ export function GateWizardPage() {
   };
 
   if (loading || !authData || !profile) {
-    return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
+    // DEC-98: the step bar stays (it is known), the context strip and the step's card are greyed out until loaded.
+    return (
+      <>
+        <StepIndicator currentStep={step} onStepClick={() => {}} />
+        <SkelArea>
+          <div data-testid="wizard-skeleton" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <SkelBlock h="2.75rem" radius="0.5rem" />
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem' }}>
+              <SkelLine w="35%" h="1.05rem" />
+              <SkelLine w="80%" />
+              <SkelBlock h="3.25rem" radius="0.5rem" />
+              <SkelBlock h="3.25rem" radius="0.5rem" />
+              <SkelBlock h="3.25rem" radius="0.5rem" />
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                <SkelButton w="6rem" />
+                <SkelButton w="8rem" />
+              </div>
+            </div>
+          </div>
+        </SkelArea>
+      </>
+    );
   }
 
   return (

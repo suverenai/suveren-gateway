@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { noteSimulation } from './useSimulationMode';
 
 const SLOW_INTERVAL = 5 * 60 * 1000; // 5 minutes — background "is an update out?"
 const FAST_INTERVAL = 2000;          // 2 seconds — while waiting for a restart
@@ -61,6 +62,8 @@ export function useUpdateCheck({ signedOut = false }: { signedOut?: boolean } = 
         .then(data => {
           if (cancelled) return;
           noteHealth(data);
+          // The same answer carries the simulation flag: the next frame's banner starts from it (DEC-100).
+          if (typeof data.simulation === 'boolean') noteSimulation(data.simulation);
           if (data.installMethod) setInstallMethod(data.installMethod);
           if (typeof data.latestVersion !== 'undefined') setLatestVersion(data.latestVersion);
           if (data.updateAvailable) setUpdateAvailable(true);

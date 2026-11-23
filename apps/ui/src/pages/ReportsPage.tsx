@@ -3,6 +3,7 @@ import { reportPeriod, writtenLabel } from '../lib/report-news';
 import { useSearchParams } from 'react-router-dom';
 import { spClient, type ReportModel, type ReportElement, type ReportProof, type ReportCoverage, type TicketDetail } from '../lib/sp-client';
 import { EmptyState } from '../components/EmptyState';
+import { SkelLine, SkelBlock, SkelArea, SkelTitle } from '@suveren/approval-card/components/LoadGate';
 
 // ─── Pure helpers (exported for unit tests — see ReportsPage.test.ts) ──────
 
@@ -641,12 +642,8 @@ export function ReportsPage() {
   }, [searchParams, setSearchParams]);
 
   if (loading) {
-    return (
-      <div className="page-inner">
-        <div className="page-header"><h1 className="page-title">Reports</h1></div>
-        <p className="page-subtitle">Loading…</p>
-      </div>
-    );
+    // DEC-98: the page greyed out until the report is in — its title is the report's own, so it is grey too.
+    return <ReportsSkeleton />;
   }
 
   if (error) {
@@ -771,6 +768,34 @@ export function ReportsPage() {
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** DEC-98: the Reports page greyed out — title bar with its two buttons, the period lines, the legend and the report. */
+function ReportsSkeleton() {
+  return (
+    <div className="page-inner reports-page">
+      <SkelArea>
+        <div className="reports-layout" data-testid="reports-skeleton">
+          <div className="reports-bar">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+              <SkelTitle w="40%" />
+              <SkelLine w="55%" />
+              <SkelLine w="45%" h="0.8rem" />
+            </div>
+            <div className="reports-bar-actions">
+              <SkelBlock w="6rem" h="2rem" radius="0.5rem" />
+              <SkelBlock w="8rem" h="2rem" radius="0.5rem" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', margin: '1rem 0 0.75rem' }}>
+            <SkelBlock w="11rem" h="1.6rem" radius="999px" />
+            <SkelBlock w="13rem" h="1.6rem" radius="999px" />
+          </div>
+          <SkelBlock h="24rem" radius="0.75rem" />
+        </div>
+      </SkelArea>
     </div>
   );
 }

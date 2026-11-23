@@ -26,6 +26,7 @@ import { ArgValue } from '@suveren/approval-card/components/ProposalArgs';
 import { ObFold, ObLock } from './ObjectCard';
 import { AttachmentsSealedBox } from '@suveren/approval-card/components/AttachmentsSealedBox';
 import { extractAttachmentsSealed } from '@suveren/approval-card/lib/attachment-sealed';
+import { SkelLine } from '@suveren/approval-card/components/LoadGate';
 
 interface Props {
   receipt: ExecutionReceipt;
@@ -250,8 +251,11 @@ export function TicketWhatWasDone({ receipt, manifests }: Props) {
 
   if (entry === undefined) {
     return (
-      <div className="ob-sent ob-quiet" data-testid="ticket-what-was-done" data-bound="loading" aria-busy="true">
-        Loading…
+      // DEC-98: the panel greyed out — a label and two lines of what was sent — until the archive entry is read.
+      <div className="ob-sent ob-quiet" data-testid="ticket-what-was-done" data-bound="loading" aria-busy="true" aria-label="Loading">
+        <SkelLine w="9rem" h="0.8rem" style={{ display: 'block', marginBottom: '0.6rem' }} />
+        <SkelLine w="85%" style={{ display: 'block', marginBottom: '0.45rem' }} />
+        <SkelLine w="60%" style={{ display: 'block' }} />
       </div>
     );
   }
