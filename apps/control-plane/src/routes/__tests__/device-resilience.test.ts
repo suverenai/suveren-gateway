@@ -79,7 +79,10 @@ describe('1. the device token ending never locks the vault', () => {
     w.as.failChainGets = 1000;
     w.clock.t += 3700;
     const discardsBefore = w.gw.discards.count;
-    await w.gw.timers.fire(() => w.gw.discards.count > discardsBefore);
+    // Wait for the whole failed attempt: the next retry is armed only after the sign-in's last network call
+    // (DeviceSignIn.run → arm), not when the credential is discarded at its start.
+    const armed = () => w.gw.timers.pending.some(t => t.live);
+    await w.gw.timers.fire(() => w.gw.discards.count > discardsBefore && armed());
     expect(w.gw.vault.isUnlocked()).toBe(true);
     expect(w.gw.vault.getSpCookie()).toBeNull(); // no stale token to fall back on
     expect((await w.get('/auth/device/status')).body.signedIn).toBe(false);
@@ -87,7 +90,7 @@ describe('1. the device token ending never locks the vault', () => {
     for (let i = 0; i < 6; i++) {
       w.clock.t += 400;
       const n = w.as.requests.length;
-      await w.gw.timers.fire(() => w.as.requests.length > n);
+      await w.gw.timers.fire(() => w.as.requests.length > n && armed());
       expect(w.gw.vault.isUnlocked()).toBe(true);
       expect(w.gw.timers.pending.filter(t => t.live)).toHaveLength(1);
     }
