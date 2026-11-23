@@ -708,6 +708,10 @@ export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDep
 const pageWaiting = new Map<string, number>();
 const PAGE_WAITING_MS = 6_000;
 export function notePageWaiting(mandateId: string): void { pageWaiting.set(mandateId, Date.now()); }
+/** The page heard the end of its give: it no longer waits. (A change keeps its mandate's id: without this, the page that gave
+ *  version 1 a moment ago still counted as waiting when version 2 came from the phone, and that request was never closed —
+ *  e2e 45264582001, 45253266621.) */
+export function notePageDone(mandateId: string): void { pageWaiting.delete(mandateId); }
 export function pageIsWaiting(mandateId: string): boolean {
   const at = pageWaiting.get(mandateId);
   return at !== undefined && Date.now() - at < PAGE_WAITING_MS;
