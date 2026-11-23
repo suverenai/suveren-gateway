@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, dropProposalGive, noteProposalGiven, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, dropProposalGive, noteProposalGiven, notePageWaiting, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 import { eventBus } from '../lib/event-bus';
@@ -195,6 +195,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if (!d.grants?.active()) { res.status(409).json(NOT_SET_UP); return; }
       const id = req.params.mandateId;
       if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
+      notePageWaiting(id);
       const r = await pollPhoneGive(id, d);
       if (r.state === 'done') void d.resyncGates?.().catch(() => {});
       res.json(r);

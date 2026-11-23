@@ -93,7 +93,7 @@ import { createInternalMandateRouter } from './routes/internal-mandate';
 import { createMandateRouter } from './routes/mandate';
 import { createTeamJoinRouter } from './routes/team-join';
 import { createTeamChangesRouter } from './routes/team-changes';
-import { completeWaitingGives, anyGiveWaiting, type CeremonyDeps } from './lib/mandate-ceremony';
+import { completeWaitingGives, anyGiveWaiting, pageIsWaiting, type CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
@@ -622,7 +622,8 @@ setInterval(() => {
       // The AI's request this give carried out is closed here as `replaced`, at once, signed with this computer's key — as the
       // page does after a give from its card. The list, the card and the badge then move on the same moment (the phone would
       // close it too, a few seconds later, once it sees the receipt; it finds it closed and leaves it).
-      if (r.proposalId) void closeGivenProposal(r.proposalId).catch((err) => console.warn(`[Control Plane] the request ${r.proposalId} given on the phone could not be closed here: ${err instanceof Error ? err.message : String(err)}`));
+      // (Not while a page on this computer waits for this give: it shows "Signed" first and closes the request itself.)
+      if (r.proposalId && !pageIsWaiting(r.mandateId)) void closeGivenProposal(r.proposalId).catch((err) => console.warn(`[Control Plane] the request ${r.proposalId} given on the phone could not be closed here: ${err instanceof Error ? err.message : String(err)}`));
     },
     r => console.warn(`[Control Plane] a give waiting on the phone ended: ${r.message}`),
   ).catch(() => {}).finally(() => { giveCheckRunning = false; });

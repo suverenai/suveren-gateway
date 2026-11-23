@@ -703,6 +703,16 @@ export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDep
   return giveOnPhone(request, deps, o);
 }
 
+/** Gives a page on this computer is waiting for (its card or give page asks every 2 s): that page shows "Signed" and then closes
+ *  the AI's request itself — closing it here first would take the card away before the person sees the result. */
+const pageWaiting = new Map<string, number>();
+const PAGE_WAITING_MS = 6_000;
+export function notePageWaiting(mandateId: string): void { pageWaiting.set(mandateId, Date.now()); }
+export function pageIsWaiting(mandateId: string): boolean {
+  const at = pageWaiting.get(mandateId);
+  return at !== undefined && Date.now() - at < PAGE_WAITING_MS;
+}
+
 /** Is any give waiting on the person's phone? (The completion checks every second while one waits, every 5 s otherwise.) */
 export function anyGiveWaiting(deps: CeremonyDeps): boolean {
   try { return !!deps.grants?.active() && deps.grants.phoneGives.list().length > 0; } catch { return false; }
