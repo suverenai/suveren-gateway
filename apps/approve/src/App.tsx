@@ -3,7 +3,8 @@
  * session (lib/); this file only decides which screen is on and starts the timers. One card for every device: the request is
  * drawn by the shared approval card (packages/approval-card), configured in lib/app-host.ts.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LoadGate, Gated, SkelBlock, SkelButton, SkelLine, SkelTitle, SkelArea, useNetworkSettled } from '@suveren/approval-card/components/LoadGate';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Proposal } from '@suveren/approval-card/types';
 import { BUILD_COMMIT, PHONE_FIRST_SETUP } from './lib/config';
 import { createRuntime } from './lib/runtime';
@@ -716,8 +717,11 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
         onClose={() => { setPasskeyOpen(false); setPasskeyView({ s: 'offered' }); void readPasskeys(); }} />
     );
   }
+  // DEC-98: the screen appears in one go once the device list, the identity code and the notification state are in.
+  const devicesReady = (code !== null || error !== undefined) && push !== null;
   return (
-    <>
+    <LoadGate parts={['devices']}>
+    <PhoneDevicesGated ready={devicesReady}>
     {passkeys.length > 0 && (
       <div className="alert alert-info" role="status" data-testid="passkey-waiting-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'space-between', margin: '0.75rem' }}>
         <span>{PASSKEY_TEXT.waitingRow}</span>
@@ -731,7 +735,35 @@ function Devices({ rt, persistent, updated, onAdd, onEnded, onRemovedSelf, start
       rotateOffer={offer} onRotate={() => rotator.start()}
       push={push ? { ...push, onOn: () => void changePush(true), onOff: () => void changePush(false) } : undefined}
     />
-    </>
+    </PhoneDevicesGated>
+    </LoadGate>
+  );
+}
+
+function PhoneDevicesGated({ ready, children }: { ready: boolean; children: ReactNode }) {
+  const settled = useNetworkSettled();
+  return <Gated part="devices" ready={ready && settled} skeleton={<PhoneDevicesSkeleton />}>{children}</Gated>;
+}
+
+/** DEC-98: the phone's devices screen greyed out — title, two device rows, the identity code and the main button. */
+function PhoneDevicesSkeleton() {
+  return (
+    <div className="device-screen" data-testid="devices-skeleton">
+      <SkelArea>
+        <SkelTitle w="50%" />
+        {[0, 1].map(i => (
+          <div key={i} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.9rem' }}>
+            <SkelBlock w="2.25rem" h="2.25rem" radius="50%" />
+            <div style={{ flex: 1 }}><SkelLine w="45%" style={{ marginBottom: '0.4rem' }} /><SkelLine w="70%" h="0.7rem" /></div>
+          </div>
+        ))}
+        <SkelLine w="35%" style={{ margin: '1rem 0 0.5rem' }} />
+        <SkelBlock h="1.6rem" style={{ marginBottom: '1.25rem' }} />
+        <SkelButton full large />
+        <div style={{ height: '0.75rem' }} />
+        <SkelButton full />
+      </SkelArea>
+    </div>
   );
 }
 

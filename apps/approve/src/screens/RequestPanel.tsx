@@ -5,6 +5,7 @@
  * bottom. The rules (what opens, when, what comes next) are the shared ones (`@suveren/approval-card/lib/approval-panel`); App.tsx
  * feeds them. On a phone the head is always the compact one.
  */
+import { CardSkeleton } from '@suveren/approval-card/components/ApprovalCard';
 import type { ReactNode } from 'react';
 import { ApprovalPanelHead } from '@suveren/approval-card/components/ApprovalPanelHead';
 import type { Proposal } from '@suveren/approval-card/types';
@@ -48,7 +49,10 @@ export function RequestPanel(p: RequestPanelProps) {
       />
       <div className="apr-body">
         {p.error && <Notice kind="error">{p.error}</Notice>}
-        {!p.shown && !p.other && !p.error && <Notice kind="info">{P.listLoading}</Notice>}
+        {/* DEC-98: while the approval is read, the card's own layout greyed out (named for screen readers). */}
+        {!p.shown && !p.other && !p.error && (
+          <div className="card av3-card" role="status" aria-label={P.listLoading} data-testid="panel-card-skeleton"><CardSkeleton /></div>
+        )}
         {!p.shown && p.other && (
           <div className="apr-stage" key={p.other.key} data-item-key={p.other.key}>
             {p.other.node}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { LoadGate, Gated, SkelCard, SkelLine, SkelArea, useNetworkSettled } from '@suveren/approval-card/components/LoadGate';
 import { spClient } from '../lib/sp-client';
 import { AutostartToggle } from '../components/AutostartToggle';
 import { DataFolderLine } from '../components/DataFolderLine';
@@ -191,6 +192,10 @@ export function SettingsServicesPage() {
 
       {successMsg && <div className="alert alert-success">{successMsg}</div>}
 
+      {/* DEC-98: every card of the page appears in one go once their own loads are done (they are mounted, hidden,
+          and load meanwhile). After the grace time whatever is in shows. */}
+      <LoadGate parts={['settings']}>
+      <SettingsCards>
       {/* 1. Authority Server */}
       <h2 className="su-sec">{SETTINGS_SECTIONS[0]}</h2>
       <AuthorityServerCard />
@@ -374,6 +379,8 @@ export function SettingsServicesPage() {
         {/* Advanced — AI assistant prompts (a fold, closed by default) */}
         <AdvancedAIPrompts />
       </article>
+      </SettingsCards>
+      </LoadGate>
     </div>
   );
 }
@@ -573,5 +580,30 @@ function PromptEditor({
       </details>
       <span style={{ display: 'none' }}>{kind}</span>
     </section>
+  );
+}
+
+/** DEC-98: the settings cards, gated on their own loads being done; until then the page's layout greyed out. */
+function SettingsCards({ children }: { children: React.ReactNode }) {
+  const settled = useNetworkSettled();
+  return (
+    <Gated part="settings" ready={settled} skeleton={<SettingsSkeleton />}>
+      {children}
+    </Gated>
+  );
+}
+
+function SettingsSkeleton() {
+  return (
+    <SkelArea>
+      <div data-testid="settings-skeleton" className="skel-stack">
+        <SkelLine w="10rem" h="1.1rem" style={{ margin: '1.5rem 0 0.75rem' }} />
+        <SkelCard lines={2} minHeight="9.5rem" />
+        <SkelLine w="10rem" h="1.1rem" style={{ margin: '1.5rem 0 0.75rem' }} />
+        <SkelCard lines={1} minHeight="7.5rem" />
+        <SkelCard lines={2} minHeight="9.5rem" />
+        <SkelCard lines={1} minHeight="7.5rem" />
+      </div>
+    </SkelArea>
   );
 }

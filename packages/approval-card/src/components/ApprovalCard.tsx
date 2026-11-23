@@ -13,6 +13,7 @@
  * ticket line, plain text, never shaped like a button. If the call fails the
  * buttons come back with the error and nothing shows a ✓ (backend truth).
  */
+import { LoadGate, Gated, SkelArea, SkelBlock, SkelLine, useNetworkSettled } from './LoadGate';
 import { S13 } from '../mandate-screens/texts';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ProposalLink } from '../lib/proposal-links';
@@ -279,6 +280,10 @@ export function ApprovalCard({
       data-proposal-id={proposal.id}
       data-phase={phase.t}
     >
+      {/* DEC-98: the body and the decision buttons appear together, once the card's own reads (sealed content, the
+          intent, previews) are done — never the text first and the buttons a moment later. */}
+      <LoadGate parts={['card']}>
+      <CardGated contentLoading={contentLoading}>
       <div className="av3-scroll" ref={scrollRef}>
         <article ref={bodyRef} className="av3-body" aria-hidden={(busy && !staysOnCard) || undefined}>
           {nextLabelText && <div className="av3-next" role="status" style={{ order: -1 }}>{nextLabelText}</div>}
@@ -343,6 +348,8 @@ export function ApprovalCard({
           </div>
         </footer>
       )}
+      </CardGated>
+      </LoadGate>
 
       {!alreadyDecided && !busy && phase.t === 'change' && (
         <footer className="av3-foot av3-chg">
@@ -393,3 +400,34 @@ export function ApprovalCard({
 
 /** No in-place give (the host does not give mandates this way). */
 function noMandateGive(): null { return null; }
+
+function CardGated({ contentLoading, children }: { contentLoading: boolean; children: ReactNode }) {
+  const settled = useNetworkSettled();
+  return <Gated part="card" ready={settled && !contentLoading} skeleton={<CardSkeleton />}>{children}</Gated>;
+}
+
+/** DEC-98: the card greyed out — its type line, title, the content blocks and the decision buttons, at the real sizes. */
+export function CardSkeleton() {
+  return (
+    <>
+      <div className="av3-scroll" data-testid="card-skeleton">
+        <div className="av3-body">
+          <SkelArea>
+            <SkelLine w="30%" h="0.75rem" style={{ marginBottom: '0.75rem' }} />
+            <SkelLine w="70%" h="1.35rem" style={{ marginBottom: '1rem' }} />
+            <SkelBlock h="7rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+            <SkelBlock h="4.5rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+            <SkelBlock h="3.5rem" radius="0.75rem" />
+          </SkelArea>
+        </div>
+      </div>
+      <footer className="av3-foot">
+        <div className="av3-btns">
+          <SkelBlock h="2.75rem" radius="0.6rem" />
+          <SkelBlock h="2.75rem" radius="0.6rem" />
+          <SkelBlock h="2.75rem" radius="0.6rem" />
+        </div>
+      </footer>
+    </>
+  );
+}

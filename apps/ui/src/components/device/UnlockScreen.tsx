@@ -7,12 +7,21 @@ import { useAuth } from '../../contexts/AuthContext';
 import { DeviceScreen, Notice, useDriver } from './DeviceScreen';
 import { NotSetUpScreen } from './SetupScreens';
 import { PageLoading } from './StartScreens';
+import { SkelBlock, SkelButton, SkelLine, SkelArea } from '@suveren/approval-card/components/LoadGate';
 
 export interface UnlockScreenProps {
   state: UnlockState;
   onPassword: (password: string) => void;
   onTouch: () => void;
   onRetry: () => void;
+}
+
+const TOUCH_HINT = 'suveren.unlock.touch';
+function readTouchHint(): boolean {
+  try { return globalThis.localStorage?.getItem(TOUCH_HINT) === '1'; } catch { return false; }
+}
+function writeTouchHint(on: boolean): void {
+  try { globalThis.localStorage?.setItem(TOUCH_HINT, on ? '1' : '0'); } catch { /* the hint is a convenience */ }
 }
 
 /** Screen 4 (and 6a, 6b): unlock the gateway, with Touch ID where it is on, with the password everywhere. */
@@ -33,7 +42,30 @@ export function UnlockScreen({ state, onPassword, onTouch, onRetry }: UnlockScre
       </DeviceScreen>
     );
   }
+  if (!state.ready) {
+    // DEC-98: the screen's own layout greyed out until it knows whether Touch ID is on — the real screen then appears
+    // in one go, with the Touch ID button there from its first paint. Same blocks, same sizes: nothing moves. Whether
+    // this browser saw Touch ID last time decides if the skeleton holds its place (a hint for the layout only; the
+    // real button waits for the gateway's answer). A reason already known is shown at once, it does not change.
+    const touchHint = readTouchHint();
+    return (
+      <DeviceScreen title={T.unlockTitle}>
+        {state.notice && <Notice kind="info">{state.notice}</Notice>}
+        <SkelArea>
+          {!state.notice && <><SkelLine w="92%" style={{ marginBottom: '0.5rem' }} /><SkelLine w="70%" style={{ marginBottom: '1rem' }} /></>}
+          {touchHint && <>
+            <SkelButton full large />
+            <div className="login-divider" style={{ visibility: 'hidden' }}>{T.unlockOr}</div>
+          </>}
+          <SkelLine w="30%" h="0.8rem" style={{ marginBottom: '0.5rem' }} />
+          <SkelBlock h="2.9rem" style={{ marginBottom: '1.5rem' }} />
+          <SkelButton full large={!touchHint} />
+        </SkelArea>
+      </DeviceScreen>
+    );
+  }
   const showTouch = state.touchAvailable && !state.passwordOnly;
+  writeTouchHint(showTouch);
   return (
     <DeviceScreen title={T.unlockTitle}>
       {state.notice ? <Notice kind="info">{state.notice}</Notice> : <p>{T.unlockWhy}</p>}

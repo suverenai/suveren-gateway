@@ -84,7 +84,11 @@ describe('UnlockPage and SetupPage, first render', () => {
     const h = at('/login', <UnlockPage />, { access: 'password', sessionEnd: 'session_idle' });
     expect(h).toContain(T.unlockTitle);
     expect(h).toContain(T.sessionIdle);
-    expect(at('/login', <UnlockPage />, { access: 'password' })).toContain(T.unlockWhy);
+    // DEC-98: without a known reason the first render is the screen's skeleton — which reason applies (restart, or only
+    // this page) and whether Touch ID is on come from the gateway, and must not flash in after a default text.
+    const first = at('/login', <UnlockPage />, { access: 'password' });
+    expect(first).toContain('skel-area');
+    expect(first).not.toContain(T.unlockWhy);
   });
   it('SetupPage: first render asks no name (DEC-91); the set-up then begins by itself', () => {
     const h = at('/device-setup', <SetupPage />, { access: 'password', pageSessionOpen: true });
