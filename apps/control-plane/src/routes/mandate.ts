@@ -142,7 +142,10 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if (!changes || 'bad' in got || !b.sealedDiff || typeof b.sealedDiff !== 'object') { res.status(400).json({ error: 'bad_request', code: 'bad_request', message: 'Bad request.' }); return; }
       if ('refusal' in got) { res.status(422).json({ error: 'mandate_refused', code: 'mandate_not_active', message: got.refusal?.refusal }); return; }
       const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
-      res.json({ ok: true, ...(await changeOnPhone({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full, { proposalId })) });
+      const sent = await changeOnPhone({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full, { proposalId });
+      // This page waits for it from now on (its first poll comes 2 s later; the phone can be quicker).
+      notePageWaiting(sent.mandateId);
+      res.json({ ok: true, ...sent });
     } catch (err) { answerRefusal(res, err); }
   });
 
@@ -186,7 +189,10 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       if (typeof echoed !== 'string') { res.status(422).json({ error: 'mandate_refused', code: 'prepare_required', message: 'The mandate was not prepared on this page; nothing was sent.' }); return; }
       const now = await prepareMandate(request, d);
       if (now.planHash !== echoed) { res.status(422).json({ error: 'mandate_refused', code: 'changed_since_prepare', message: 'What would be granted changed since it was shown; nothing was sent. Look at it again.' }); return; }
-      res.json({ ok: true, ...(await giveOnPhone(request, d, { proposalId })) });
+      const sent = await giveOnPhone(request, d, { proposalId });
+      // This page waits for it from now on (its first poll comes 2 s later; the phone can be quicker).
+      notePageWaiting(sent.mandateId);
+      res.json({ ok: true, ...sent });
     } catch (err) { answerRefusal(res, err); }
   });
   router.get('/give-on-phone/:mandateId', async (req, res) => {

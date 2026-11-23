@@ -468,10 +468,9 @@ describe('give on the phone', () => {
     const { pageIsWaiting } = await import('../../lib/mandate-ceremony');
     const w = await world();
     await w.addPhone(await makePhone());
+    // the page that sent it waits for it from that moment (its first poll comes 2 s later; the phone can be quicker)
     const { sent } = await prepareAndSend(w);
     const id = String(sent.body.mandateId);
-    expect(pageIsWaiting(id)).toBe(false);
-    await w.get(`/api/mandate/give-on-phone/${id}`);
     expect(pageIsWaiting(id)).toBe(true);
   });
 });
