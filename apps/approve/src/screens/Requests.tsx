@@ -72,7 +72,7 @@ export function RequestsScreen(p: RequestsScreenProps) {
         ))}
       </div>
       {p.below}
-      <button type="button" className="btn btn-secondary btn-full" onClick={p.onRefresh}>{P.listRefresh}</button>
+      <button type="button" className="btn btn-secondary btn-full" style={{ marginTop: 'var(--space-4)' }} onClick={p.onRefresh}>{P.listRefresh}</button>
     </div>
   );
 }
