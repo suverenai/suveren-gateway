@@ -161,7 +161,7 @@ export function chooseCumulativeBound(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
   profile: AgentProfile | null | undefined,
-  window: 'daily' | 'monthly',
+  window: 'daily' | 'weekly' | 'monthly',
 ): { key: string; isAmount: boolean } | undefined {
   const boundsFields = profile?.boundsSchema?.fields;
   if (!boundsFields || !bounds) return undefined;
@@ -195,7 +195,7 @@ export function windowUsage(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
   profile: AgentProfile | null | undefined,
-  window: 'daily' | 'monthly',
+  window: 'daily' | 'weekly' | 'monthly',
 ): { used: number; limit: number } | { count: number } | null {
   const state = receipt.cumulativeState?.[window];
   if (!state) return null;
@@ -212,8 +212,9 @@ export function usageSummary(
   bounds: Record<string, string | number> | undefined,
   profile?: AgentProfile | null,
 ): string {
-  const windows: Array<{ window: 'daily' | 'monthly'; label: string }> = [
+  const windows: Array<{ window: 'daily' | 'weekly' | 'monthly'; label: string }> = [
     { window: 'daily', label: 'today' },
+    { window: 'weekly', label: 'this week' },
     { window: 'monthly', label: 'this month' },
   ];
   const parts: string[] = [];

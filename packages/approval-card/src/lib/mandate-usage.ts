@@ -38,14 +38,14 @@ export function newestToday(receipts: ExecutionReceipt[], authorizationId: strin
   return best;
 }
 
-/** Today and this month, as short figures: "1 of 10", or "3 calls" without a declared limit. */
+/** Today, this week (only with a weekly bound) and this month, as short figures: "1 of 10", or "3 calls" without a declared limit. */
 export function usageLines(
   receipt: ExecutionReceipt,
   bounds: Record<string, string | number> | undefined,
   profile: AgentProfile | null | undefined,
 ): UsageLine[] {
   const out: UsageLine[] = [];
-  for (const [window, label] of [['daily', 'today'], ['monthly', 'this month']] as const) {
+  for (const [window, label] of [['daily', 'today'], ['weekly', 'this week'], ['monthly', 'this month']] as const) {
     const u = windowUsage(receipt, bounds, profile, window);
     if (!u) continue;
     out.push({ label, text: 'limit' in u ? `${u.used} of ${u.limit}` : `${u.count} ${u.count === 1 ? 'call' : 'calls'}` });

@@ -28,7 +28,10 @@ describe('invalidLimitWordsReason', () => {
   });
   it('the shipped mail manifest declares its send limit words and passes', () => {
     const mail = JSON.parse(readFileSync(join(MANIFESTS_DIR, 'mail.json'), 'utf8'));
-    expect(mail.limitWords).toEqual({ send_daily_max: { noun: 'emails', pastParticiple: 'sent' } });
+    expect(mail.limitWords).toEqual({
+      send_daily_max: { noun: 'emails', pastParticiple: 'sent' },
+      send_weekly_max: { noun: 'emails', pastParticiple: 'sent' },
+    });
     expect(invalidLimitWordsReason(mail)).toBeNull();
   });
 });
