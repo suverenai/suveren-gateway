@@ -49,6 +49,18 @@ export function maxForBound(field: NumericField): number | undefined {
   return typeof m === 'number' && Number.isFinite(m) ? m : undefined;
 }
 
+/**
+ * An OPTIONAL bound left empty is not set at all: the mandate carries no value for
+ * it (protocol: the bounds hold "every required key, and each optional key the
+ * human set"), so neither the gateway nor the Authority Server enforces it — the
+ * other limits still apply. Before, '' became the floor 0, and a count limit of 0
+ * refuses every action (an untouched new "per week" field silently forbade sending).
+ * A REQUIRED field left empty still becomes its floor.
+ */
+export function boundLeftEmpty(field: NumericField, raw: string): boolean {
+  return !(field as { required?: unknown }).required && raw.trim() === '';
+}
+
 /** Submitted numeric value: '' becomes the floor (0 as before, 1 for floor-1
  *  fields); a value above the profile's `maximum` becomes the maximum. */
 export function numericBoundValue(field: NumericField, raw: string): number {

@@ -8,7 +8,7 @@ import { atLeastOneGroups, boundsAllowAction, atLeastOneFormHint, type UnmetGrou
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
-import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue, boundLeftEmpty } from '../lib/bound-defaults';
 import { formatUnit } from '@suveren/approval-card/lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
 import { useProfileValuedOptions, type Workspace } from '@suveren/approval-card/lib/profile-valued-options';
@@ -177,6 +177,9 @@ function naturalEcho(value: string, unit?: string): string {
   }
   return '';
 }
+
+/** Placeholder of an optional limit left empty. DRAFT (2026-11-23, weekly limits). */
+const NO_LIMIT = 'No limit';
 
 function BoundedNumberInput({
   id,
@@ -589,6 +592,8 @@ function FieldRow({
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
           unit={(fieldDef as { unit?: string }).unit}
+          // An optional limit left empty is no limit (bound-defaults.ts boundLeftEmpty) — say so, not "0".
+          placeholder={prefix === 'bounds' && !(fieldDef as { required?: unknown }).required ? NO_LIMIT : undefined}
           min={minForBound(fieldDef)}
           max={capMax !== undefined ? Math.min(capMax, maxForBound(fieldDef) ?? capMax) : maxForBound(fieldDef)}
         />
@@ -968,6 +973,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
+        if (boundLeftEmpty(fieldDef, boundsValues[key] ?? '')) continue; // optional, not set: no limit
         bounds[key] = numericBoundValue(fieldDef, boundsValues[key]);
       } else {
         bounds[key] = boundsValues[key];
@@ -1001,6 +1007,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
+        if (boundLeftEmpty(fieldDef, clamped[key] ?? '')) continue; // optional, not set: no limit
         bounds[key] = numericBoundValue(fieldDef, clamped[key] ?? '');
       } else {
         bounds[key] = clamped[key] ?? '';

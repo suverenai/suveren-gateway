@@ -15,6 +15,8 @@ import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '@suveren/approval-card/lib/source-manifests';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
+import { sharedLimitLabel, limitWordsForProfile, type LimitWords } from '@suveren/approval-card/lib/limit-words';
+import { humanizeFieldName } from '../components/BoundsEditor';
 import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '@suveren/approval-card/lib/reject-outcome';
@@ -461,6 +463,14 @@ export function AgentReviewPage() {
 
   // Outside simulation, a limit only test-data tools use is not listed; it is still signed.
   const hiddenLimits = hiddenLimitKeys(profile, sourceManifests as ManifestGatingLike[] | undefined, simulation);
+  // The review names each limit as the form does (the connector's limit words + the window,
+  // else the profile's displayName) — never by its field name (found 2026-11-23: "send_weekly_max 3").
+  const limitWords: LimitWords | undefined = profile ? limitWordsForProfile(sourceManifests as never, profile.id) : undefined;
+  const limitLabel = (k: string): string => {
+    const def = profile?.boundsSchema?.fields?.[k];
+    return sharedLimitLabel({ profile, key: k, team: !authData.isPersonal, words: limitWords })?.name
+      ?? (def ? humanizeFieldName(k, def as never) : k);
+  };
   const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path' && !hiddenLimits.has(k));
   const contextEntries = Object.entries(gateData.context);
 
@@ -770,14 +780,14 @@ export function AgentReviewPage() {
               ))}
               {!(chain && prepared) && contextEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
-                  <dt>{chain ? scopeLabel(k, profile?.scopeSchema) : k}</dt>
+                  <dt>{scopeLabel(k, profile?.scopeSchema)}</dt>
                   <dd>{formatScopeFieldValue(k, v, profile?.scopeSchema?.fields?.[k], sourceManifests, gateData.contextLabels)}</dd>
                 </span>
               ))}
               {!(chain && prepared) && boundsEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
-                  <dt>{chain ? (profile?.boundsSchema?.fields?.[k]?.displayName ?? k) : k}</dt>
-                  <dd>{chain ? limitValueText(profile?.boundsSchema?.fields?.[k], v as string | number) : String(v)}</dd>
+                  <dt>{limitLabel(k)}</dt>
+                  <dd>{limitValueText(profile?.boundsSchema?.fields?.[k], v as string | number)}</dd>
                 </span>
               ))}
             </dl>

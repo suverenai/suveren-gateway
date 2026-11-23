@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ProfileBoundsField } from '@hap/core';
-import { minForBound, maxForBound, seedForBound, numericBoundValue } from './bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue, boundLeftEmpty } from './bound-defaults';
 
 /**
  * A fresh email mandate used to submit recipient_max = 0 (empty input → 0),
@@ -89,5 +89,22 @@ describe('maximum — a profile-declared ceiling (reporting@0.2 read_max_age_day
     expect(numericBoundValue(reportingWindow, '366')).toBe(366);
     expect(numericBoundValue(reportingWindow, '30')).toBe(30);
     expect(numericBoundValue(readMaxAgeDays, '5000')).toBe(5000);
+  });
+});
+
+describe('an optional limit left empty is not set (weekly limits, 2026-11-23)', () => {
+  const weekly = { type: 'number', required: false, unit: 'count', boundType: { kind: 'cumulative_count', window: 'weekly' } } as never;
+  const daily = { type: 'number', required: true, unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } } as never;
+  it('an empty optional count is left out (no limit), never 0', () => {
+    expect(boundLeftEmpty(weekly, '')).toBe(true);
+    expect(boundLeftEmpty(weekly, '  ')).toBe(true);
+  });
+  it('a value, including 0, is set', () => {
+    expect(boundLeftEmpty(weekly, '0')).toBe(false);
+    expect(boundLeftEmpty(weekly, '3')).toBe(false);
+  });
+  it('a required field left empty still becomes its floor', () => {
+    expect(boundLeftEmpty(daily, '')).toBe(false);
+    expect(numericBoundValue(daily, '')).toBe(0);
   });
 });
