@@ -20,10 +20,10 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0"
+    "@playwright/test": "^1.65.1"
   },
   "homepage": "https://www.suveren.ai"
 }
