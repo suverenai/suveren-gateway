@@ -91,6 +91,11 @@ type Phase =
   | { t: 'working'; kind: DecisionKind }
   | { t: 'done'; kind: DecisionKind; result: DecisionResult };
 
+/** The card's give button says how the mandate is given on this computer (Andreas 2026-11-22): with Touch ID, or on the phone. */
+export function giveButtonText(via: 'touch' | 'phone' | null | undefined): string {
+  return via === 'touch' ? S13.giveButton : via === 'phone' ? S13.giveCardPhoneButton : S13.giveCardButton;
+}
+
 export function ApprovalCard({
   proposal, currentUserId, manifests, toolDisplay, proposalLinks, mandateTitle, nameOf, topExtras,
   canApprove = true, canAskChanges = true, alreadyDecided = false, decide, onDecided, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal, className,
@@ -269,7 +274,7 @@ export function ApprovalCard({
   // A chain account gives a mandate with its device touch (DEC-80): same words as the review step, shared text module.
   const giveWording = (approvalHost().useGiveWording ?? (() => false))();
   const approveWord = giveWording
-    ? (isChange ? S13.giveCardApprove : isMandate ? S13.giveCardButton : 'Approve')
+    ? (isChange ? S13.giveCardApprove : isMandate ? giveButtonText(hostGive?.via) : 'Approve')
     : isChange ? 'Approve and sign' : isMandate ? 'Sign mandate' : 'Approve';
   const describedBy = `human-only-${proposal.id}`;
 
@@ -327,7 +332,9 @@ export function ApprovalCard({
               </div>
             </div>
           )}
-          <div className={`av3-btns${canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
+          {/* The give button names how it is given ("…with Touch ID", "…on your phone"): too long for a third of the row, so it
+              takes the whole first row and the others share the row below. */}
+          <div className={`av3-btns${giveWording && isMandate && !isChange && canApprove && !mandateEnded ? ' av3-btns-give' : canApprove && !mandateEnded && !isChange && canAskChanges ? '' : ' av3-btns-two'}`}>
             {canApprove && !mandateEnded && (
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-approve" aria-describedby={describedBy} onClick={() => {
                 // A chain account gives a mandate with its device touch on the give page (one implementation, DEC-80/91 direction 2026-11-20).

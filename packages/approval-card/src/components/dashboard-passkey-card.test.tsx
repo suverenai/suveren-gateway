@@ -33,6 +33,10 @@ describe('dashboard passkey card: the approval look on every device', () => {
     expect(h).toContain(PASSKEY_TEXT.added);
     expect(h).toContain(PASSKEY_TEXT.close);
     expect(h).not.toContain(PASSKEY_TEXT.button);
+    // The shared result stamp (ResultStamp): over the card, centred above the pinned Close, in a card with its own height.
+    expect(h).toContain('av3-given');
+    expect(h).toContain('av3-given-alone');
+    expect(h).not.toContain('position:static');
   });
   it('a refusal is shown above the footer and the button comes back', () => {
     const h = html({ s: 'offered', error: PASSKEY_TEXT.gone });

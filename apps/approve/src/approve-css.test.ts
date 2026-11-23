@@ -36,3 +36,11 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
     expect(code).toMatch(/body\.ap-blank #root \{ visibility: hidden; \}/);
   });
 });
+
+describe('the result stamp (Andreas 2026-11-22)', () => {
+  it('its small line uses the body font, not the mono font', () => {
+    const rule = /\.av3-stamp-t\s*\{([^}]*)\}/.exec(design)?.[1] ?? '';
+    expect(rule).not.toBe('');
+    expect(rule).not.toMatch(/font-family/);
+  });
+});

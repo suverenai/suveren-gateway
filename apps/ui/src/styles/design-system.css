@@ -4443,6 +4443,9 @@ video.document-preview-media { width: 100%; }
 .av3-error { margin: 0 0 var(--space-2); font-size: var(--text-body-sm); }
 .av3-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
 .av3-btns-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* A give button with its long name: alone on the first row; one button left over also takes a whole row. */
+.av3-btns-give { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.av3-btns-give > :first-child, .av3-btns-give > :last-child:nth-child(2) { grid-column: 1 / -1; }
 .av3-btn {
   height: 44px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md);
   background: var(--neutral-subtle); color: var(--text-primary); font: inherit; font-size: var(--text-body-sm); font-weight: 500;
@@ -4478,13 +4481,20 @@ video.document-preview-media { width: 100%; }
   gap: var(--space-1); padding: var(--space-6); text-align: center; animation: av3-fade 0.2s ease;
 }
 @keyframes av3-fade { from { opacity: 0; } }
+/* The given result (GiveTouchFooter): over the whole card, the stamp centred in the space above the pinned Close. */
+.av3-given { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; background: var(--bg-elevated); }
+.av3-given > .av3-stamp { position: static; inset: auto; flex: 1; min-height: 0; }
+.av3-given > .av3-foot { flex: none; }
+/* The give page shows the result alone in its card: give that card a height to centre in. */
+/* (.av3-card.av3-given-alone outranks .card.av3-card's min-height: 0, which collapsed the result card to nothing.) */
+.av3-card.av3-given-alone, .av3-given-alone { position: relative; min-height: 360px; }
 .av3-stamp-wait { flex-direction: row; gap: var(--space-2); font-size: var(--text-body); color: var(--text-muted); font-weight: 500; }
 .av3-spin { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--text-primary); border-radius: var(--radius-circle); animation: av3-spin 0.7s linear infinite; }
 @keyframes av3-spin { to { transform: rotate(360deg); } }
 .av3-check { width: 56px; height: 56px; stroke: var(--text-primary); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: av3-draw 0.35s ease forwards; }
 @keyframes av3-draw { to { stroke-dashoffset: 0; } }
 .av3-stamp-w { font-size: var(--text-h2); font-weight: 700; letter-spacing: -0.015em; }
-.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); font-family: var(--font-mono); }
+.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); }
 @media (prefers-reduced-motion: reduce) {
   .av3-stage, .av3-stage.av3-in, .av3-stage.av3-out { transition: none; animation: none; transform: none; }
   .av3-check { animation: none; stroke-dashoffset: 0; }
