@@ -61,6 +61,21 @@ export function boundLeftEmpty(field: NumericField, raw: string): boolean {
   return !(field as { required?: unknown }).required && raw.trim() === '';
 }
 
+/**
+ * The REQUIRED number limits still empty (shown ones only): the form keeps Continue
+ * off until each has a value, so a required limit is never signed as 0 by accident.
+ */
+export function requiredBoundsLeftEmpty(
+  fields: ReadonlyArray<readonly [string, NumericField]>,
+  values: Readonly<Record<string, string | undefined>>,
+  hidden: ReadonlySet<string> = new Set(),
+): string[] {
+  return fields
+    .filter(([key, def]) => def.type === 'number' && !!(def as { required?: unknown }).required && !hidden.has(key)
+      && (values[key] ?? '').trim() === '')
+    .map(([key]) => key);
+}
+
 /** Submitted numeric value: '' becomes the floor (0 as before, 1 for floor-1
  *  fields); a value above the profile's `maximum` becomes the maximum. */
 export function numericBoundValue(field: NumericField, raw: string): number {
