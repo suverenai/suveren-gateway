@@ -617,35 +617,39 @@ setInterval(() => {
   giveCheckRunning = true;
   void completeWaitingGives(d,
     (r) => {
+      const inForceAt = Date.now();
+      console.log(`[Control Plane] a give from the phone is in force (${r.authorizationId})${r.proposalId ? ` for request ${r.proposalId}` : ''}`);
       eventBus.emit('attestation-changed');
       void resyncGates().catch(() => {});
       // The AI's request this give carried out is closed here as `replaced`, at once, signed with this computer's key — as the
       // page does after a give from its card. The list, the card and the badge then move on the same moment (the phone would
       // close it too, a few seconds later, once it sees the receipt; it finds it closed and leaves it).
       // (Not while a page on this computer waits for this give: it shows "Signed" first and closes the request itself.)
-      if (r.proposalId && !pageIsWaiting(r.mandateId)) void closeGivenProposal(r.proposalId).catch((err) => console.warn(`[Control Plane] the request ${r.proposalId} given on the phone could not be closed here: ${err instanceof Error ? err.message : String(err)}`));
+      if (r.proposalId && !pageIsWaiting(r.mandateId)) void closeGivenProposal(r.proposalId, inForceAt).catch((err) => console.warn(`[Control Plane] the request ${r.proposalId} given on the phone could not be closed here: ${err instanceof Error ? err.message : String(err)}`));
     },
     r => console.warn(`[Control Plane] a give waiting on the phone ended: ${r.message}`),
   ).catch(() => {}).finally(() => { giveCheckRunning = false; });
 }, PHONE_GIVE_WAITING_MS).unref?.();
 
 /** Close an AI proposal a give carried out (outcome `replaced`), by this computer's device decision; then tell the page. */
-async function closeGivenProposal(proposalId: string): Promise<void> {
-  if (!deviceDecisions) return;
+async function closeGivenProposal(proposalId: string, since: number): Promise<void> {
+  if (!deviceDecisions) { console.warn(`[Control Plane] request ${proposalId} given on the phone: not closed here (no device decisions)`); return; }
   const userId = vault.getSessionUser()?.id ?? '';
   const d: CeremonyDeps = { ...mandateCeremonyDeps(), newAuthorizationId: () => '' };
   const got = await d.as('GET', `/api/proposals/${encodeURIComponent(proposalId)}`);
   const p = (got.body?.proposal ?? got.body) as { status?: string; pendingDomains?: string[]; pendingApprovers?: string[] } | undefined;
-  if (got.status !== 200 || !p || p.status !== 'pending') return;
+  if (got.status !== 200 || !p || p.status !== 'pending') { console.log(`[Control Plane] request ${proposalId} given on the phone: already ${p?.status ?? `unreadable (${got.status})`}`); return; }
   const approver = (p.pendingApprovers ?? []).includes(userId);
   const domains = p.pendingDomains ?? [];
   const domain = domains.includes(userId) ? userId : domains.includes('owner') ? 'owner' : null;
-  if (!approver && !domain) return;
+  if (!approver && !domain) { console.warn(`[Control Plane] request ${proposalId} given on the phone: not this person's to close here`); return; }
   const r = approver
     ? await deviceDecisions.decide(proposalId, 'reject', { outcome: 'replaced' })
     : await deviceDecisions.decide(proposalId, 'resolve', { action: 'reject', domain, outcome: 'replaced' });
-  if (r.status >= 200 && r.status < 300) eventBus.emit('proposal-resolved');
-  else throw new Error(`the Authority Server answered ${r.status}`);
+  if (r.status >= 200 && r.status < 300) {
+    eventBus.emit('proposal-resolved');
+    console.log(`[Control Plane] request ${proposalId} closed as replaced ${Date.now() - since} ms after its give was in force`);
+  } else throw new Error(`the Authority Server answered ${r.status}`);
 }
 
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
