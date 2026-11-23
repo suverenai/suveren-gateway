@@ -89,8 +89,10 @@ run('the release Windows helper, started like the gateway starts it', () => {
       c.stdout.on('data', d => out += d);
       c.stdin.on('error', () => {});
       c.stdin.write(JSON.stringify({ id: 1, op: 'hello' }) + '\\n');
-      c.on('exit', code => { console.log(JSON.stringify({ code, out })); });
-      setTimeout(() => c.stdin.end(), 1500);`;
+      // The timer only ends stdin for a helper that serves (it then waits for more requests); a refusing helper exits at
+      // once, and the timer must not keep this process alive for its full 1.5 s (3 runs x 1.5 s nearly filled the 5 s limit).
+      const t = setTimeout(() => c.stdin.end(), 1500);
+      c.on('exit', code => { clearTimeout(t); console.log(JSON.stringify({ code, out })); });`;
     const none = JSON.parse(spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' }).stdout);
     expect(none.code).toBe(77);
     // `node -e`: the parent has no script inside a gateway install, whatever the list says

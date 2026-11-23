@@ -88,8 +88,9 @@ run('the release helper, started like the gateway starts it', () => {
       c.stdout.on('data', d => out += d);
       c.stdin.on('error', () => {});
       c.stdin.write(JSON.stringify({ id: 1, op: 'hello' }) + '\\n');
-      c.on('exit', code => { console.log(JSON.stringify({ code, out })); });
-      setTimeout(() => c.stdin.end(), 1500);`;
+      // The timer only ends stdin for a helper that serves; a refusing helper exits at once and must not wait for it.
+      const t = setTimeout(() => c.stdin.end(), 1500);
+      c.on('exit', code => { clearTimeout(t); console.log(JSON.stringify({ code, out })); });`;
     const none = JSON.parse(spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' }).stdout);
     expect(none.code).toBe(77);
     writeFileSync(resolve(app, HELPER_CALLERS_FILE), JSON.stringify({ v: 1, callers: [{ exe: process.execPath, scriptPrefix: '/nonexistent/gateway' }] }));
