@@ -267,3 +267,24 @@ describe('every bound argument is visible', () => {
     }
   });
 });
+
+describe('the card is ready quickly over a slow network (dev lane 2026-11-23: a tapped request took 5–10 s on a phone over Tailscale)', () => {
+  it('with 150 ms per request: the mandate and the profile are read side by side, then the grant — two round trips, not three', async () => {
+    const w = await cardWorld();
+    const orig = w.as.call.bind(w.as);
+    let inFlight = 0;
+    let most = 0;
+    const order: string[] = [];
+    w.as.call = async (m, p, o) => {
+      inFlight++; most = Math.max(most, inFlight); order.push(p.replace(/\/[^/]+$/, '/…'));
+      await new Promise((r) => setTimeout(r, 150));
+      try { return await orig(m, p, o); } finally { inFlight--; }
+    };
+    const t0 = Date.now();
+    const c = await check(w);
+    const ms = Date.now() - t0;
+    expect(c.ok).toBe(true);
+    expect(most, 'the mandate and the profile were read at the same time').toBeGreaterThanOrEqual(2);
+    expect(ms, `ready after ${ms} ms`).toBeLessThan(150 * 2.8);
+  });
+});

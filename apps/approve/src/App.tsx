@@ -382,6 +382,8 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     // A notice names the AI's request; when its give is here, the give is what opens (it stands in the request's place).
     const inPlace = openRequest.id ? givesRef.current.find((g) => g.proposalId === openRequest.id) : undefined;
     setCurrentId(inPlace ? inPlace.key : openRequest.id);
+    // The tapped request is read and checked at once, beside the list, not after it (the list read and the card's reads overlap).
+    if (openRequest.id && !inPlace) void openCardRef.current(openRequest.id);
     setPanel((p) => ({ ...p, open: true, owed: false }));
     void load(true);
   }, [openRequest, onOpened, load]);
@@ -410,15 +412,24 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   const shownId = settling?.id ?? showId;
 
   // The card on screen is read fresh and checked; the buttons come only when every check passed (lib/card-checks.ts).
+  // One read per card at a time: the tapped request is read at once, and the panel would otherwise ask again before it lands.
+  const reading = useRef(new Set<string>());
   const openCard = useCallback(async (id: string) => {
+    if (reading.current.has(id)) return;
+    reading.current.add(id);
+    try { await readCard(id); } finally { reading.current.delete(id); }
+  }, [rt, onEnded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const readCard = async (id: string) => {
     const r = await rt.reader.get(id, true);
     if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
     setCards((c) => ({ ...c, [id]: { proposal: r.data, check: null } }));
     const check = await checkCard(rt.checks, r.data);
     if (!check.ok && check.reason === 'session_ended') { onEnded(); return; }
     setCards((c) => (c[id] ? { ...c, [id]: { proposal: c[id].proposal, check } } : c));
-  }, [rt, onEnded]);
+  };
 
+  const openCardRef = useRef(openCard);
+  openCardRef.current = openCard;
   const shownCard = shownId && !shownId.startsWith(CHG) && !shownId.startsWith(GIVE) ? cards[shownId] : undefined;
   // A change request stays on screen while it settles, even after it left the list.
   const [heldChange, setHeldChange] = useState<ChangeItem | null>(null);
