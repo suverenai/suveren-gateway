@@ -67,7 +67,8 @@ describe('the phone app\'s words (DEC-75, 78, 79; all DRAFT)', () => {
 describe('the notification words (stage D4)', () => {
   it('public/sw.js carries exactly texts.ts\'s pushTitle, pushOne and pushMany (a service worker cannot import the module)', async () => {
     const { readFileSync } = await import('node:fs');
-    const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+    // A Windows checkout has CRLF line endings (git core.autocrlf); the block is read line-ending agnostic.
+    const sw = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     const block = /\/\/ BEGIN PUSH TEXTS\nconst PUSH_TEXT = (\{[\s\S]*?\});\n\/\/ END PUSH TEXTS/.exec(sw);
     expect(block).not.toBeNull();
     const t = new Function(`return ${block![1]}`)() as { title: string; one: string; many: string; devicesChanged: string; recoveryStarted: string; identityReset: string };
