@@ -81,7 +81,13 @@ jobs:
         # tests silently resolve nothing and every assertion reads "undefined".
         env:
           SUVEREN_PROFILES_DIR: ${{ github.workspace }}/.hap-profiles
-        run: pnpm -r test
+        # One package at a time: pnpm runs up to 4 workspace packages at once by default and each
+        # vitest starts a worker per core, so on the 2-4 core runners the CPU-bound crypto cases
+        # (card worlds, signed grants) ran 8-30x slower than alone and crossed vitest's 5 s default
+        # (windows-latest: approve card-checks.test.ts:73 in run 45094813561, control-plane
+        # mandate-grants.test.ts DEC-61 case in run 45095356265). Measured locally (10 cores):
+        # card-checks 0.8 s alone, 6.5 s under the default, 1.8 s with --workspace-concurrency=1.
+        run: pnpm -r --workspace-concurrency=1 test
 
   smoke:
     name: ${{ matrix.os }}
