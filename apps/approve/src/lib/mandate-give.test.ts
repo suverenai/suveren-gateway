@@ -61,7 +61,7 @@ async function world() {
     const r = buildReceipt({ mandate_id: grant.mandate_id, mandate_version: grant.mandate_version, grant_hash: await grantHash(grant), key_id: computer.keyId, chain_seq: state.head.seq, chain_head: state.head.hash, received_at: as.now() });
     as.receipts.set(grant.mandate_id, [{ receipt: r, sig: await signObject(r, computer.seed) }]);
   };
-  const deps = { keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: as.now, receiptPoll: { tries: 1, everyMs: 0 } };
+  const deps = { keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: as.now, receiptPoll: { tries: 1, everyMs: 0 }, receiptLater: { tries: 0, everyMs: 0 } };
   return { as, rt, account, keys, computer, prepare, receipt, deps };
 }
 type W = Awaited<ReturnType<typeof world>>;
@@ -206,6 +206,38 @@ describe('giving it', () => {
     expect(d.get()).toMatchObject({ step: 'not_received', checkedOnce: true });
     await w.receipt(w.as.postedGrants[0].grant as MandateGrant);
     await d.checkAgain();
+    expect(d.get()).toMatchObject({ step: 'signed', receivedBy: 'Office Mac' });
+  });
+
+  it('a computer that takes the grant in a few seconds later: still "Signing…" meanwhile, then received — never "not received" first', async () => {
+    const w = await world();
+    await w.prepare();
+    let asked = 0;
+    const orig = w.as.call.bind(w.as);
+    // the computer answers on the phone's third look (as the gateway does a few seconds after the grant)
+    w.as.call = async (m, p, o) => { if (m === 'GET' && p.endsWith('/receipts') && ++asked === 3) await w.receipt(w.as.postedGrants.at(-1)!.grant as MandateGrant); return orig(m, p, o); };
+    const d = new GiveDriver({ ...w.deps, receiptPoll: { tries: 5, everyMs: 0 } });
+    const seen: string[] = [];
+    d.subscribe(() => seen.push(d.get().step));
+    d.open(await onlyItem(w));
+    await d.give();
+    expect(d.get()).toMatchObject({ step: 'signed', receivedBy: 'Office Mac' });
+    expect(seen).not.toContain('not_received');
+  });
+
+  it('the wait before "not received" is a minute (the gateway checks every 5 s), and after it the phone asks on by itself', async () => {
+    const { GIVE_RECEIPT_WAIT, GIVE_RECEIPT_LATER } = await import('./mandate-give');
+    expect(GIVE_RECEIPT_WAIT.tries * GIVE_RECEIPT_WAIT.everyMs).toBeGreaterThanOrEqual(60_000);
+    expect(GIVE_RECEIPT_LATER.tries * GIVE_RECEIPT_LATER.everyMs).toBeGreaterThanOrEqual(10 * 60_000);
+    const w = await world();
+    await w.prepare();
+    let looks = 0;
+    const orig = w.as.call.bind(w.as);
+    w.as.call = async (m, p, o) => { if (m === 'GET' && p.endsWith('/receipts') && ++looks === 3) await w.receipt(w.as.postedGrants.at(-1)!.grant as MandateGrant); return orig(m, p, o); };
+    const d = new GiveDriver({ ...w.deps, receiptPoll: { tries: 1, everyMs: 0 }, receiptLater: { tries: 5, everyMs: 0 } });
+    d.open(await onlyItem(w));
+    await d.give();
+    // "not received" after the first look, then received on a later look by itself, with no tap on Check again
     expect(d.get()).toMatchObject({ step: 'signed', receivedBy: 'Office Mac' });
   });
 

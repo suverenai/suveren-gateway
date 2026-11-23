@@ -8,6 +8,7 @@ import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePollin
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
+import { usePendingCount } from '../hooks/usePendingCount';
 import { isNewReport } from '../lib/report-news';
 import { createLatestGuard } from '../lib/latest-guard';
 import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
@@ -64,11 +65,9 @@ function useOtherNavStatus() {
   const poll = useCallback(async () => {
     const mayWrite = guardRef.current.begin();
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
+      const [aiStatus, authData, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
-        spClient.getMyProposals(activeDomain).catch(() => null),
-        spClient.getProposalsForApprover().catch(() => null),
         spClient.getAgentContext().catch(() => ''),
         spClient.getArchivedMandates().catch(() => [] as string[]),
         spClient.getDenials({ limit: 200 }).catch(() => null),
@@ -88,13 +87,6 @@ function useOtherNavStatus() {
         // owner has seen them. A failed archive load counts them (safe side).
         const expired = bucketAuths(authData, { archivedSet: new Set(archivedIds) }).expired.length;
         if (expired > 0) next.authorizations = expired;
-      }
-      // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
-      const domainPending = (proposalData?.length ?? 0);
-      const approverPending = (approverProposals?.length ?? 0);
-      const totalPending = domainPending + approverPending;
-      if (totalPending > 0) {
-        next.proposals = totalPending;
       }
       // Empty agent brief → badge nudges the owner to author one.
       if (!briefText || !briefText.trim()) next.brief = 1;
@@ -178,8 +170,12 @@ export function Sidebar() {
   const { mode, activeTeam, deviceKeysSwitch } = useAuth();
   const other = useOtherNavStatus();
   const { attentionCount } = useIntegrationStatus();
+  // Approvals: the one queue the Approvals list and the panel show, never a count of its own (they disagreed for a long time
+  // after a request was closed on the phone, dev lane 2026-11-23).
+  const waiting = usePendingCount();
   const counts: Record<string, number> = { ...other };
   if (attentionCount > 0) counts.integrations = attentionCount;
+  if (waiting > 0) counts.proposals = waiting;
 
   const visibleItems = NAV_ITEMS.filter(item => (!item.teamOnly || mode === 'team') && (!item.deviceKeysOnly || deviceKeysSwitch));
 

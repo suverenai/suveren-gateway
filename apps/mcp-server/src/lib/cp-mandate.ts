@@ -72,3 +72,18 @@ export async function controlPlaneMandateOffer(o: { proposalId: string; tool: 'c
     return { ok: false, code: 'unreachable' };
   }
 }
+
+/** What became of an AI proposal's give, as the control plane knows it (GET /internal/mandate/given/:id). Empty when unknown or unreachable. */
+export async function controlPlaneProposalGive(proposalId: string): Promise<{ given?: { authorizationId: string; op: 'grant' | 'change' }; waiting?: boolean }> {
+  const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
+  if (!secret) return {};
+  try {
+    const res = await fetch(`${CP_BASE}/internal/mandate/given/${encodeURIComponent(proposalId)}`, { headers: { 'X-Internal-Secret': secret }, signal: AbortSignal.timeout(5_000) });
+    if (!res.ok) return {};
+    const b = (await res.json().catch(() => ({}))) as { given?: { authorizationId?: unknown; op?: unknown }; waiting?: unknown };
+    if (b.given && typeof b.given.authorizationId === 'string') return { given: { authorizationId: b.given.authorizationId, op: b.given.op === 'change' ? 'change' : 'grant' } };
+    return b.waiting === true ? { waiting: true } : {};
+  } catch {
+    return {};
+  }
+}

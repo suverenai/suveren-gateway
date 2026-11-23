@@ -36,6 +36,7 @@ import { AsKeyMismatchError } from '../lib/attestation-cache';
 import { ArchiveWriteError } from '../lib/receipt-archive';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from '../lib/ticket-verify';
 import { notifyControlPlane } from '../lib/cp-notify';
+import { controlPlaneProposalGive } from '../lib/cp-mandate';
 import { resolveWhoLabel } from '../lib/who-label';
 import { resolveProposalToolArgs, decryptRejectionNote, computeProposalContentHash, ProposalContentError } from '../lib/proposal-content';
 import { checkDeviceDecisions, controlPlaneDevice } from '../lib/device-decisions';
@@ -975,6 +976,12 @@ export function checkPendingCommitmentsHandler(
           }
 
           if (outcome === 'replaced') {
+            // An AI-proposed mandate or change closed because the person GAVE it (on the card or on their phone): it is this
+            // proposal that is in force, not a version of their own. Only the gateway knows (the Authority Server has one word).
+            if (match.tool === 'setup__create_mandate' || match.tool === 'setup__change_mandate') {
+              const g = await controlPlaneProposalGive(match.id);
+              if (g.given || g.waiting) return { content: [{ type: 'text' as const, text: proposalGivenText(match.id, match.tool === 'setup__change_mandate', g) }] };
+            }
             return {
               content: [{
                 type: 'text' as const,
@@ -1072,4 +1079,12 @@ export function checkPendingCommitmentsHandler(
       };
     }
   };
+}
+
+/** The AI's line for its mandate (or change) proposal that the person gave with their touch. */
+export function proposalGivenText(id: string, isChange: boolean, g: { given?: { authorizationId: string }; waiting?: boolean }): string {
+  const what = isChange ? 'the change you proposed' : 'the mandate you proposed';
+  return g.given
+    ? `Proposal ${id} was GIVEN: the person gave ${what} with their touch, exactly as proposed. It is in force now as ${g.given.authorizationId}. Check list-authorizations before you use it.`
+    : `Proposal ${id} was GIVEN on the person's phone: ${what} comes into force in a moment. Check list-authorizations shortly before you use it.`;
 }

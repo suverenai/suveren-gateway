@@ -452,8 +452,16 @@ describe('give on the phone', () => {
     expect(c.give.proposal_id).toBe('prop_change_0001');
     expect(c.give.bounds.value_max).toBe(3000);
     expect(c.give.previous).toMatchObject({ mandate_version: 1 });
+    const given = (q: string) => call(w.gw.port, 'GET', `/internal/mandate/given/${q}`, { headers: { 'X-Internal-Secret': 'sekret' } });
+    // before the phone gives: the give waits; the AI path says so, never "the person signed their own version"
+    expect((await given('prop_change_0001')).body).toEqual({ waiting: true });
     expect((await phoneSigns(w, phone, c)).status).toBe(201);
-    expect((await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`)).body).toMatchObject({ state: 'done' });
+    const done = await w.get(`/api/mandate/give-on-phone/${String(r.body.mandateId)}`);
+    expect(done.body).toMatchObject({ state: 'done' });
+    // after: the mandate the proposal put in force, named for the AI
+    expect((await given('prop_change_0001')).body).toEqual({ given: { authorizationId: done.body.authorizationId, op: 'change' } });
+    expect((await given('prop_unknown_01')).body).toEqual({});
+    expect((await call(w.gw.port, 'GET', '/internal/mandate/given/prop_change_0001', {})).status).toBe(401);
   });
 });
 

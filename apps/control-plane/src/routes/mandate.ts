@@ -6,7 +6,7 @@
  */
 import { Router, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, dropProposalGive, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
+import { createMandate, renewMandate, renewOnPhone, prepareMandate, planMandateChange, changeMandate, changeOnPhone, giveOnPhone, pollPhoneGive, cancelPhoneGive, dropProposalGive, noteProposalGiven, MandateRefused, type CeremonyDeps, type MandateRequest, type RenewRequest, type SignedMandate } from '../lib/mandate-ceremony';
 import { approvalCapsOf, limitsOf, memberLabel, type TeamTerms } from '../lib/mandate-change-view';
 import { GrantRefusal } from '../lib/mandate-grants';
 import { eventBus } from '../lib/event-bus';
@@ -123,7 +123,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       const full: CeremonyDeps = { ...d, newAuthorizationId: () => `authz_${randomUUID()}` };
       const r = await changeMandate({ old: got.ok.old, changes: changes as never, sealedDiff: b.sealedDiff as never }, full);
       // Given here with Touch ID: the same proposal no longer waits on the phone (it would give it a second time).
-      if (proposalId) dropProposalGive(proposalId, full);
+      if (proposalId) { dropProposalGive(proposalId, full); noteProposalGiven(proposalId, r.authorizationId, 'change'); }
       void d.resyncGates?.().catch(() => {});
       res.json({ ok: true, authorizationId: r.authorizationId });
     } catch (err) { answerRefusal(res, err); }
@@ -171,7 +171,7 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
       }
       const { authorizationId, revokeError, oldStoppedLocally } = await createMandate(request, d);
       // Given here with Touch ID: the same proposal no longer waits on the phone (it would give it a second time).
-      if (proposalId) dropProposalGive(proposalId, d);
+      if (proposalId) { dropProposalGive(proposalId, d); noteProposalGiven(proposalId, authorizationId, 'grant'); }
       res.json({ ok: true, authorizationId, ...(revokeError ? { revokeError } : {}), ...(oldStoppedLocally ? { oldStoppedLocally } : {}) });
     } catch (err) { answerRefusal(res, err); }
   });
