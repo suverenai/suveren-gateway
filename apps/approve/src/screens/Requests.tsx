@@ -21,8 +21,12 @@ export interface RequestsScreenProps {
   /** A computer's change requests waiting for this phone (stage D3), shown above the requests. */
   changes?: ChangeItem[];
   onOpenChange?: (requestId: string) => void;
-  /** Mandates to give, the person's own mandates and notices (D3); drawn above the requests. */
-  extra?: ReactNode;
+  /** Mandates to give (D3): waiting items, drawn first in the waiting list. */
+  waiting?: ReactNode;
+  /** How many items `waiting` holds (the empty text shows only when nothing at all is waiting). */
+  waitingCount?: number;
+  /** Below the waiting list: the person's own mandates (D3, mockup B2). Never waiting items. */
+  below?: ReactNode;
   error?: string;
   nowMs: number;
   onOpen: (id: string) => void;
@@ -55,9 +59,10 @@ export function RequestsScreen(p: RequestsScreenProps) {
           <button type="button" className="btn btn-ghost btn-full" onClick={p.pushOffer.onNotNow} disabled={p.pushOffer.busy}>{P.pushNotNow}</button>
         </div>
       )}
-      {p.extra}
-      {p.proposals !== null && p.proposals.length === 0 && (p.changes ?? []).length === 0 && !p.error && <p data-testid="list-empty">{P.listEmpty}</p>}
+      {/* Waiting holds only what needs the person (mockup: rows, else "Nothing is waiting for you." right under the heading). */}
+      {p.proposals !== null && p.proposals.length === 0 && (p.changes ?? []).length === 0 && !(p.waitingCount ?? 0) && !p.error && <p className="text-muted" data-testid="list-empty">{P.listEmpty}</p>}
       {!!p.missed && <p className="form-hint" data-testid="push-missed">{P.pushMissed(p.missed)}</p>}
+      {p.waiting}
       <div className="dash-rows" data-testid="request-list">
         {(p.changes ?? []).map((c) => (
           <ChangeRow key={c.requestId} item={c} nowMs={p.nowMs} onOpen={() => p.onOpenChange?.(c.requestId)} />
@@ -66,6 +71,7 @@ export function RequestsScreen(p: RequestsScreenProps) {
           <ApprovalRow key={pr.id} proposal={pr} manifests={NO_MANIFESTS} titles={NO_TITLES} onOpen={() => p.onOpen(pr.id)} />
         ))}
       </div>
+      {p.below}
       <button type="button" className="btn btn-secondary btn-full" onClick={p.onRefresh}>{P.listRefresh}</button>
     </div>
   );

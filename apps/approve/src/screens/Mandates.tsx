@@ -155,18 +155,27 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onCancelTouch, on
   );
 }
 
-/** "Your mandates" with End (mockup B2 list). */
-export function OwnMandates({ items, nowSeconds, onEnd }: { items: OwnMandate[]; nowSeconds: number; onEnd: (m: OwnMandate) => void }) {
-  if (items.length === 0) return null;
+/** "Active until 4 Dec 2026, 14:20": the end in the person's local time (mockup B2 row), never a relative word like "today". */
+export function untilText(expiresAt: number): string {
+  return new Date(expiresAt * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * "Your mandates" with End (mockup B2 list). The title is the gateway's (its Mandates page shows the mandate's own title, else the area),
+ * not "The mandate for …". Notes about mandates ended on another device sit here, under this heading, never under "Waiting for you".
+ */
+export function OwnMandates({ items, notes = [], onEnd }: { items: OwnMandate[]; notes?: string[]; onEnd: (m: OwnMandate) => void }) {
+  if (items.length === 0 && notes.length === 0) return null;
   return (
     <section data-testid="own-mandates">
-      <h2>{P.mineTitle}</h2>
+      <h2 className="ap-h2">{P.mineTitle}</h2>
+      {notes.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
       <div className="dash-rows">
         {items.map((m) => (
           <div key={m.authorizationId} className="av3-row" data-testid="own-mandate">
-            <div className="av3-row-head" style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
-              <span style={{ flex: 1, minWidth: 0 }}><span className="av3-row-title">{P.giveTitle(m.title).replace(/^Give the /, 'The ')}</span><span className="form-hint" style={{ display: 'block' }}>{P.mineActiveUntil(whenText(m.expiresAt, nowSeconds))}</span></span>
-              <button type="button" className="btn btn-outline-strong" style={{ minHeight: 44 }} data-testid="btn-end" onClick={() => onEnd(m)}>{P.mineEnd}</button>
+            <div className="av3-row-head ap-mrow">
+              <span className="ap-mrow-text"><span className="av3-row-title ap-clamp" data-testid="own-mandate-title" title={m.title}>{m.title}</span><span className="form-hint" data-testid="own-mandate-until">{P.mineActiveUntil(untilText(m.expiresAt))}</span></span>
+              <button type="button" className="btn btn-ghost btn-sm" style={{ minHeight: 44 }} data-testid="btn-end" onClick={() => onEnd(m)}>{P.mineEnd}</button>
             </div>
           </div>
         ))}
@@ -179,7 +188,7 @@ export function OwnMandates({ items, nowSeconds, onEnd }: { items: OwnMandate[];
 export function EndScreen({ state, onEnd, onKeep, onDone }: { state: Exclude<EndState, { step: 'idle' }>; onEnd: () => void; onKeep: () => void; onDone: () => void }) {
   const m = state.item;
   const shared: SharedEndState = state.step === 'confirm' ? { phase: 'confirm' } : state.step === 'sending' ? { phase: 'busy' } : state.step === 'done' ? { phase: 'done' } : { phase: 'error', code: 'other' };
-  const until = new Date(m.expiresAt * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const until = untilText(m.expiresAt);
   return (
     <div className="device-screen" data-testid="end-screen">
       <EndMandate facts={{ profileName: m.title, limits: [], activeUntil: until }} state={shared} onEnd={onEnd} onKeep={onKeep} />

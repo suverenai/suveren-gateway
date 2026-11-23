@@ -7,6 +7,7 @@
  * chain (grant-check.ts). Only those are offered. The revoke names the members of that verified grant (what the owner granted, not what
  * the Authority Server says) and is signed with the phone's device key; no touch (S13 screen 4: "You do not need your touch").
  */
+import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import {
   b64uEncode, buildGrant, randomBytes, signedBytes, verifyGrant, type MandateGrant,
 } from '@hap/core/device-keys';
@@ -51,7 +52,8 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
   if (!mine.ok) return { ok: false, code: mine.status === 401 ? 'session_ended' : mine.code };
   const items: OwnMandate[] = [];
   const ended: EndedElsewhere[] = [];
-  const titleOf = (row: Record<string, unknown>) => typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? row.profileId.replace(/@.*$/, '').split('/').pop() ?? row.profileId : 'a mandate');
+  // The gateway's Mandates page title: the mandate's own title, else the area's display name (the shared profileIdentity fallback chain).
+  const titleOf = (row: Record<string, unknown>) => typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? profileIdentity(row.profileId).name : 'a mandate');
   for (const row of Array.isArray(mine.data.mandates) ? mine.data.mandates : []) {
     if (!isObj(row) || typeof row.authorization_id !== 'string') continue;
     if (row.status === 'revoked') {
