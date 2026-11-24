@@ -496,6 +496,8 @@ export interface ExecutionReceipt {
   executionContext: Record<string, unknown>;
   cumulativeState: {
     daily: { amount: number; count: number };
+    /** Present when the profile has a weekly bound (protocol 0.7/0.8, Cumulative State). */
+    weekly?: { amount: number; count: number };
     monthly: { amount: number; count: number };
   };
   timestamp: number;

@@ -29,4 +29,17 @@ describe('Covered by — usage from the newest ticket today', () => {
     const lines = usageLines(ticket({ at: '2026-10-22T10:00:00', count: 2 }), undefined, null);
     expect(lines).toEqual([{ label: 'today', text: '2 calls' }, { label: 'this month', text: '5 calls' }]);
   });
+  it('shows this week only when the ticket carries a weekly state, against the weekly bound', () => {
+    const profile = { boundsSchema: { fields: {
+      post_daily_max: { type: 'number', boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['post'] },
+      post_weekly_max: { type: 'number', boundType: { kind: 'cumulative_count', window: 'weekly' }, appliesTo: ['post'] },
+    } } } as never;
+    const r = {
+      ...ticket({ at: '2026-10-22T10:00:00', count: 1 }), actionType: 'post',
+      cumulativeState: { daily: { count: 1, amount: 0 }, weekly: { count: 3, amount: 0 }, monthly: { count: 4, amount: 0 } },
+    } as unknown as ExecutionReceipt;
+    expect(usageLines(r, { post_daily_max: 2, post_weekly_max: 3 }, profile)).toEqual([
+      { label: 'today', text: '1 of 2' }, { label: 'this week', text: '3 of 3' }, { label: 'this month', text: '4 calls' },
+    ]);
+  });
 });

@@ -8,7 +8,7 @@ import { atLeastOneGroups, boundsAllowAction, atLeastOneFormHint, type UnmetGrou
 import { spClient, type IntegrationManifest, type ProfileConfig, type CapKind } from '../lib/sp-client';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
-import { minForBound, maxForBound, seedForBound, numericBoundValue } from '../lib/bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue, boundLeftEmpty, requiredBoundsLeftEmpty } from '../lib/bound-defaults';
 import { formatUnit } from '@suveren/approval-card/lib/bound-format';
 import { effectiveCapKind, enumExceedsCap, isCapped, type CapFieldShape } from '../lib/team-caps';
 import { useProfileValuedOptions, type Workspace } from '@suveren/approval-card/lib/profile-valued-options';
@@ -177,6 +177,11 @@ function naturalEcho(value: string, unit?: string): string {
   }
   return '';
 }
+
+/** Placeholder of an optional limit left empty. DRAFT (2026-11-23, weekly limits). */
+const NO_LIMIT = 'No limit';
+/** Under Continue while a required limit is empty. DRAFT (2026-11-23). */
+const REQUIRED_EMPTY = (names: string[]) => `Set ${names.length === 1 ? 'this limit' : 'these limits'} to continue: ${names.join(', ')}.`;
 
 function BoundedNumberInput({
   id,
@@ -589,6 +594,8 @@ function FieldRow({
           onChange={v => onChange(fieldKey, v)}
           disabled={readOnly}
           unit={(fieldDef as { unit?: string }).unit}
+          // An optional limit left empty is no limit (bound-defaults.ts boundLeftEmpty) — say so, not "0".
+          placeholder={prefix === 'bounds' && !(fieldDef as { required?: unknown }).required ? NO_LIMIT : undefined}
           min={minForBound(fieldDef)}
           max={capMax !== undefined ? Math.min(capMax, maxForBound(fieldDef) ?? capMax) : maxForBound(fieldDef)}
         />
@@ -968,6 +975,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
+        if (boundLeftEmpty(fieldDef, boundsValues[key] ?? '')) continue; // optional, not set: no limit
         bounds[key] = numericBoundValue(fieldDef, boundsValues[key]);
       } else {
         bounds[key] = boundsValues[key];
@@ -1001,6 +1009,7 @@ export function BoundsEditor({
     const bounds: AgentBoundsParams = { profile: profile.id };
     for (const [key, fieldDef] of boundsFields) {
       if (fieldDef.type === 'number') {
+        if (boundLeftEmpty(fieldDef, clamped[key] ?? '')) continue; // optional, not set: no limit
         bounds[key] = numericBoundValue(fieldDef, clamped[key] ?? '');
       } else {
         bounds[key] = clamped[key] ?? '';
@@ -1078,8 +1087,12 @@ export function BoundsEditor({
     );
   };
 
+  // A REQUIRED limit left empty is never signed as 0 by accident: Continue waits until it
+  // has a value (an OPTIONAL one left empty is simply not set — bound-defaults boundLeftEmpty).
+  const requiredEmptyKeys = requiredBoundsLeftEmpty(boundsFields, boundsValues, hiddenLimits);
+
   // Whether the primary Continue button should be disabled.
-  const continueBlocked = hardViolatingKeys.length > 0;
+  const continueBlocked = hardViolatingKeys.length > 0 || (!readOnly && requiredEmptyKeys.length > 0);
 
   // The profile's `scopeSchema.atLeastOne` groups that apply with the limits as
   // they stand now (a listed action still allowed): their fields read "at least
@@ -1195,6 +1208,11 @@ export function BoundsEditor({
         </div>
       )}
 
+      {!readOnly && requiredEmptyKeys.length > 0 && (
+        <p className="cta-helper" data-testid="required-limits-empty">
+          {REQUIRED_EMPTY(requiredEmptyKeys.map(k => humanizeFieldName(k, boundsFields.find(([f]) => f === k)![1])))}
+        </p>
+      )}
       <button
         className="btn btn-primary"
         onClick={handleConfirm}

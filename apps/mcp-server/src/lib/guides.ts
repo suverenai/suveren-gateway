@@ -152,13 +152,16 @@ export function scopeFieldsOf(profile: ProfileLike): FieldsSchema | undefined {
   return profile.scopeSchema;
 }
 
+/** "per day" / "per week" / "per month" — the window's noun, not its adjective. */
+const WINDOW_PER: Record<string, string> = { daily: 'day', weekly: 'week', monthly: 'month' };
+
 function fieldLine(name: string, f: FieldDef): string {
   const kind: string[] = [];
   const values = f.boundType?.values ?? f.enum;
   if (Array.isArray(values)) kind.push(`one of ${values.map(v => `\`${String(v)}\``).join(', ')}`);
   else if (f.type) kind.push(f.type);
   if (f.unit) kind.push(f.unit);
-  if (f.boundType?.window) kind.push(`per ${f.boundType.window === 'daily' ? 'day' : f.boundType.window}`);
+  if (f.boundType?.window) kind.push(`per ${WINDOW_PER[f.boundType.window] ?? f.boundType.window}`);
   if (typeof f.maximum === 'number') kind.push(`at most ${f.maximum}`);
   if (f.default !== undefined) kind.push(`default \`${String(f.default)}\``);
   const label = f.displayName ? ` (${f.displayName})` : '';

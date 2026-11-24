@@ -379,6 +379,7 @@ function RecordCard({ item, proposalLinks, toolDisplay, manifests, currentUserId
         <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginBottom: '0.5rem' }}>
           After this action · today: {cumulative.daily.count} action{cumulative.daily.count === 1 ? '' : 's'}
           {cumulative.daily.amount > 0 ? `, ${cumulative.daily.amount}` : ''}
+          {cumulative.weekly ? <>{' · '}this week: {cumulative.weekly.count}{cumulative.weekly.amount > 0 ? `, ${cumulative.weekly.amount}` : ''}</> : null}
           {' · '}this month: {cumulative.monthly.count}
           {cumulative.monthly.amount > 0 ? `, ${cumulative.monthly.amount}` : ''}
         </div>
