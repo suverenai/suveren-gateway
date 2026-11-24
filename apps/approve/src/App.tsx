@@ -47,6 +47,7 @@ import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
 import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
 import { requestFromHash, type PushState } from './lib/push';
+import { onForeground } from './lib/foreground';
 import { readPendingPasskeys, approvePasskey, type PendingPasskey } from './lib/passkey-approve';
 import { DashboardPasskeyCard, PASSKEY_TEXT, passkeyRefusalText, type PasskeyCardView } from '@suveren/approval-card/components/DashboardPasskeyCard';
 
@@ -113,6 +114,12 @@ function Screens() {
     bindPhoneHost(null);
     setView({ t: 'locked', error, ended, canForget });
   }, []);
+
+  // While the open screen waits for the person's tap, the sign-in's first steps (the server's key, a fresh challenge) are fetched
+  // already, so the Face ID / fingerprint prompt comes at once after the tap. Nothing is shown or decided before the check.
+  useEffect(() => {
+    if (view.t === 'locked' && !view.canForget) rt.session.prepare();
+  }, [rt, view]);
 
   useEffect(() => {
     void (async () => {
@@ -339,7 +346,10 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     if (r.ok) {
       setProposals(r.data);
       setError(undefined);
-      setMissed(await rt.push.missed(r.data.filter((x) => x.status === 'pending')));
+      const waiting = r.data.filter((x) => x.status === 'pending');
+      setMissed(await rt.push.missed(waiting));
+      // A notice never keeps counting what no longer waits (decided here or elsewhere): recorded for the worker, stale notice closed.
+      void rt.push.settle(new Set(waiting.map((x) => x.id)));
       return;
     }
     if (r.code === 'session_ended') { onEnded(); return; }
@@ -351,6 +361,15 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     const t = window.setInterval(() => void load(false), REFRESH_MS);
     return () => window.clearInterval(t);
   }, [load]);
+
+  // The app comes to the front (from the background, from the app switcher, or opened again from the home screen): the list is read
+  // at once, not at the next refresh (30 s). A session that ended while away is handled by the shell (it shows the open screen).
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    // After the shell's own handler (it ends a session that was away more than 5 minutes): checked in a microtask, so a session
+    // ended there is never used for this read; the open screen shows instead and reads after the check.
+    return onForeground({ doc: document, win: window }, () => { queueMicrotask(() => { if (rt.session.bearer()) void load(false); }); });
+  }, [rt, load]);
 
   // A push while the app is open: the service worker says so at once, and the list is read again now, not at the next refresh (30 s).
   // The request then opens by itself under the same rule as on the gateway page ("Open automatically").

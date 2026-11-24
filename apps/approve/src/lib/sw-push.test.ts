@@ -116,6 +116,16 @@ describe('public/sw.js: push', () => {
     expect(w.opened).toEqual(['/']);
   });
 
+  it('a request the app found no longer waiting is left out of the merged notice: one waiting reads as one (lock screen said 2, 2026-11-24)', async () => {
+    const w = loadWorker();
+    await w.push({ ids: ['decided'] });
+    // The app read its list after the person decided: it recorded the id as done (src/lib/push.ts settle).
+    w.stored.set('push:done', ['decided']);
+    await w.push({ ids: ['waiting'] });
+    expect(w.shown[1].opts.body).toBe(P.pushOne);
+    expect(w.shown[1].opts.data.ids).toEqual(['waiting']);
+  });
+
   it('L3: a replaced subscription is made again with the same server key and the app is marked to send it', async () => {
     const w = loadWorker();
     const key = new Uint8Array([4, 1, 2]).buffer;

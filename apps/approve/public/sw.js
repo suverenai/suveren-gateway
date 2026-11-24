@@ -83,6 +83,8 @@ const PUSH_TEXT = {
 // END PUSH TEXTS
 const SEEN_KEY = 'push:seen';
 const SEEN_MAX = 500;
+// Written by the app after each list read (src/lib/push.ts DONE_KEY): ids that no longer wait. Left out of a merged notice.
+const DONE_KEY = 'push:done';
 const ID_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
 
 function idsOf(event) {
@@ -96,6 +98,25 @@ function idsOf(event) {
 }
 
 // The app's own IndexedDB store (src/lib/idb.ts: database `suveren-approve`, store `kv`).
+function kvGet(key) {
+  return new Promise((resolve) => {
+    const r = indexedDB.open('suveren-approve', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('kv'); };
+    r.onerror = () => resolve(undefined);
+    r.onsuccess = () => {
+      const db = r.result;
+      try {
+        const get = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+        get.onsuccess = () => { db.close(); resolve(get.result); };
+        get.onerror = () => { db.close(); resolve(undefined); };
+      } catch {
+        db.close();
+        resolve(undefined);
+      }
+    };
+  });
+}
+
 function kvUpdate(key, fn) {
   return new Promise((resolve) => {
     const r = indexedDB.open('suveren-approve', 1);
@@ -160,6 +181,16 @@ self.addEventListener('push', (event) => {
     } catch {
       shown = [];
     }
+    // Ids the app found no longer waiting (decided, ended) are left out: the count names only what still waits.
+    let done = [];
+    try {
+      const d = await kvGet(DONE_KEY);
+      done = Array.isArray(d) ? d : [];
+    } catch {
+      done = [];
+    }
+    const doneSet = new Set(done);
+    shown = shown.filter((x) => !doneSet.has(x));
     const all = [...new Set([...shown, ...ids])].slice(-100);
     // A push without a notice is not allowed (userVisibleOnly): even an unreadable message shows the generic one.
     const body = all.length > 1 ? PUSH_TEXT.many.replace('{n}', String(all.length)) : PUSH_TEXT.one;

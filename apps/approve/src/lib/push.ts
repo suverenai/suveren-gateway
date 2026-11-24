@@ -24,6 +24,14 @@ export const RESYNC_KEY = 'push:resync';
 /** The person said "not now" to the offer on the requests screen. */
 export const DISMISSED_KEY = 'push:offer-dismissed';
 export const SEEN_MAX = 500;
+/**
+ * Written by the app after each list read: ids the service worker was told about that no longer wait (decided, ended, run
+ * out). The worker leaves them out when a new notice takes over the one still shown, so a notice never counts a request that
+ * was already decided (Andreas, 2026-11-24: "2 requests are waiting" with one waiting).
+ */
+export const DONE_KEY = 'push:done';
+/** The tag of the waiting-requests notice (public/sw.js `TAG`). */
+export const WAITING_TAG = 'suveren-waiting';
 
 export type PushState = 'unsupported' | 'denied' | 'off' | 'on';
 
@@ -41,6 +49,8 @@ export interface PushPlatform {
   requestPermission(): Promise<NotificationPermission>;
   getSubscription(): Promise<SubscriptionLike | null>;
   subscribe(applicationServerKey: Uint8Array): Promise<SubscriptionLike>;
+  /** The notices still shown under a tag, with the ids they name (optional: a platform without them closes nothing). */
+  shownNotices?(tag: string): Promise<{ ids: string[]; close(): void }[]>;
 }
 
 export type PushResult = { ok: true } | { ok: false; code: string };
@@ -60,6 +70,10 @@ export function browserPushPlatform(): PushPlatform {
     requestPermission: () => Notification.requestPermission(),
     getSubscription: async () => (await reg()).pushManager.getSubscription(),
     subscribe: async (key) => (await reg()).pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key as BufferSource }),
+    shownNotices: async (tag) => (await (await reg()).getNotifications({ tag })).map((n) => ({
+      ids: Array.isArray((n.data as { ids?: unknown } | null)?.ids) ? ((n.data as { ids: unknown[] }).ids.filter((x): x is string => typeof x === 'string')) : [],
+      close: () => n.close(),
+    })),
   };
 }
 
@@ -173,6 +187,25 @@ export class PushControl {
     if (since === undefined) return 0;
     const seen = new Set((await this.d.kv.get<string[]>(SEEN_KEY)) ?? []);
     return waiting.filter((w) => w.createdAt >= since && !seen.has(w.id)).length;
+  }
+
+  /**
+   * After a list read, with the ids still waiting: every id the worker was told about that no longer waits is recorded as
+   * done (the worker leaves it out of the next notice's count), and a notice still shown whose requests all no longer wait
+   * is closed. Never throws; only ids, no content.
+   */
+  async settle(waiting: ReadonlySet<string>): Promise<void> {
+    try {
+      const seen = (await this.d.kv.get<string[]>(SEEN_KEY)) ?? [];
+      const done = (await this.d.kv.get<string[]>(DONE_KEY)) ?? [];
+      const known = new Set(done);
+      const add = seen.filter((id) => !waiting.has(id) && !known.has(id));
+      if (add.length) await this.d.kv.set(DONE_KEY, [...done, ...add].slice(-SEEN_MAX));
+      const shown = this.d.platform.supported() && this.d.platform.shownNotices ? await this.d.platform.shownNotices(WAITING_TAG) : [];
+      for (const n of shown) if (n.ids.length > 0 && n.ids.every((id) => !waiting.has(id))) n.close();
+    } catch {
+      // the next read tries again
+    }
   }
 
   async offerDismissed(): Promise<boolean> {

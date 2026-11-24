@@ -74,6 +74,11 @@ function failureCode(r: { status: number; code: string }): SessionCode {
   return 'signin_refused';
 }
 
+/** How long a challenge fetched ahead is used (seconds); older, a fresh one is asked for. The server's own limit stays in force. */
+export const PREPARED_FOR = 60;
+
+type Prepared = { ok: true; nonce: string; aud: string } | { ok: false; code: SessionCode; asCode?: string };
+
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const TOKEN_SHAPE = /^[A-Za-z0-9-]{1,128}$/;
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
@@ -84,6 +89,8 @@ export class DeviceSession {
   private checkedAt = 0;
   private hiddenAt: number | null = null;
   private inflight: Promise<OpenResult> | null = null;
+  /** The sign-in's first steps fetched ahead ({@link DeviceSession.prepare}): used once, within {@link PREPARED_FOR} seconds. */
+  private prepared: { keyId: string; at: number; result: Promise<Prepared> } | null = null;
 
   constructor(private readonly d: SessionDeps) {}
 
@@ -127,6 +134,35 @@ export class DeviceSession {
     this.drop();
   }
 
+  /**
+   * Fetch the sign-in's first steps ahead (prove the server's key, ask for a challenge) while the open screen waits for the tap, so
+   * the check prompt follows the tap at once. Nothing is signed and no check is asked for here. Used by the next {@link open}
+   * within {@link PREPARED_FOR} seconds, once; a failure here just means {@link open} asks again.
+   */
+  prepare(): void {
+    if (this.cur || this.inflight) return;
+    if (this.prepared && this.d.now() - this.prepared.at < PREPARED_FOR) return;
+    void (async () => {
+      const account = await this.d.accounts.read().catch(() => null);
+      if (!account) return;
+      this.prepared = { keyId: account.key_id, at: this.d.now(), result: this.firstSteps(account.as_key, account.key_id) };
+    })();
+  }
+
+  private async firstSteps(asKeyPinned: string, keyId: string): Promise<Prepared> {
+    try {
+      const asKey = await proveAsKey(this.d.transport, asKeyPinned, this.d.now);
+      if (!asKey.ok) return { ok: false, code: asKey.code };
+      const ch = await this.d.api.challenge(keyId);
+      if (!ch.ok) return { ok: false, code: failureCode(ch), asCode: ch.code };
+      const { nonce, aud } = ch.data;
+      if (typeof nonce !== 'string' || !nonce || nonce.length > 256 || typeof aud !== 'string') return { ok: false, code: 'as_answer_invalid' };
+      return { ok: true, nonce, aud };
+    } catch {
+      return { ok: false, code: 'as_error' };
+    }
+  }
+
   /** Open a session. One at a time: a second call shares the first. Asks the person for the check. */
   open(): Promise<OpenResult> {
     if (this.inflight) return this.inflight;
@@ -159,13 +195,17 @@ export class DeviceSession {
       const keys = await d.keys.publicKeys();
       if (!keys || keys.keyId !== account.key_id) return { ok: false, code: 'keys_missing' };
 
-      const asKey = await proveAsKey(d.transport, account.as_key, d.now);
-      if (!asKey.ok) return { ok: false, code: asKey.code };
-
-      const ch = await d.api.challenge(account.key_id);
-      if (!ch.ok) return { ok: false, code: failureCode(ch), asCode: ch.code };
-      const { nonce, aud } = ch.data;
-      if (typeof nonce !== 'string' || !nonce || nonce.length > 256 || typeof aud !== 'string') return { ok: false, code: 'as_answer_invalid' };
+      // The steps fetched ahead are used once, if fresh and for this key; a failed or old one is asked for again (never trusted more).
+      const ahead = this.prepared;
+      this.prepared = null;
+      let first: Prepared | null = null;
+      if (ahead && ahead.keyId === account.key_id && d.now() - ahead.at < PREPARED_FOR) {
+        const got = await ahead.result;
+        if (got.ok) first = got;
+      }
+      if (!first) first = await this.firstSteps(account.as_key, account.key_id);
+      if (!first.ok) return first;
+      const { nonce, aud } = first;
       // The audience is the key the phone verified the server holds, never what the answer says about itself.
       if (aud !== account.as_key) return { ok: false, code: 'aud_mismatch' };
 

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { MemoryKv } from './kv';
 import { AsApi } from './as-api';
 import type { Transport, Reply, Method } from './transport';
-import { PushControl, requestFromHash, RESYNC_KEY, SEEN_KEY, SINCE_KEY, type PushPlatform, type SubscriptionLike } from './push';
+import { PushControl, requestFromHash, DONE_KEY, RESYNC_KEY, SEEN_KEY, SINCE_KEY, type PushPlatform, type SubscriptionLike } from './push';
 
 const KEY = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
 const keyBytes = () => Uint8Array.from(atob(KEY.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (KEY.length % 4)) % 4)), (c) => c.charCodeAt(0));
@@ -174,5 +174,35 @@ describe('the link a notification opens', () => {
   it('reads #request=<id> and nothing else', () => {
     expect(requestFromHash('#request=prop_abc-1')).toBe('prop_abc-1');
     for (const h of ['', '#', '#request=', '#request=a b', '#request=<x>', '#other=1', `#request=${'a'.repeat(129)}`]) expect(requestFromHash(h), h).toBeNull();
+  });
+});
+
+describe('after a list read: what no longer waits', () => {
+  it('ids the worker was told about that no longer wait are recorded as done; a notice whose requests all no longer wait is closed', async () => {
+    const closed: string[] = [];
+    const { p } = platform({ permission: 'granted' });
+    p.shownNotices = async () => [
+      { ids: ['a'], close: () => closed.push('only-a') },
+      { ids: ['a', 'b'], close: () => closed.push('a-and-b') },
+    ];
+    const { c, kv } = control(p);
+    await kv.set(SEEN_KEY, ['a', 'b']);
+    await c.settle(new Set(['b']));
+    expect(await kv.get(DONE_KEY)).toEqual(['a']);
+    // A notice that still names a waiting request stays; the next notice drops the done id from its count.
+    expect(closed).toEqual(['only-a']);
+    // Again with nothing new: nothing added twice.
+    await c.settle(new Set(['b']));
+    expect(await kv.get(DONE_KEY)).toEqual(['a']);
+  });
+
+  it('never throws, and a platform without notices only records', async () => {
+    const { p } = platform({ permission: 'granted' });
+    const { c, kv } = control(p);
+    await kv.set(SEEN_KEY, ['x']);
+    await expect(c.settle(new Set())).resolves.toBeUndefined();
+    expect(await kv.get(DONE_KEY)).toEqual(['x']);
+    p.shownNotices = async () => { throw new Error('no'); };
+    await expect(c.settle(new Set())).resolves.toBeUndefined();
   });
 });
