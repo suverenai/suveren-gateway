@@ -28,6 +28,12 @@ describe('screen 3: held back', () => {
   it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm them.'));
   it('changed and ended', () => {
     expect(t({ reason: 'changed' })).toContain(S13.heldChangedStep);
+    // Andreas 2026-11-24: an unknown code reads as a neutral "on hold", never as a mismatch; no "ask them" for the person's own mandate.
+    expect(heldReason('mandate_unavailable')).toBe('on_hold'); expect(heldReason('body_unavailable')).toBe('on_hold'); expect(heldReason('something_new')).toBe('on_hold');
+    const oh = t({ reason: 'on_hold' });
+    expect(oh).toContain('This mandate is on hold. Your AI cannot use it until it is given again.'); expect(oh).not.toContain(S13.heldChangedStep);
+    const own = t({ reason: 'changed', ownerIsYou: true });
+    expect(own).toContain('does not match what you confirmed'); expect(own).not.toContain(S13.heldChangedStep);
     const e = t({ reason: 'revoked' });
     expect(e).toContain('Anna Muster ended this mandate. This is final.'); expect(e).toContain(S13.heldEndedStep);
   });
@@ -39,7 +45,7 @@ describe('screen 3: held back', () => {
     expect(heldReason('no_grant')).toBe('not_received'); expect(heldReason('CHECK_REQUIRED')).toBe('check_required');
     // the gateway's own codes (apps/mcp-server mandate-grants.ts)
     expect(heldReason('mandate_body_not_received')).toBe('not_received'); expect(heldReason('mandate_not_granted')).toBe('check_required'); expect(heldReason('grant_check_required')).toBe('check_required'); expect(heldReason('owner_not_this_person')).toBe('owner_unknown'); expect(heldReason('mandate_body_mismatch')).toBe('changed'); expect(heldReason('grant_mismatch')).toBe('changed');
-    expect(heldReason('owner_unknown')).toBe('owner_unknown'); expect(heldReason('mandate_revoked')).toBe('revoked'); expect(heldReason('grant_member_differs')).toBe('changed');
+    expect(heldReason('owner_unknown')).toBe('owner_unknown'); expect(heldReason('mandate_revoked')).toBe('revoked'); expect(heldReason('grant_member_differs')).toBe('on_hold');
   });
 });
 

@@ -13,7 +13,9 @@ export function heldCardText(m: HeldBackMandate): { reason: string; step: string
         : { reason: S13.heldNoCheck(o), step: S13.heldNoCheckStep, action: null };
     case 'owner_unknown': return { reason: S13.heldNotOnList(o), step: S13.heldNotOnListStep(m.adminName ?? S13.heldAdminUnknown), action: null };
     case 'revoked': return { reason: S13.heldEnded(o), step: S13.heldEndedStep, action: null };
-    default: return { reason: S13.heldChanged(o), step: S13.heldChangedStep, action: null };
+    // "Ask them to give it again" only when someone else gave it; for the person's own mandate the step is theirs (Andreas, 2026-11-24).
+    case 'changed': return { reason: S13.heldChanged(o), step: m.ownerIsYou ? null : S13.heldChangedStep, action: null };
+    default: return { reason: S13.heldOnHold, step: null, action: null };
   }
 }
 

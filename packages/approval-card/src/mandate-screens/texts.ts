@@ -75,6 +75,7 @@ export const S13 = {
   heldNotOnListStep: (admin: string): string => `Ask ${admin}, your admin, to confirm them.`, // 257
   heldChanged: (owner: string): string => `This mandate does not match what ${owner} confirmed. It may have been changed since. Your AI cannot use it.`, // 258
   heldChangedStep: 'Ask them to give it again.', // 259
+  heldOnHold: 'This mandate is on hold. Your AI cannot use it until it is given again.', // Andreas 2026-11-24 (B): any reason that is not a known, specific one
   heldEnded: (owner: string): string => `${owner} ended this mandate. This is final.`, // 260
   heldEndedStep: 'If the work still needs it, ask for a new mandate.', // 261
   heldOwnNoCheck: 'Touch ID was not confirmed for this mandate. Your AI cannot use it.', // 262
