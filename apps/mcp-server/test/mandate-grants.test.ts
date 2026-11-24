@@ -602,6 +602,25 @@ describe('the held-back list (GET /internal/held-back reads this)', () => {
     await w.cache.syncAuthorization(AUTHZ);
     expect(w.cache.withheldList()).toEqual([]);
   });
+
+  // Dev lane 2026-11-24: a mandate that ran out showed under "On hold" as "does not match what you confirmed". The Authority Server
+  // serves no expired blobs (getAuthzAttestations), so the grant check found nothing and said `mandate_unavailable`.
+  it('a mandate that ran out is not held back: no blobs left is "ended", not a verdict, and an earlier hold is dropped', async () => {
+    const w = await world({ noGrant: true });
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.cache.withheldList()).toHaveLength(1);            // held back while it lived (no grant)
+    w.as.blobs.set(AUTHZ, []);                                  // what the Authority Server answers once every blob expired
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();  // not honoured
+    expect(w.cache.withheldList()).toEqual([]);                 // and not listed as held back
+  });
+
+  it('a live, granted mandate whose blobs ran out is dropped from the cache, never listed as held back', async () => {
+    const w = await world();
+    expect(await w.cache.syncAuthorization(AUTHZ)).not.toBeNull();
+    w.as.blobs.set(AUTHZ, []);
+    expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();
+    expect(w.cache.withheldList()).toEqual([]);
+  });
 });
 
 describe('the resync of stored gates (bin/http.ts)', () => {
