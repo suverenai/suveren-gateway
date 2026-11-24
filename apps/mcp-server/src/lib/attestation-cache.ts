@@ -448,6 +448,15 @@ export class AttestationCache {
       groupId = undefined;
     }
 
+    // Ended by time: the Authority Server serves only blobs that have not expired (getAuthzAttestations). A mandate with none
+    // left has run out; it is not "held back" (the page would say it does not match what its owner confirmed). Nothing to check.
+    const nowSec0 = Math.floor(Date.now() / 1000);
+    if (!result.attestations.some(a => a.expires_at > nowSec0)) {
+      this.authorizations.delete(result.authorization_id);
+      this.withheld.delete(result.authorization_id);
+      return null;
+    }
+
     // Device keys: only the blobs whose owner-signed grant verifies are used below. None: not honoured, not cached.
     let attestations = result.attestations;
     if (this.grantGate) {
