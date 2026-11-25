@@ -8,6 +8,7 @@ import { decodeMandateBlob, type Subject } from '@hap/core';
 import { SPClient, type SPAttestationsResult, type SPPendingItem } from './sp-client';
 import { readPairing, fingerprintOf } from './as-pairing';
 import { issuerFromPublicKeyHex } from './issuer-from-hex';
+import type { GrantGate } from './mandate-grants';
 
 /**
  * Thrown by {@link AttestationCache.getPublicKey} when the Authority Server
@@ -140,6 +141,82 @@ export class AttestationCache {
    * this fact to begin with.
    */
   private reapprovalNeeded = new Set<string>();
+
+  /**
+   * Device keys (plan 4.4, step 13): with a gate set, a mandate enters this cache only when the grant of its owner's device
+   * verified for it (lib/mandate-grants.ts); a blob without one is dropped from what is gated with, and the authorization
+   * is not cached at all when none holds. Unset (switch off, or no chain): nothing changes.
+   */
+  private grantGate: GrantGate | null = null;
+  /** Authorizations the gate refused, with the reason: shown to the person, never honoured. In memory, like the cache. */
+  private withheld = new Map<string, { code: string; text: string; profileId?: string; ownerDid?: string; mandateId?: string }>();
+
+  /**
+   * With a gate set, an entry is only as old as its last successful check. Rechecked every GRANT_RECHECK_MS (the owner's revoke,
+   * a newer version, a rolled back chain reach this gateway within about that time) and dropped from every read once GRANT_MAX_AGE_MS
+   * passed without one (the Authority Server unreachable: nothing could be ticketed then anyway). Five minutes: a revocation is not
+   * faster than a person's next request, and the check costs two calls per mandate; fifteen: three missed rechecks.
+   */
+  static readonly GRANT_RECHECK_MS = 5 * 60_000;
+  static readonly GRANT_MAX_AGE_MS = 15 * 60_000;
+  private verifiedAt = new Map<string, number>();
+  private recheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  setGrantGate(gate: GrantGate | null): void {
+    this.grantGate = gate;
+  }
+
+  private stale(id: string): boolean {
+    if (!this.grantGate) return false;
+    const at = this.verifiedAt.get(id);
+    return at === undefined || Date.now() - at > AttestationCache.GRANT_MAX_AGE_MS;
+  }
+
+  /** Re-run the gate over every cached authorization (what the timer does). A refusal drops the entry; an error leaves it until it is stale. */
+  async recheckAll(): Promise<void> {
+    if (!this.grantGate) return;
+    for (const id of [...this.authorizations.keys()]) {
+      try { await this.syncAuthorization(id); } catch { /* kept until stale */ }
+    }
+  }
+
+  startGrantRecheck(): void {
+    if (this.recheckTimer || !this.grantGate) return;
+    this.recheckTimer = setInterval(() => { void this.recheckAll(); }, AttestationCache.GRANT_RECHECK_MS);
+    this.recheckTimer.unref?.();
+  }
+
+  stopGrantRecheck(): void {
+    if (this.recheckTimer) clearInterval(this.recheckTimer);
+    this.recheckTimer = null;
+  }
+
+  /** Why an authorization is not honoured on this gateway (the last check refused it), or undefined. */
+  withheldReason(authorizationId: string): { code: string; text: string } | undefined {
+    return this.withheld.get(authorizationId);
+  }
+
+  /** Every mandate this gateway holds back, with the gateway's own verdict (for the page's "held back" list; read-only). */
+  withheldList(): Array<{ authorizationId: string; code: string; profileId?: string; ownerDid?: string; mandateId?: string }> {
+    return [...this.withheld.entries()].map(([authorizationId, w]) => ({ authorizationId, code: w.code, profileId: w.profileId, ownerDid: w.ownerDid, mandateId: w.mandateId }));
+  }
+
+  /**
+   * Mandates the person replaced (replaced-mandates.ts): treated exactly like
+   * a revoked mandate — never listed, never matched — even while the Authority
+   * Server still serves them because their revoke has not gone through yet.
+   */
+  private isReplaced: (authorizationId: string) => boolean = () => false;
+
+  /** Wire the replaced-mandates store (shared-state.ts). */
+  useReplacedMandates(isReplaced: (authorizationId: string) => boolean): void {
+    this.isReplaced = isReplaced;
+  }
+
+  /** Drop a replaced mandate from the cache now (it was just recorded). */
+  dropReplaced(authorizationId: string): void {
+    this.authorizations.delete(authorizationId);
+  }
 
   /**
    * WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
@@ -291,9 +368,20 @@ export class AttestationCache {
     const auth = this.authorizations.get(path);
     if (!auth) return null;
 
+    // A replaced mandate is no longer honoured here, whatever the AS still serves.
+    if (this.isReplaced(auth.authorizationId)) {
+      this.authorizations.delete(path);
+      return null;
+    }
+
     // WS3 defence-in-depth: never hand back a mandate of another workspace
     // — drop it from the cache so the next sync re-learns it clean.
     if (this.isForeignWorkspace(auth.groupId)) {
+      this.authorizations.delete(path);
+      return null;
+    }
+
+    if (this.stale(path)) {
       this.authorizations.delete(path);
       return null;
     }
@@ -315,11 +403,18 @@ export class AttestationCache {
   async syncAuthorization(authorizationId: string): Promise<CachedAuthorization | null> {
     const result = await this.spClient.getAttestations(authorizationId);
     if (!result.profile_id) return null;
+    // An answer for another authorization than the one asked for is no answer (a mix-up here would honour the wrong grant).
+    if (result.authorization_id !== undefined && result.authorization_id !== authorizationId) return null;
 
     // v0.6 — drop a REVOKED authorization so it is never listed or matched. A
     // revoked-but-unexpired attestation can't issue a receipt, so matching it for
     // a new action only produces dead proposals. Remove any cached copy too.
     if (result.revoked) {
+      this.authorizations.delete(authorizationId);
+      return null;
+    }
+    // Replaced by a mandate the person approved: same as revoked on this gateway.
+    if (this.isReplaced(authorizationId)) {
       this.authorizations.delete(authorizationId);
       return null;
     }
@@ -353,13 +448,48 @@ export class AttestationCache {
       groupId = undefined;
     }
 
+    // Ended by time: the Authority Server serves only blobs that have not expired (getAuthzAttestations). A mandate with none
+    // left has run out; it is not "held back" (the page would say it does not match what its owner confirmed). Nothing to check.
+    const nowSec0 = Math.floor(Date.now() / 1000);
+    if (!result.attestations.some(a => a.expires_at > nowSec0)) {
+      this.authorizations.delete(result.authorization_id);
+      this.withheld.delete(result.authorization_id);
+      return null;
+    }
+
+    // Device keys: only the blobs whose owner-signed grant verifies are used below. None: not honoured, not cached.
+    let attestations = result.attestations;
+    if (this.grantGate) {
+      const g = await this.grantGate({ authorizationId: result.authorization_id, attestations, groupId });
+      if (!g.ok) {
+        // A check that could not be MADE (the Authority Server or the control plane unreachable) does not end what was verified a
+        // moment ago: the entry stays until it is stale (GRANT_MAX_AGE_MS). Every other refusal drops it at once.
+        const transient = ['grants_unavailable', 'chain_unavailable', 'device_state_unavailable', 'body_unavailable'].includes(g.code);
+        if (!transient) this.authorizations.delete(result.authorization_id);
+        let ownerDid: string | undefined;
+        let mandateId: string | undefined;
+        for (const a of attestations) {
+          try { const p = decodeMandateBlob(a.blob).payload; ownerDid = p.mandate_owners?.[0]?.did; mandateId = p.mandate_id; if (ownerDid) break; } catch { /* names nobody */ }
+        }
+        this.withheld.set(result.authorization_id, { code: g.code, text: g.text, profileId: result.profile_id, ownerDid, mandateId });
+        return null;
+      }
+      this.withheld.delete(result.authorization_id);
+      if (!g.skipped) {
+        const granted = new Set(g.granted.map(x => x.blob));
+        attestations = attestations.filter(a => granted.has(a.blob));
+        // The group is what the owner SIGNED into the grant, not what the Authority Server's summary said.
+        groupId = g.granted[0]?.groupId ?? groupId;
+      }
+    }
+
     // Read the commitment mode from the SIGNED payload (all of an authorization's
     // attestations share it). This — not the AS's unsigned deferred_commitment_domains
     // — is the authoritative review-vs-automatic signal.
     let signedCommitmentMode: CachedAuthorization['signedCommitmentMode'];
     let subjects: CachedAuthorization['subjects'];
     let mandateId: string | undefined;
-    const firstBlob = result.attestations[0]?.blob;
+    const firstBlob = attestations[0]?.blob;
     if (firstBlob) {
       try {
         const payload = decodeMandateBlob(firstBlob).payload;
@@ -375,7 +505,7 @@ export class AttestationCache {
     const mandateIds: string[] = [];
     let mandateVersion: string | undefined;
     const nowSec = Math.floor(Date.now() / 1000);
-    for (const a of result.attestations) {
+    for (const a of attestations) {
       if (!a.blob) continue;
       try {
         const id = decodeMandateBlob(a.blob).payload.mandate_id;
@@ -394,7 +524,7 @@ export class AttestationCache {
 
     let proposalReaders: CachedAuthorization['proposalReaders'];
     let latestIssuedAt = -Infinity;
-    for (const a of result.attestations) {
+    for (const a of attestations) {
       if (!a.blob) continue;
       try {
         const p = decodeMandateBlob(a.blob).payload;
@@ -418,7 +548,7 @@ export class AttestationCache {
       path: result.profile_id,
       frame: bounds,                   // compat alias
       bounds: result.bounds,           // v0.4 (undefined for v0.3)
-      attestations: result.attestations.map(a => ({
+      attestations: attestations.map(a => ({
         domain: a.domain,
         blob: a.blob,
         expiresAt: a.expires_at,
@@ -438,6 +568,7 @@ export class AttestationCache {
 
     // Key by the per-ceremony id — grants can never merge or overwrite.
     this.authorizations.set(auth.authorizationId, auth);
+    this.verifiedAt.set(auth.authorizationId, Date.now());
     return auth;
   }
 
@@ -451,6 +582,10 @@ export class AttestationCache {
     for (const [path, auth] of this.authorizations) {
       // WS3 defence-in-depth — see isForeignWorkspace's doc comment.
       if (this.isForeignWorkspace(auth.groupId)) {
+        this.authorizations.delete(path);
+        continue;
+      }
+      if (this.stale(path) || this.isReplaced(auth.authorizationId)) {
         this.authorizations.delete(path);
         continue;
       }
@@ -476,8 +611,10 @@ export class AttestationCache {
    * Cache an authorization directly (e.g., from SP response after creation).
    */
   cacheAuthorization(auth: CachedAuthorization): void {
+    if (this.isReplaced(auth.authorizationId)) return;
     // Key by the per-ceremony id — grants can never merge or overwrite.
     this.authorizations.set(auth.authorizationId, auth);
+    this.verifiedAt.set(auth.authorizationId, Date.now());
   }
 
   /**

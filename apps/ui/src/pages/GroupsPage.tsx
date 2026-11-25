@@ -1,7 +1,11 @@
+import { TileList, TileRow } from '@suveren/approval-card/components/TileRows';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient } from '../lib/sp-client';
+import { JoinRequestsHost } from '../components/device/JoinHosts';
+import { TeamChangesHost } from '../components/device/TeamChangesHost';
+import { useDeviceChain } from '../lib/use-device-chain';
 import { ObTypeLine, ObFold, useFoldAccordion } from '../components/ObjectCard';
 
 interface GroupDetail {
@@ -28,6 +32,7 @@ export function GroupsPage() {
   const { activeTeam, activeMembership, refreshGroups, user } = useAuth();
   const navigate = useNavigate();
   const accordion = useFoldAccordion<HTMLElement>();
+  const deviceChain = useDeviceChain();
   const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -128,21 +133,22 @@ export function GroupsPage() {
           <h2 className="ob-title is-h3">{activeTeam.name}</h2>
 
           {memberCount > 0 && (
-            <section className="ob-tile su-members">
-              <div className="su-tile-h">Members</div>
+            <TileList title="Members">
               {groupDetail?.members.map(member => (
-                <div className="su-m" key={member.id}>
-                  <span className="su-av">
-                    {member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                  </span>
-                  <div className="su-who">
-                    <b>{member.name}</b>
-                    <span>{member.email}</span>
-                  </div>
-                  <span className={`su-role${member.isAdmin ? ' is-admin' : ''}`}>{member.role}</span>
-                </div>
+                <TileRow key={member.id} mark={member.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  name={member.name} detail={member.email} tag={member.role} strongTag={member.isAdmin} />
               ))}
-            </section>
+            </TileList>
+          )}
+
+          {/* DEC-73: the admin of a team with device keys compares identity codes with each person who asks to join, then adds them with Touch ID. */}
+          {deviceChain && activeTeam.isAdmin === true && (
+            <JoinRequestsHost teamId={activeTeam.id} teamName={activeTeam.name} onAdded={() => { void refreshGroups(); }} />
+          )}
+
+          {/* DEC-73 step 5: someone left, a new identity, a signer device gone, a hand-over. Every touch builds on the list this gateway verified. */}
+          {deviceChain && (
+            <TeamChangesHost teamId={activeTeam.id} teamName={activeTeam.name} onChanged={() => { void refreshGroups(); }} />
           )}
 
           <ObFold

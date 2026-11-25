@@ -20,7 +20,8 @@ import { appendVerificationFooter, shouldAttachFooter, stripOwnTrailingFooter, m
 import { computeContentBinding, attachTicketId } from './content-binding';
 import { unclassifiedArgs, sealedArgsRefusalText } from './sealed-args';
 import { hashToolArgs } from './execution-journal';
-import { computeSubmissionPreviewHash, failedBlockingChecks } from './preview';
+import { computeSubmissionPreviewHash, failedBlockingChecks, getToolDisplayHints } from './preview';
+import { GATEWAY_VERSION } from './client-version';
 import { blockingRefusalReason } from './checks';
 import { stripSourceLink } from './request-context';
 import { candidatesAllowingAttachments, isAttachmentSourceAllowed, attachmentSourcesField, attachmentSourcesValue } from './attachment-policy';
@@ -41,7 +42,10 @@ import { encodeOutgoingArgs } from './arg-encoding';
 import { normalizeIncomingArgs } from './arg-normalization';
 import { selectAuthorization } from './scope-specificity';
 import { coerceDeclaredNumericFields } from './numeric-execution';
-import { LIST_TRANSFORMS, type ExecutionMappingValue } from './tool-gating-types';
+import { type ExecutionMappingValue } from './tool-gating-types';
+// One implementation, shared with the phone approval app (device-keys plan 8): packages/hap-core/src/execution-mapping.ts.
+import { applyMapping, mapExecutionArgs, listItems, type MappingEntry } from '@hap/core/execution-mapping';
+export { applyMapping, mapExecutionArgs };
 import {
   boundsSatisfyReadGate,
   resolveAgeBoundField,
@@ -136,6 +140,49 @@ async function unreadableForNote(unreadableFor: string[], state: SharedState): P
 }
 
 /**
+ * Device keys, step 8: readers that got no wrap, as CODES. The sentence is the maintainer's (approval-card `S8`,
+ * DRAFT); until then the AI is told the code and the person, never an invented explanation.
+ */
+function unreadableReadersNote(readers: Array<{ did: string; code: string }> | undefined): string {
+  if (!readers || readers.length === 0) return '';
+  return `\nNote: ${readers.length} reader(s) of this proposal could not be given a key (${[...new Set(readers.map((r) => r.code))].join(', ')}). Tell the person.`;
+}
+
+/**
+ * Device keys, step 8 (plan 5): what the card needs beyond the arguments, from the gateway's OWN data only: the
+ * connector's display rules for this tool, the mapping from arguments to the execution context, the gateway's
+ * version. `linked_record` is null until the AU10 snapshot is taken at submission (open). Never the AI's text.
+ */
+function cardContextOf(
+  integrationManager: IntegrationManager,
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown; staticExecution?: unknown } | null },
+): { display: unknown; execution_mapping: unknown; static_execution: unknown; linked_record: unknown; gateway_version: string } | undefined {
+  // The context is optional (the Authority Server may drop it; the card then says so): reading a connector's display
+  // rules must never stop a proposal from being filed.
+  try {
+    return {
+      display: getToolDisplayHints(integrationManager, tool.integrationId, tool.originalName) ?? null,
+      execution_mapping: tool.gating?.executionMapping ?? {},
+      // The manifest's static fields, exactly what the wire execution context starts from (`{ ...staticExecution }`): with the
+      // mapping, a phone can rebuild the whole execution context.
+      static_execution: tool.gating?.staticExecution ?? {},
+      linked_record: null,
+      gateway_version: GATEWAY_VERSION,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function cardContextArg(
+  integrationManager: IntegrationManager,
+  tool: { integrationId: string; originalName: string; gating?: { executionMapping?: unknown; staticExecution?: unknown } | null },
+): { cardContext?: NonNullable<ReturnType<typeof cardContextOf>> } {
+  const c = cardContextOf(integrationManager, tool);
+  return c ? { cardContext: c } : {};
+}
+
+/**
  * The ticket request's `amount`: the value of the execution field the
  * profile's `cumulative_sum` bound reads (`boundType.of`; with several, the
  * first in `keyOrder`) — the field the Authority Server sums and the spec
@@ -158,48 +205,6 @@ export function cumulativeSumValue(
   }
   return undefined;
 }
-
-/**
- * Apply a single mapping entry to produce an execution context field.
- * Handles divisor, transform, and direct copy.
- */
-export function applyMapping(
-  m: { field: string; divisor?: number; transform?: string; item?: string },
-  value: unknown,
-  execution: Record<string, string | number>,
-): void {
-  if (m.divisor) {
-    const numValue = typeof value === 'number' ? value : Number(value);
-    execution[m.field] = numValue / m.divisor;
-    return;
-  }
-  // An item that is an object (Google Calendar attendees are `{ email,
-  // displayName?, ... }`) is read by the property the manifest names in
-  // `item` — the join / join_domains transforms only know flat strings. An
-  // object without a declared `item` stringifies to "[object Object]", which
-  // no scope accepts: fail-closed, never a guessed property.
-  const arr = listItems(m, value);
-  switch (m.transform) {
-    case 'length':
-      execution[m.field] = arr.length;
-      break;
-    case 'join':
-      execution[m.field] = arr.join(',');
-      break;
-    case 'join_domains': {
-      const domains = [...new Set(arr.map(email => {
-        const at = email.lastIndexOf('@');
-        return at >= 0 ? email.substring(at + 1).toLowerCase() : email.toLowerCase();
-      }))].sort();
-      execution[m.field] = domains.join(',');
-      break;
-    }
-    default:
-      execution[m.field] = typeof value === 'number' ? value : String(value);
-  }
-}
-
-type MappingEntry = { field: string; divisor?: number; transform?: string; item?: string; format?: string };
 
 /**
  * Exactly one plain email address: one `@`, a non-empty local part and domain,
@@ -322,61 +327,6 @@ export function withArgDefaults(
 export function malformedItemRefusalText(toolName: string, bad: { arg: string; item: string }): string {
   return `Refused: ${toolName}'s "${bad.arg}" entry ${JSON.stringify(bad.item)} is not one email address. ` +
     `Give one plain address per entry, e.g. ["anna@example.com", "ben@example.com"]. Nothing was sent and no ticket was requested.`;
-}
-
-/**
- * The execution-context fields a tool call's arguments produce under the
- * manifest's `executionMapping` (tool-gating-types.ts `ExecutionMappingValue`).
- * An absent or null argument produces nothing.
- *
- * Several arguments that map to the same field through a list transform
- * (`length`, `join`, `join_domains`) COMBINE: their items are gathered first,
- * in mapping order, and the transform runs once over all of them — the count
- * is the sum, the lists the union. So an email's `cc` is counted and
- * scope-checked together with its `to`, instead of one overwriting the other.
- * Every other mapping (direct copy, divisor) applies as before; the manifest
- * loader refuses one of those shared by two arguments.
- */
-export function mapExecutionArgs(
-  executionMapping: Record<string, ExecutionMappingValue>,
-  args: Record<string, unknown>,
-): Record<string, string | number> {
-  const out: Record<string, string | number> = {};
-  const lists = new Map<string, { transform: string; items: string[] }>();
-  for (const [argName, mapping] of Object.entries(executionMapping)) {
-    const value = args[argName];
-    if (value === undefined || value === null) continue;
-    if (typeof mapping === 'string') {
-      // Direct mapping: argName → contextField
-      out[mapping] = typeof value === 'number' ? value : String(value);
-      continue;
-    }
-    const entries: MappingEntry[] = Array.isArray(mapping) ? mapping : [mapping];
-    for (const m of entries) {
-      if (m.transform && (LIST_TRANSFORMS as readonly string[]).includes(m.transform) && !m.divisor) {
-        // Gather this argument's items (read by its own declared `item`);
-        // the transform runs once below, over every argument on this field.
-        const acc = lists.get(m.field) ?? { transform: m.transform, items: [] };
-        acc.items.push(...listItems(m, value));
-        lists.set(m.field, acc);
-      } else {
-        applyMapping(m, value, out);
-      }
-    }
-  }
-  for (const [field, { transform, items }] of lists) applyMapping({ field, transform }, items, out);
-  return out;
-}
-
-/** An argument's items as strings, read by the mapping's declared `item` — the same reading `applyMapping` does. */
-function listItems(m: MappingEntry, value: unknown): string[] {
-  const coerce = (v: unknown): string => {
-    if (m.item && typeof v === 'object' && v !== null && m.item in v) {
-      return String((v as Record<string, unknown>)[m.item]);
-    }
-    return String(v);
-  };
-  return Array.isArray(value) ? value.map(coerce) : [coerce(value)];
 }
 
 /** Match a short profile name (e.g. "charge") against a full qualified ID (e.g. "github.com/.../charge@0.3") */
@@ -2007,7 +1957,7 @@ function createGatedToolHandlerInner(
               // best effort — proceed with just the domain members
             }
             recipientUserIds = [...new Set(recipientUserIds)];
-            const { proposal, unreadableFor } = await state.spClient.submitProposal({
+            const { proposal, unreadableFor, unreadableReaders } = await state.spClient.submitProposal({
               authorizationId: authzId,
               profileId: auth.profileId,
               path: auth.path,
@@ -2021,6 +1971,7 @@ function createGatedToolHandlerInner(
               boundsHash: auth.boundsHash,
               actionType: declaredActionType,
               ...v08ProposalReaders(auth),
+              ...cardContextArg(integrationManager, tool),
             });
             // AU4 — snapshot a preview read NOW, for a tool whose declared
             // preview carries no `version` (the connector has no revision
@@ -2044,7 +1995,9 @@ function createGatedToolHandlerInner(
               profileId: auth.profileId,
               previewHash,
               actionType: declaredActionType,
+              mandateId: auth.mandateId,
             });
+            integrationManager.builtinProposed?.(tool, enrichedArgs, proposal.id);
             return {
               content: [{
                 type: 'text',
@@ -2052,6 +2005,7 @@ function createGatedToolHandlerInner(
                   `"${auth.deferredCommitmentDomains.join('", "')}" for tool ${tool.originalName}.\n` +
                   `Proposal ID: ${proposal.id}. Check status with check-pending-commitments(proposal_id: "${proposal.id}").` +
                   (await unreadableForNote(unreadableFor ?? [], state)) +
+                  unreadableReadersNote(unreadableReaders) +
                   // Optional wait (2026-10-19): the AI can stay on the line instead of ending its turn.
                   `\nTell the person what you proposed and that it waits for their approval in the gateway; ` +
                   `then you may wait for the decision: check-pending-commitments(proposal_id: "${proposal.id}", wait_seconds: 50).`,
@@ -2490,7 +2444,7 @@ function createGatedToolHandlerInner(
               // Item 7 — never put scope-constrained values on the wire;
               // see wireExecutionContext's doc comment.
               const wireExecCtx = wireExecutionContext(auth.profileId, execution);
-              const { proposal, unreadableFor } = await state.spClient.submitProposal({
+              const { proposal, unreadableFor, unreadableReaders } = await state.spClient.submitProposal({
                 authorizationId: authzId,
                 profileId: auth.profileId,
                 path: auth.path,
@@ -2506,6 +2460,7 @@ function createGatedToolHandlerInner(
                 boundsHash: auth.boundsHash,
                 actionType: declaredActionType,
                 ...v08ProposalReaders(auth),
+                ...cardContextArg(integrationManager, tool),
               });
               // AU4 — see the deferred-commitment branch above for why.
               const previewHash = await computeSubmissionPreviewHash(
@@ -2523,13 +2478,15 @@ function createGatedToolHandlerInner(
                 profileId: auth.profileId,
                 previewHash,
                 actionType: declaredActionType,
+                mandateId: auth.mandateId,
               });
               return {
                 content: [{
                   type: 'text',
                   text: `Action exceeds team cap. Approval required from ${uniqueApprovers.length} reviewer(s).\n` +
                     `Proposal ID: ${proposal.id}. Use check-pending-commitments to track status.` +
-                    (await unreadableForNote(unreadableFor ?? [], state)),
+                    (await unreadableForNote(unreadableFor ?? [], state)) +
+                    unreadableReadersNote(unreadableReaders),
                 }],
               };
             } catch (proposalErr) {

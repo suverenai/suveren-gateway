@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ProfileBoundsField } from '@hap/core';
-import { minForBound, maxForBound, seedForBound, numericBoundValue } from './bound-defaults';
+import { minForBound, maxForBound, seedForBound, numericBoundValue, boundLeftEmpty, requiredBoundsLeftEmpty } from './bound-defaults';
 
 /**
  * A fresh email mandate used to submit recipient_max = 0 (empty input → 0),
@@ -89,5 +89,48 @@ describe('maximum — a profile-declared ceiling (reporting@0.2 read_max_age_day
     expect(numericBoundValue(reportingWindow, '366')).toBe(366);
     expect(numericBoundValue(reportingWindow, '30')).toBe(30);
     expect(numericBoundValue(readMaxAgeDays, '5000')).toBe(5000);
+  });
+});
+
+describe('an optional limit left empty is not set (weekly limits, 2026-11-23)', () => {
+  const weekly = { type: 'number', required: false, unit: 'count', boundType: { kind: 'cumulative_count', window: 'weekly' } } as never;
+  const daily = { type: 'number', required: true, unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } } as never;
+  it('an empty optional count is left out (no limit), never 0', () => {
+    expect(boundLeftEmpty(weekly, '')).toBe(true);
+    expect(boundLeftEmpty(weekly, '  ')).toBe(true);
+  });
+  it('a value, including 0, is set', () => {
+    expect(boundLeftEmpty(weekly, '0')).toBe(false);
+    expect(boundLeftEmpty(weekly, '3')).toBe(false);
+  });
+  it('a required field left empty still becomes its floor', () => {
+    expect(boundLeftEmpty(daily, '')).toBe(false);
+    expect(numericBoundValue(daily, '')).toBe(0);
+  });
+});
+
+describe('the rule is generic: every optional bound, not just weekly (email send_daily_max is optional too)', () => {
+  const optionalDaily = { type: 'number', required: false, unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } } as never;
+  const requiredMonthly = { type: 'number', required: true, unit: 'count', boundType: { kind: 'cumulative_count', window: 'monthly' } } as never;
+  it('an optional DAILY limit left empty is not set either', () => {
+    expect(boundLeftEmpty(optionalDaily, '')).toBe(true);
+  });
+  it('a required monthly limit is never "left empty" — the form waits for a value', () => {
+    expect(boundLeftEmpty(requiredMonthly, '')).toBe(false);
+  });
+});
+
+describe('a required limit left empty keeps Continue off (publish/charge monthly limits are required)', () => {
+  const fields = [
+    ['post_daily_max', { type: 'number', required: true, boundType: { kind: 'cumulative_count', window: 'daily' } }],
+    ['post_weekly_max', { type: 'number', required: false, boundType: { kind: 'cumulative_count', window: 'weekly' } }],
+    ['post_monthly_max', { type: 'number', required: true, boundType: { kind: 'cumulative_count', window: 'monthly' } }],
+    ['setup_daily_max', { type: 'number', required: true, boundType: { kind: 'cumulative_count', window: 'daily' } }],
+  ] as never;
+  it('names each required number limit still empty; an optional one never blocks', () => {
+    expect(requiredBoundsLeftEmpty(fields, { post_daily_max: '1', post_weekly_max: '', post_monthly_max: '' })).toEqual(['post_monthly_max', 'setup_daily_max']);
+  });
+  it('a hidden limit (simulation-only) does not block; filled ones, including 0, do not either', () => {
+    expect(requiredBoundsLeftEmpty(fields, { post_daily_max: '0', post_monthly_max: '10' }, new Set(['setup_daily_max']))).toEqual([]);
   });
 });

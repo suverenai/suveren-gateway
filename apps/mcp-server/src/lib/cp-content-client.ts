@@ -33,6 +33,22 @@ export interface ProposalContentWire {
   encrypted_keys?: Record<string, { ct: string; enc: string }>;
   readers?: string[];
   unreadable?: string[];
+  /** Device keys, step 8: one wrap per active device of each reader (by device key id) and the sealed card context. */
+  device_keys?: Record<string, { ct: string; enc: string }>;
+  context?: string;
+}
+
+/** A reader that could not get a wrap, and why: a code (the page's wording is approval-card `S8`, DRAFT). */
+export interface UnreadableReader { did: string; code: string }
+
+/** What the gateway adds beside the arguments so a card can be drawn and checked (plan 5): its own data, never the AI's text. */
+export interface CardContextInput {
+  display: unknown;
+  execution_mapping: unknown;
+  /** The manifest's static execution fields (with the mapping, the whole execution context can be rebuilt). */
+  static_execution?: unknown;
+  linked_record: unknown;
+  gateway_version: string;
 }
 
 async function postInternal(path: string, body: unknown): Promise<Record<string, unknown>> {
@@ -70,9 +86,11 @@ export async function cpEncryptContent(
   recipientUserIds: string[],
   /** v0.8 only — the mandate's owner DID and signed deciders (readers by DID). */
   readers?: { ownerDid: string; deciders: string[] },
-): Promise<{ content: ProposalContentWire; unreadableFor: string[] }> {
-  const data = await postInternal('/internal/encrypt-content', { toolArgs, recipientUserIds, ...(readers ? { readers } : {}) });
-  return data as unknown as { content: ProposalContentWire; unreadableFor: string[] };
+  /** Device keys only (a gateway with a chain): sealed beside the content; a gateway without a chain ignores it. */
+  context?: CardContextInput,
+): Promise<{ content: ProposalContentWire; unreadableFor: string[]; unreadableReaders?: UnreadableReader[] }> {
+  const data = await postInternal('/internal/encrypt-content', { toolArgs, recipientUserIds, ...(readers ? { readers } : {}), ...(context ? { context } : {}) });
+  return data as unknown as { content: ProposalContentWire; unreadableFor: string[]; unreadableReaders?: UnreadableReader[] };
 }
 
 /**
@@ -85,6 +103,9 @@ export async function cpDecryptContent(
     ciphertext: string;
     keys?: Record<string, { ct: string; enc: string }>;
     encrypted_keys?: Record<string, { ct: string; enc: string }>;
+    /** Device keys, step 8: the caller's own wrap, as the Authority Server serves it to a device session. */
+    device_keys?: Record<string, { ct: string; enc: string }>;
+    context?: string;
     hash?: string;
     proposalContentHash?: string;
   },
@@ -94,6 +115,8 @@ export async function cpDecryptContent(
     // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
     // `keys` by account id; the control plane finds this user's wrap by either.
     keys: { ...(wire.keys ?? {}), ...(wire.encrypted_keys ?? {}) },
+    ...(wire.device_keys ? { device_keys: wire.device_keys } : {}),
+    ...(wire.context ? { context: wire.context } : {}),
     // v0.8 rule 8: the control plane checks the decrypted content against the fingerprint.
     ...(wire.proposalContentHash ? { proposalContentHash: wire.proposalContentHash } : wire.hash ? { hash: wire.hash } : {}),
   });

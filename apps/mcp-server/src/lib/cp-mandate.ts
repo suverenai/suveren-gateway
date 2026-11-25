@@ -22,6 +22,9 @@ export interface MandateResult {
   diff?: unknown;
   /** The new mandate is live but the old one could not be revoked. */
   revokeError?: string;
+  /** The old mandate is no longer honoured on this gateway (its revoke is retried). */
+  oldStoppedLocally?: boolean;
+  /** This computer cannot grant it (no Touch ID): it was sent to the person's phone and goes live with their touch there (DEC-90). */
 }
 
 export async function controlPlaneMandate(dryRun: boolean, request: Record<string, unknown>): Promise<MandateResult> {
@@ -43,5 +46,44 @@ export async function controlPlaneMandate(dryRun: boolean, request: Record<strin
     };
   } catch (err) {
     return { ok: false, message: `the control plane could not be reached (${err instanceof Error ? err.message : String(err)}).` };
+  }
+}
+
+/**
+ * An AI proposed a mandate or a change: ask the control plane to prepare its give for the person's phone now (POST
+ * /internal/mandate/offer), so the phone shows it in the request's place. Best effort: no answer changes the proposal.
+ */
+export async function controlPlaneMandateOffer(o: { proposalId: string; tool: 'create' | 'change'; args: Record<string, unknown>; old?: unknown }): Promise<{ ok: boolean; code?: string }> {
+  const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
+  if (!secret) return { ok: false, code: 'no_control_plane' };
+  try {
+    const res = await fetch(`${CP_BASE}/internal/mandate/offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': secret },
+      body: JSON.stringify(o),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = (await res.json().catch(() => ({}))) as { ok?: unknown; code?: unknown };
+    const out = { ok: res.ok && body.ok === true, ...(typeof body.code === 'string' ? { code: body.code } : {}) };
+    // Not offered: the card on the computer still gives it. Said once in the log, by code only (no content).
+    if (!out.ok && out.code !== 'no_chain') console.warn(`[Suveren MCP] proposal ${o.proposalId}: not offered to the phone (${out.code ?? res.status})`);
+    return out;
+  } catch {
+    return { ok: false, code: 'unreachable' };
+  }
+}
+
+/** What became of an AI proposal's give, as the control plane knows it (GET /internal/mandate/given/:id). Empty when unknown or unreachable. */
+export async function controlPlaneProposalGive(proposalId: string): Promise<{ given?: { authorizationId: string; op: 'grant' | 'change' }; waiting?: boolean }> {
+  const secret = process.env.SUVEREN_INTERNAL_SECRET ?? '';
+  if (!secret) return {};
+  try {
+    const res = await fetch(`${CP_BASE}/internal/mandate/given/${encodeURIComponent(proposalId)}`, { headers: { 'X-Internal-Secret': secret }, signal: AbortSignal.timeout(5_000) });
+    if (!res.ok) return {};
+    const b = (await res.json().catch(() => ({}))) as { given?: { authorizationId?: unknown; op?: unknown }; waiting?: unknown };
+    if (b.given && typeof b.given.authorizationId === 'string') return { given: { authorizationId: b.given.authorizationId, op: b.given.op === 'change' ? 'change' : 'grant' } };
+    return b.waiting === true ? { waiting: true } : {};
+  } catch {
+    return {};
   }
 }

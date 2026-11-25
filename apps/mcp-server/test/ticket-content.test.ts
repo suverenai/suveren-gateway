@@ -21,7 +21,7 @@ import { SharedState, type EnrichedAuthorization } from '../src/lib/shared-state
 import { ReceiptArchive, SENT_ARGS_MAX_BYTES } from '../src/lib/receipt-archive';
 import { ExecutionJournal, hashToolArgs } from '../src/lib/execution-journal';
 import { ExecutionResultStore } from '../src/lib/execution-result-store';
-import { checkSentArgs, archivedArgs, headlineArgs, resultView, trimForHeadline } from '../src/lib/ticket-content';
+import { checkSentArgs, archivedArgs, headlineArgs, approvedHeadlineArgs, archivedApprovedArgs, resultView, trimForHeadline } from '../src/lib/ticket-content';
 import type { CachedAuthorization } from '../src/lib/attestation-cache';
 import type { IntegrationManager, DiscoveredTool } from '../src/lib/integration-manager';
 import { testReceiptKeypair, makeSignedReceipt } from './helpers/real-receipt';
@@ -266,5 +266,35 @@ describe('headlineArgs — automatic tickets only, trimmed', () => {
       body: 'y'.repeat(200),
       to: ['a', 'b', 'c', 'd', 'e', 'f'],
     });
+  });
+});
+
+// DEC-22: the AS deletes a proposal's content once its ticket is issued, so the
+// review path's headline and decided card read the decrypted copy this gateway
+// archived at execution.
+describe('approvedHeadlineArgs — review-path tickets from the archive', () => {
+  const base = { archivedAt: 0, authorizationId: 'a', asUrl: '', asPublicKey: '' };
+  it('keys the archived approved toolArgs by ticket id, trimmed; skips automatic and arg-less entries', () => {
+    const out = approvedHeadlineArgs([
+      { ...base, receipt: { id: 't1' }, sentArgs: { name: 'Auto' } },
+      { ...base, receipt: { id: 't2' }, proposal: { id: 'p2', toolArgs: { to: 'kunde@doc-allowed.example', body: 'z'.repeat(500) } } },
+      { ...base, receipt: { id: 't3' }, proposal: { id: 'p3' } },
+      { ...base, receipt: { id: 't4' }, proposal: { id: 'p4', toolArgs: ['not', 'an', 'object'] } },
+    ]);
+    expect(out).toEqual({ t2: { to: 'kunde@doc-allowed.example', body: 'z'.repeat(200) } });
+  });
+});
+
+describe('archivedApprovedArgs — one executed proposal, full', () => {
+  const base = { archivedAt: 0, authorizationId: 'a', asUrl: '', asPublicKey: '' };
+  const entries = [
+    { ...base, receipt: { id: 't1' }, sentArgs: { name: 'Auto' } },
+    { ...base, receipt: { id: 't2' }, proposal: { id: 'p2', toolArgs: { to: 'kunde@doc-allowed.example', body: 'z'.repeat(500) } } },
+  ];
+  it('returns the untrimmed toolArgs of the proposal this gateway executed', () => {
+    expect(archivedApprovedArgs(entries, 'p2')).toEqual({ to: 'kunde@doc-allowed.example', body: 'z'.repeat(500) });
+  });
+  it('null when this device never executed it', () => {
+    expect(archivedApprovedArgs(entries, 'p-unknown')).toBeNull();
   });
 });

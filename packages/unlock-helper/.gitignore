@@ -1,0 +1,4 @@
+macos/.build/
+macos/.swiftpm/
+macos/dist/
+macos/dist-debug/

@@ -11,6 +11,7 @@ import { useManaged } from '../hooks/useManaged';
 import { isPendingProposal } from '../lib/pending';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { Skeleton } from '../components/Skeleton';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { RecentBlocks } from '../components/RecentBlocks';
 import { CoreColumns } from '../components/CoreColumns';
 import { ReportLine } from '../components/ReportLine';
@@ -196,6 +197,11 @@ export function DashboardPage() {
         <h1 className="page-title">Dashboard</h1>
       </div>
 
+      {/* DEC-98: the whole dashboard appears in one go once its sources are in (allReady); until then its own layout,
+          greyed out. The real content is mounted (and loading) underneath, only not displayed. */}
+      <LoadGate parts={['dashboard']}>
+      <Gated part="dashboard" ready={allReady} skeleton={<DashboardSkeleton />}>
+
       {/* First-run card takes over from the generic setup guide while there is
           no mandate besides (maybe) Delegation — see lib/first-run-card.ts.
           Both wait for allReady: rendering before auths, ai config,
@@ -276,6 +282,27 @@ export function DashboardPage() {
         </div>
       </section>
       )}
+      </Gated>
+      </LoadGate>
     </div>
+  );
+}
+
+/** DEC-98: the dashboard's three core columns, greyed out — the same grid and row heights as the real ones. */
+export function DashboardSkeleton() {
+  return (
+    <SkelArea>
+      <div className="core-cols dash-cols" data-testid="dash-skeleton">
+        {[0, 1, 2].map(i => (
+          <section key={i}>
+            <div className="core-col-h"><SkelLine w="45%" h="1.1rem" /></div>
+            <div className="dash-rows">
+              <SkelBlock h="4.25rem" radius="0.75rem" />
+              <SkelBlock h="4.25rem" radius="0.75rem" />
+            </div>
+          </section>
+        ))}
+      </div>
+    </SkelArea>
   );
 }

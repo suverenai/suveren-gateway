@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { standOut } from './approval-row';
-import type { PreviewResponse } from './sp-client';
+import type { PreviewResponse } from '../types';
 
 const ok = (checks: unknown): PreviewResponse => ({ status: 'ok', integration: 'erp', readAt: 1, reads: [], checks } as unknown as PreviewResponse);
 

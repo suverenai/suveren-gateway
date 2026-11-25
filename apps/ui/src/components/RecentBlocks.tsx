@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { createLatestGuard } from '../lib/latest-guard';
 import { Link } from 'react-router-dom';
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { spClient, type DenialRecord, type DenialReason } from '../lib/sp-client';
@@ -93,13 +94,19 @@ export function RecentBlocks() {
   const catalog = useAreaCatalog();
   const manifests = useLabelManifests();
 
+  // Each live event starts a load; overlapping loads finish in any order.
+  // An older load may not write over a newer one (see latest-guard.ts).
+  const guardRef = useRef(createLatestGuard());
   const load = useCallback(() => {
-    spClient.getDenials({ limit: 200 })
-      .then(({ records }) => { setRecords(records); setFailed(false); })
-      .catch(() => setFailed(true));
-    spClient.getLastSeenBlockedAt()
-      .then(setLastSeen)
-      .catch(() => setLastSeen(0));
+    const mayWrite = guardRef.current.begin();
+    Promise.all([
+      spClient.getDenials({ limit: 200 }).then(r => ({ ok: true as const, records: r.records }), () => ({ ok: false as const })),
+      spClient.getLastSeenBlockedAt().catch(() => 0),
+    ]).then(([denials, seen]) => {
+      if (!mayWrite()) return;
+      if (denials.ok) { setRecords(denials.records); setFailed(false); } else setFailed(true);
+      setLastSeen(seen);
+    });
   }, []);
 
   useEffect(() => { load(); }, [load]);

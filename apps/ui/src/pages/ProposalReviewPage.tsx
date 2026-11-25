@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
+import { SkelLine, SkelBlock, SkelArea } from '@suveren/approval-card/components/LoadGate';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type Proposal, type ExecutionReceipt } from '../lib/sp-client';
@@ -263,7 +264,10 @@ export function ProposalReviewPage() {
         <>
           {listHeader}
           {queueLoading ? (
-            <p className="av3-empty">Loading…</p>
+            // DEC-98: the list greyed out at its real place until the queue is in.
+            <section className="av3-pane" aria-label="Approvals">
+              <div className="av3-pane-scroll"><ApprovalListSkeleton /></div>
+            </section>
           ) : (
             <section className="av3-pane" aria-label="Approvals">
               <div className="av3-pane-scroll">{awaitingMeCount === 0 ? empty : rows}</div>
@@ -367,7 +371,7 @@ export function ProposalReviewPage() {
             </div>
 
             {loading && items.length === 0 ? (
-              <p className="av3-empty">Loading…</p>
+              <ApprovalListSkeleton />
             ) : items.length === 0 ? (
               <p className="av3-empty">
                 {statusFilter === 'pending' ? 'Nothing waiting for you.' : 'Nothing here yet.'}
@@ -558,5 +562,17 @@ function AwaitingOthersCard({ proposal, currentUserId, onCancel, onWithdraw }: A
       )}
       </div>
     </div>
+  );
+}
+
+/** DEC-98: the approvals list greyed out — its count line and three rows, at the real row height. */
+function ApprovalListSkeleton() {
+  return (
+    <SkelArea>
+      <div className="av3-rows" data-testid="approvals-skeleton">
+        <div className="av3-lh"><SkelLine w="8rem" h="0.8rem" /><SkelLine w="5rem" h="0.8rem" /></div>
+        {[0, 1, 2].map(i => <SkelBlock key={i} h="4rem" radius="0.75rem" style={{ marginBottom: '0.5rem' }} />)}
+      </div>
+    </SkelArea>
   );
 }

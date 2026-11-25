@@ -38,7 +38,7 @@ import { builtinText, builtinStructured, type BuiltinIntegration, type MandateCa
 import { CONTEXT_MAX_BYTES, writeContextFile, readContextFile } from '../context-loader';
 import { isSimulationMode } from '../simulation-mode';
 import type { BuiltinDeps } from './index';
-import { controlPlaneMandate } from '../cp-mandate';
+import { controlPlaneMandate, controlPlaneMandateOffer } from '../cp-mandate';
 import { loadGuides, guideHeader, limitsSection, packageSection, fillGenerated, type SystemLine, type ProfileLike } from '../guides';
 import { getAllManifests } from '../manifest-loader';
 import { getConsumptionState } from '../consumption';
@@ -636,10 +636,13 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           const check = await controlPlaneMandate(true, mandateRequest(args));
           return check.ok ? undefined : check.message;
         },
+        // A gateway with a device chain: the give goes to the person's phone at once, in the request's place (they give it there or on the card).
+        proposed: async (args, proposalId) => { await controlPlaneMandateOffer({ proposalId, tool: 'create', args }); },
         handler: async (args) => {
           // Approval can come long after the proposal: check the fixed rule again before creating.
           const fixed = proposalTargetRefusal(args);
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
+          // A gateway with a device chain refuses this (the person gives the mandate on the gateway page from the card).
           const r = await controlPlaneMandate(false, mandateRequest(args));
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
           return builtinText(
@@ -653,6 +656,12 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
         description: CHANGE_MANDATE_DESCRIPTION,
         inputSchema: CHANGE_MANDATE_INPUT_SCHEMA,
         prepare: async (args: Record<string, unknown>) => prepareChange(deps, args),
+        // As create_mandate: the changed mandate goes to the person's phone at once, with its differences.
+        proposed: async (args, proposalId) => {
+          const read = signedOldMandate(deps, args.mandate_id);
+          if ('refusal' in read) return;
+          await controlPlaneMandateOffer({ proposalId, tool: 'change', args, old: read.old });
+        },
         handler: async (args: Record<string, unknown>) => {
           // Approval can come long after the proposal: everything is checked again.
           const read = signedOldMandate(deps, args.mandate_id);
@@ -661,6 +670,12 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
           if (fixed) return { ...builtinText(`Refused: ${fixed.message}`), isError: true };
           const r = await controlPlaneMandate(false, { change: { old: read.old, changes: changesFrom(args), sealedDiff: args.change } });
           if (!r.ok) return { ...builtinText(`Refused: ${r.message}`), isError: true };
+          if (r.revokeError && r.oldStoppedLocally) {
+            // The change happened: the new mandate is in place and the old one is no
+            // longer used on this gateway. Only its revoke at the Authority Server is
+            // still open, and the gateway retries it — not a failed action.
+            return builtinText(changeRevokePendingText(r.authorizationId!, read.old.authorizationId, r.revokeError));
+          }
           if (r.revokeError) {
             return {
               ...builtinText(`The new mandate ${r.authorizationId} is signed and active, but the old mandate ${read.old.authorizationId} could not be revoked and is still live with its old limits. Tell the person: they should revoke the old one in the gateway. (${r.revokeError})`),
@@ -765,4 +780,18 @@ function mandateRequest(args: Record<string, unknown>): Record<string, unknown> 
     durationHours: args.duration_hours,
     title: args.title,
   };
+}
+
+/**
+ * The change went through, but the old mandate's revoke at the Authority Server
+ * did not yet: the old one is no longer used on this gateway and the gateway
+ * ends it there by itself (approved wording, Andreas 2026-11-20). The id pair
+ * and the reason follow for the AI's own record. Exported for its test.
+ */
+export function changeRevokePendingText(newId: string, oldId: string, revokeError: string): string {
+  return (
+    'The change is in place. The old mandate is no longer used on this computer. ' +
+    'It will be ended on suveren.ai as soon as possible.' +
+    ` (New mandate ${newId}, old mandate ${oldId}; ending it there did not go through yet: ${revokeError})`
+  );
 }

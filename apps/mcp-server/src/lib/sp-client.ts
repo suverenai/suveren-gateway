@@ -12,7 +12,7 @@ import { clientVersionHeaders } from './client-version';
 import { readPairing } from './as-pairing';
 import { resolvePinTls } from './as-config';
 import { fetchAs, AsTlsMismatchError, type AsFetchPinning } from './as-tls-pin';
-import { cpEncryptContent, type ProposalContentWire } from './cp-content-client';
+import { cpEncryptContent, type ProposalContentWire, type UnreadableReader, type CardContextInput } from './cp-content-client';
 
 /** Why the client currently has no session — distinguishes the default
  *  boot-locked state from one that WAS active and ended, and carries the
@@ -97,6 +97,13 @@ export interface SPProposal {
   approvedBy?: Record<string, { receiptId: string; at: number }>;
   approverRejectedBy?: { userId: string; reason?: string; at: number; outcome?: ProposalOutcome; note?: string; noteEncrypted?: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> } };
   createdBy?: string;
+  /**
+   * Device decisions on file (device-keys plan 6.3): only a device session is
+   * given them. Each is `{ decision, sig }` as the person's device signed it;
+   * the rest of an entry (who, which device) is the Authority Server's word and
+   * is never read. Verified by lib/device-decisions.ts, never taken on trust.
+   */
+  deviceDecisions?: Array<{ decision?: unknown; sig?: unknown } & Record<string, unknown>>;
 }
 
 /** Phase 6: authorization summary from the SP, used for above-cap detection. */
@@ -300,7 +307,11 @@ export class SPClient {
     };
 
     if (this.sessionCookie) {
-      headers['Cookie'] = this.sessionCookie;
+      // A gateway that signed in by its device key holds a bearer token
+      // (`Bearer <token>`, pushed by the control plane); every other gateway
+      // holds the AS session cookie, sent exactly as before.
+      if (this.sessionCookie.startsWith('Bearer ')) headers['Authorization'] = this.sessionCookie;
+      else headers['Cookie'] = this.sessionCookie;
     }
 
     if (this.apiKey) {
@@ -624,8 +635,10 @@ export class SPClient {
      *  `unreadable` and `encrypted_keys` by DID (the owner plus the signed
      *  deciders); `keys` stays keyed by account id for 0.40 gateways. */
     readers?: { ownerDid: string; deciders: string[] };
-  }): Promise<{ proposal: SPProposal; unreadableFor: string[] }> {
-    const { content, unreadableFor } = await cpEncryptContent(data.toolArgs, data.recipientUserIds, data.readers);
+    /** Device keys, step 8: the gateway's own display rules, execution mapping, linked record and version, sealed beside the content. */
+    cardContext?: CardContextInput;
+  }): Promise<{ proposal: SPProposal; unreadableFor: string[]; unreadableReaders?: UnreadableReader[] }> {
+    const { content, unreadableFor, unreadableReaders } = await cpEncryptContent(data.toolArgs, data.recipientUserIds, data.readers, data.cardContext);
 
     const res = await this.fetch('/api/proposals', {
       method: 'POST',
@@ -667,7 +680,7 @@ export class SPClient {
     void notifyControlPlane('proposal-added');
 
     const body = await res.json() as { proposal: SPProposal };
-    return { proposal: body.proposal, unreadableFor };
+    return { proposal: body.proposal, unreadableFor, ...(unreadableReaders && unreadableReaders.length > 0 ? { unreadableReaders } : {}) };
   }
 
   /**
@@ -740,6 +753,39 @@ export class SPClient {
     if (!res.ok) throw new Error(`SP proposal request failed: ${res.status}`);
     const data = await res.json() as { proposal: SPProposal };
     return data.proposal ?? null;
+  }
+
+  /**
+   * A person's device chain as the Authority Server holds it (`GET /api/devices/chain`,
+   * device sessions only). The answer is the Authority Server's word: the caller verifies
+   * every entry with hap-core against a root DID it got from a signed mandate. `null`
+   * when the Authority Server has no chain for that DID.
+   */
+  async getDeviceChain(did: string): Promise<{ entries: unknown[]; head: { seq: number; hash: string } | null } | null> {
+    const res = await this.fetch(`/api/devices/chain?did=${encodeURIComponent(did)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`SP device chain request failed: ${res.status}`);
+    const data = await res.json() as { entries?: unknown; head?: { seq?: unknown; hash?: unknown } | null };
+    if (!Array.isArray(data.entries)) throw new Error('SP device chain answer is not a chain');
+    const h = data.head;
+    return {
+      entries: data.entries,
+      head: h && typeof h.seq === 'number' && typeof h.hash === 'string' ? { seq: h.seq, hash: h.hash } : null,
+    };
+  }
+
+  /**
+   * The grants stored for a mandate (device-keys plan 4.4, step 13): `{ grant, sig, check }` as the owner's device signed
+   * them, with the version and op. Everything is carried by the Authority Server and verified by the caller with hap-core;
+   * nothing here is believed. `[]` when the Authority Server holds none (or lets this session read none).
+   */
+  async getMandateGrants(mandateId: string): Promise<Array<{ mandate_version: number; op: string; grant: unknown; sig: unknown; check: unknown }>> {
+    const res = await this.fetch(`/api/mandates/${encodeURIComponent(mandateId)}/grants`);
+    if (!res.ok) throw new Error(`SP mandate grants request failed: ${res.status}`);
+    const data = await res.json() as { grants?: unknown };
+    if (!Array.isArray(data.grants)) throw new Error('SP mandate grants answer is not a list');
+    return data.grants.filter((g): g is { mandate_version: number; op: string; grant: unknown; sig: unknown; check: unknown } =>
+      typeof g === 'object' && g !== null && typeof (g as { mandate_version?: unknown }).mandate_version === 'number' && typeof (g as { op?: unknown }).op === 'string');
   }
 
   // NOTE: v0.3 used POST /api/proposals/{id}/resolve with action: 'executed'

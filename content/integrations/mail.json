@@ -257,7 +257,8 @@
     }
   },
   "limitWords": {
-    "send_daily_max": { "noun": "emails", "pastParticiple": "sent" }
+    "send_daily_max": { "noun": "emails", "pastParticiple": "sent" },
+    "send_weekly_max": { "noun": "emails", "pastParticiple": "sent" }
   },
   "setupHint": "No configuration needed — works out of the box, in simulation mode.",
   "setupGuide": [

@@ -1,11 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 /** Forward a pre-v0.7 address to its new path, keeping the query string (e.g. ?highlight=, ?step=). */
 function Forward({ to }: { to: string }) {
   const { search, hash } = useLocation();
   return <Navigate to={`${to}${search}${hash}`} replace />;
 }
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { shouldReloadAfterUpdate } from './lib/reload-after-update';
@@ -25,18 +25,45 @@ import { SettingsServicesPage } from './pages/SettingsServicesPage';
 import { ProposalReviewPage } from './pages/ProposalReviewPage';
 import { AgentBriefPage } from './pages/AgentBriefPage';
 import { ReportsPage } from './pages/ReportsPage';
+import { UnlockPage, UnlockSkeleton } from './components/device/UnlockScreen';
+import { SetupPage } from './components/device/SetupScreens';
+import { StartPage, LoginOrStart } from './components/device/StartScreens';
+import { CheckKeyPage } from './components/device/CheckKeyScreens';
+import { SetPasswordPage } from './components/device/PasswordScreen';
+import { RecoverPage } from './components/device/RecoverScreens';
+import { ConfirmationHost } from './components/device/ConfirmChange';
+import { AddPhonePage, DevicesPage } from './components/device/PairingPages';
+import { offerSetUp } from './lib/access';
+import { spClient } from './lib/sp-client';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { user, mode, domain } = useAuth();
+  const { user, mode, domain, access, deviceKeysSwitch, passwordSet } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   // Personal mode: always has domain='owner', skip onboarding
-  // Team mode: show onboarding if no domain set (no group joined yet)
-  if (mode === 'team' && !domain) return <Navigate to="/onboarding" replace />;
+  // Team mode: show onboarding if no domain set (no group joined yet). With device keys on and no unlock password
+  // yet, the computer's own set-up comes first: the onboarding would otherwise push the one-time offer aside.
+  if (mode === 'team' && !domain) {
+    const offer = offerSetUp({ access: access ?? 'legacy', switchOn: deviceKeysSwitch, passwordSet }, Boolean(spClient.getApiKey()) && !spClient.hasPageSession());
+    return <Navigate to={offer ? '/device-password' : '/onboarding'} replace />;
+  }
   return <>{children}</>;
 }
 
-function AppRoutes() {
-  const { user, handleSessionLocked, refreshGroups } = useAuth();
+export function AppRoutes() {
+  const { user, access, deviceKeysSwitch, passwordSet, pageSessionOpen, handleSessionLocked, refreshGroups } = useAuth();
+  const navigate = useNavigate();
+
+  // A gateway with device keys on and no unlock password offers the password once after the account-key sign-in
+  // (screen 1). Never forced, never on a gateway without the switch, never again until the next sign-in.
+  const offered = useRef(false);
+  useEffect(() => {
+    if (!user) { offered.current = false; return; }
+    if (offered.current) return;
+    if (offerSetUp({ access: access ?? 'legacy', switchOn: deviceKeysSwitch, passwordSet }, Boolean(spClient.getApiKey()) && !spClient.hasPageSession())) {
+      offered.current = true;
+      navigate('/device-password');
+    }
+  }, [user, access, deviceKeysSwitch, passwordSet, navigate]);
 
   // An update restarts the gateway and signs everyone out, which takes down the banner that reloads a
   // stale tab. So while signed out, a tab running an older build reloads itself. Nothing is lost: the key
@@ -66,8 +93,17 @@ function AppRoutes() {
   });
 
   return (
+    <>
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+      {/* A gateway with an unlock password is opened by the password or Touch ID; every other gateway keeps the account-key sign-in. */}
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : access === 'password' ? <UnlockPage /> : access === null ? <UnlockSkeleton pageUnknown /> : <LoginOrStart switchOn={deviceKeysSwitch}><LoginPage /></LoginOrStart>} />
+      {/* DEC-93: a gateway nobody has used yet starts here, at Connect, without an account key. */}
+      <Route path="/start" element={user ? <Navigate to="/" replace /> : <StartPage />} />
+      <Route path="/device-password" element={user ? <SetPasswordPage /> : <Navigate to="/login" replace />} />
+      {/* After the start access (DEC-93) the page has its session before anyone is signed in: set-up signs in at its end. */}
+      <Route path="/device-setup" element={(user || pageSessionOpen) && access === 'password' ? <SetupPage /> : <Navigate to="/login" replace />} />
+      <Route path="/device-check-key" element={user && access === 'password' ? <CheckKeyPage /> : <Navigate to="/login" replace />} />
+      <Route path="/device-recovery-code" element={user && access === 'password' ? <RecoverPage kind="rotate" onBack={() => navigate('/settings')} /> : <Navigate to="/login" replace />} />
       <Route path="/onboarding" element={user ? <OnboardingPage /> : <Navigate to="/login" replace />} />
       <Route element={
         <AuthGuard>
@@ -94,12 +130,17 @@ function AppRoutes() {
         <Route path="/proposals" element={<Forward to="/approvals" />} />
         <Route path="/agent-brief" element={<AgentBriefPage />} />
         <Route path="/settings" element={<SettingsServicesPage />} />
+        {/* Pairing with the phone app (device keys): the list of devices and "Add a phone". Both leave for / with the switch off. */}
+        <Route path="/devices" element={<DevicesPage />} />
+        <Route path="/devices/add-phone" element={<AddPhonePage />} />
         {/* Redirect old routes */}
         <Route path="/settings/services" element={<Navigate to="/settings" replace />} />
         <Route path="/deploy" element={<Navigate to="/integrations" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    <ConfirmationHost />
+    </>
   );
 }
 

@@ -241,11 +241,13 @@ describe('a connector serving several areas', () => {
 describe('generated sections', () => {
   const profile = {
     id: 'p/sales@0.3',
-    boundsSchema: { keyOrder: ['profile', 'read_access', 'value_max', 'quote_daily_max'], fields: {
+    boundsSchema: { keyOrder: ['profile', 'read_access', 'value_max', 'quote_daily_max', 'quote_weekly_max', 'quote_monthly_max'], fields: {
       profile: { type: 'string' },
       read_access: { type: 'string', displayName: 'Read', boundType: { kind: 'enum', values: ['unlimited', 'none'] }, default: 'unlimited' },
       value_max: { type: 'number', unit: 'EUR', description: 'Highest quote value.' },
       quote_daily_max: { type: 'number', unit: 'count', boundType: { kind: 'cumulative_count', window: 'daily' } },
+      quote_weekly_max: { type: 'number', unit: 'count', boundType: { kind: 'cumulative_count', window: 'weekly' } },
+      quote_monthly_max: { type: 'number', unit: 'count', boundType: { kind: 'cumulative_count', window: 'monthly' } },
     } },
     scopeSchema: { keyOrder: ['currency'], fields: { currency: { type: 'string', description: 'Quote currency.' } } },
   };
@@ -255,6 +257,8 @@ describe('generated sections', () => {
     expect(t).toContain('- `read_access` (Read) — one of `unlimited`, `none`, default `unlimited`');
     expect(t).toContain('- `value_max` — number, EUR. Highest quote value.');
     expect(t).toContain('- `quote_daily_max` — number, count, per day');
+    expect(t).toContain('- `quote_weekly_max` — number, count, per week');
+    expect(t).toContain('- `quote_monthly_max` — number, count, per month');
     expect(t).toContain('**Scope:**\n- `currency` — string. Quote currency.');
     expect(t).not.toContain('`profile` —');
   });

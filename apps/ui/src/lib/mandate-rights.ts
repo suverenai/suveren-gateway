@@ -24,7 +24,9 @@
  */
 export type MandateRight =
   | { can: true }
-  | { can: false; code: 'PROFILE_NOT_ENABLED_FOR_GROUP' | 'OWNER_NOT_APPROVER'; reason: string; fix: string };
+  | { can: false; code: 'PROFILE_NOT_ENABLED_FOR_GROUP' | 'OWNER_NOT_APPROVER'; reason: string; fix: string;
+      /** The person is an admin of the team and can enable the area themselves (the caller links to the team's settings). */
+      adminCanEnable?: true };
 
 export interface MandateRightInput {
   isPersonal?: boolean;
@@ -35,6 +37,8 @@ export interface MandateRightInput {
   userId: string | undefined;
   profileName: string;
   teamName?: string | null;
+  /** The signed-in person is an admin of the active team (their membership's role). */
+  isAdmin?: boolean;
 }
 
 export function mandateRight(i: MandateRightInput): MandateRight {
@@ -43,6 +47,16 @@ export function mandateRight(i: MandateRightInput): MandateRight {
   const team = i.teamName ? `"${i.teamName}"` : 'this team';
   const grantorsEmpty = i.grantors !== 'all' && (i.grantors?.length ?? 0) === 0;
   if (grantorsEmpty) {
+    // An admin is never told to ask an admin: they enable the area themselves (DRAFT texts).
+    if (i.isAdmin) {
+      return {
+        can: false,
+        code: 'PROFILE_NOT_ENABLED_FOR_GROUP',
+        reason: `Not enabled in ${team} yet.`,
+        fix: `You are an admin of ${team}: enable ${i.profileName} in the team's settings and name who may give its mandates.`,
+        adminCanEnable: true,
+      };
+    }
     return {
       can: false,
       code: 'PROFILE_NOT_ENABLED_FOR_GROUP',
@@ -60,4 +74,13 @@ export function mandateRight(i: MandateRightInput): MandateRight {
     };
   }
   return { can: true };
+}
+
+/**
+ * Is the signed-in person an admin of the active team? The Authority Server's rule: the team's creator
+ * (`createdBy`), or a membership that says `role: 'admin'` where an Authority Server reports one.
+ */
+export function isTeamAdmin(team: { createdBy?: string } | null | undefined, membership: { role?: string } | null | undefined, userId: string | undefined): boolean {
+  if (membership?.role === 'admin') return true;
+  return !!userId && !!team?.createdBy && team.createdBy === userId;
 }

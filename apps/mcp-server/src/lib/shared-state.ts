@@ -4,8 +4,12 @@
  * Holds one SPClient, one AttestationCache, and one GateStore.
  */
 
+import { ReplacedMandates } from './replaced-mandates';
 import { SPClient } from './sp-client';
 import { AttestationCache, AsKeyMismatchError, type CachedAuthorization } from './attestation-cache';
+import { controlPlaneDevice, deviceKeysEnabled } from './device-decisions';
+import { makeGrantGate } from './mandate-grants';
+import { gateStoreHold, type BodyHold } from './mandate-bodies';
 import { GateStore, type GateContent, type GateEntry } from './gate-store';
 import { ExecutionLog } from './execution-log';
 import { DenialLog } from './denial-log';
@@ -34,6 +38,8 @@ export class SharedState {
   readonly spClient: SPClient;
   readonly cache: AttestationCache;
   readonly gateStore: GateStore;
+  /** Mandates the person replaced; no longer honoured here (replaced-mandates.ts). */
+  readonly replacedMandates: ReplacedMandates;
   readonly executionLog: ExecutionLog;
   readonly denialLog: DenialLog;
   readonly receiptArchive: ReceiptArchive;
@@ -92,7 +98,15 @@ export class SharedState {
   constructor(spUrl: string, gateStorePath?: string, dataDir?: string) {
     this.spClient = new SPClient(spUrl, undefined, dataDir);
     this.cache = new AttestationCache(this.spClient, dataDir);
+    // Device keys (step 13): a mandate of a chain account is cached only with the grant of its owner's device. A gateway with the
+    // switch off sets nothing, and the cache is the one of every earlier release.
+    if (deviceKeysEnabled()) {
+      this.cache.setGrantGate(makeGrantGate({ sp: this.spClient, cp: controlPlaneDevice, bodies: this.bodyHold() }));
+      this.cache.startGrantRecheck();
+    }
     this.gateStore = new GateStore(gateStorePath);
+    this.replacedMandates = new ReplacedMandates(gateStorePath);
+    this.cache.useReplacedMandates((id) => this.replacedMandates.has(id));
     this.executionLog = new ExecutionLog(gateStorePath);
     this.denialLog = new DenialLog(gateStorePath);
     this.receiptArchive = new ReceiptArchive(gateStorePath);
@@ -238,6 +252,11 @@ export class SharedState {
     // The single place every ticket is archived — so the one place to tell
     // the UI a ticket exists (presence only; fire-and-forget).
     void notifyControlPlane('ticket-recorded');
+  }
+
+  /** Where the scope and intent of a mandate granted on another computer land once their sealed body opened and matched (plan 20.19). */
+  bodyHold(): BodyHold {
+    return gateStoreHold(() => this.gateStore);
   }
 
   setGateContent(

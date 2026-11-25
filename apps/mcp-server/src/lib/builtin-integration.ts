@@ -88,6 +88,11 @@ export interface BuiltinTool {
    * Return `{ args }` to continue with those arguments, or `{ refusal, code }` to stop.
    */
   prepare?: (args: Record<string, unknown>) => Promise<{ args: Record<string, unknown> } | { refusal: string; code: string }>;
+  /**
+   * Runs once the call became a proposal waiting for a person (after it was submitted), with the arguments that were sealed into it.
+   * Fire-and-forget: it can never delay or fail the proposal. Used by Setup to prepare a mandate give for the person's phone.
+   */
+  proposed?: (args: Record<string, unknown>, proposalId: string) => Promise<void>;
 }
 
 /** What `mandateRefusal` sees of a held mandate — EnrichedAuthorization fits. */

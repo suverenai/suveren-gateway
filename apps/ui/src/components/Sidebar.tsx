@@ -8,7 +8,9 @@ import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePollin
 import { useSSEEvent } from '../contexts/EventSourceContext';
 import { useIntegrationStatus } from '../contexts/IntegrationStatusContext';
 import { unseenCount } from '../lib/blocked-view';
+import { usePendingCount } from '../hooks/usePendingCount';
 import { isNewReport } from '../lib/report-news';
+import { createLatestGuard } from '../lib/latest-guard';
 import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
 import { NavIcon, type NavIconName } from './NavIcon';
 
@@ -19,6 +21,8 @@ export interface NavItem {
   label: string;
   statusKey?: 'integrations' | 'assistant' | 'authorizations' | 'proposals' | 'brief' | 'blocked' | 'report' | 'tickets';
   teamOnly?: boolean;
+  /** Only with device keys on (SUVEREN_DEVICE_KEYS): the Devices page exists only there. */
+  deviceKeysOnly?: boolean;
   /** UI spec §12.1: 'core' = the unlabelled main group; 'setup' = the quieter group below. */
   group?: 'top' | 'core' | 'setup';
   /** The count is information, not an action: the outlined "setup" pill
@@ -39,6 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/reports', icon: 'reports', label: 'Reports', statusKey: 'report', newLabel: true, group: 'core' },
   { to: '/blocked', icon: 'blocked', label: 'Blocked', statusKey: 'blocked', group: 'core' },
   { to: '/team', icon: 'team', label: 'Team', teamOnly: true, group: 'setup' },
+  { to: '/devices', icon: 'devices', label: 'Devices', deviceKeysOnly: true, group: 'setup' },
   { to: '/agent-brief', icon: 'brief', label: 'Agent Brief', statusKey: 'brief', group: 'setup' },
   { to: '/integrations', icon: 'integrations', label: 'Connectors', statusKey: 'integrations', group: 'setup' },
   { to: '/settings', icon: 'settings', label: 'Settings', statusKey: 'assistant', group: 'setup' },
@@ -52,14 +57,17 @@ export const NAV_ITEMS: NavItem[] = [
 function useOtherNavStatus() {
   const { activeDomain } = useAuth();
   const [counts, setCounts] = useState<Record<string, number>>({});
+  // Every live event starts a poll; two events a moment apart (two blocked
+  // calls) overlap. An older poll may not write over a newer one; without that,
+  // one that finishes last puts an older count back (see latest-guard.ts).
+  const guardRef = useRef(createLatestGuard());
 
   const poll = useCallback(async () => {
+    const mayWrite = guardRef.current.begin();
     try {
-      const [aiStatus, authData, proposalData, approverProposals, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
+      const [aiStatus, authData, briefText, archivedIds, denials, lastSeenBlockedAt, reportData, lastSeenReportAt, ticketPage, lastSeenTicketsAt] = await Promise.all([
         spClient.getCredential('ai-config').catch(() => null),
         spClient.getMyAttestations().catch(() => null),
-        spClient.getMyProposals(activeDomain).catch(() => null),
-        spClient.getProposalsForApprover().catch(() => null),
         spClient.getAgentContext().catch(() => ''),
         spClient.getArchivedMandates().catch(() => [] as string[]),
         spClient.getDenials({ limit: 200 }).catch(() => null),
@@ -80,13 +88,6 @@ function useOtherNavStatus() {
         const expired = bucketAuths(authData, { archivedSet: new Set(archivedIds) }).expired.length;
         if (expired > 0) next.authorizations = expired;
       }
-      // Combine domain proposals (legacy) + above-cap approver proposals (Phase 6).
-      const domainPending = (proposalData?.length ?? 0);
-      const approverPending = (approverProposals?.length ?? 0);
-      const totalPending = domainPending + approverPending;
-      if (totalPending > 0) {
-        next.proposals = totalPending;
-      }
       // Empty agent brief → badge nudges the owner to author one.
       if (!briefText || !briefText.trim()) next.brief = 1;
       // AU2 — blocked actions arrived since the owner last opened the
@@ -102,6 +103,7 @@ function useOtherNavStatus() {
       // Tickets issued since the Tickets page was last opened.
       const newTickets = ticketPage ? ticketPage.receipts.filter(r => isNewTicket(r, lastSeenTicketsAt)).length : 0;
       if (newTickets > 0) next.tickets = newTickets;
+      if (!mayWrite()) return;
       setCounts(next);
     } catch {
       // ignore
@@ -165,13 +167,17 @@ const TOAST_STYLE: React.CSSProperties = {
 };
 
 export function Sidebar() {
-  const { mode, activeTeam } = useAuth();
+  const { mode, activeTeam, deviceKeysSwitch } = useAuth();
   const other = useOtherNavStatus();
   const { attentionCount } = useIntegrationStatus();
+  // Approvals: the one queue the Approvals list and the panel show, never a count of its own (they disagreed for a long time
+  // after a request was closed on the phone, dev lane 2026-11-23).
+  const waiting = usePendingCount();
   const counts: Record<string, number> = { ...other };
   if (attentionCount > 0) counts.integrations = attentionCount;
+  if (waiting > 0) counts.proposals = waiting;
 
-  const visibleItems = NAV_ITEMS.filter(item => !item.teamOnly || mode === 'team');
+  const visibleItems = NAV_ITEMS.filter(item => (!item.teamOnly || mode === 'team') && (!item.deviceKeysOnly || deviceKeysSwitch));
 
   // Mode-flip toast — fires when mode changes after the initial render.
   // Dismissed automatically on next navigation (location change).

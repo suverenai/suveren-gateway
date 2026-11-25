@@ -8,7 +8,9 @@
 
 import { readRefusal } from '@hap/core/refusal';
 import { isRetriableRead, unreachableRetry } from './unreachable-retry';
+import { T, textForCode, isDecisionCode } from './device-texts';
 import { queueDomains, mergeProposals } from './my-queue';
+import type { MemberJoinApi, AdminJoinApi, JoinResult, TeamChangesApi, TeamChangesView } from '@suveren/approval-card/mandate-screens';
 import type { AttachmentPreviewResult } from '@suveren/approval-card/lib/attachment-sealed';
 import type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcome, ToolDisplayHints, CheckStatus, CheckResult, PreviewReadSection, PreviewResponse, OutcomeResponse, RequestChainItem, RequestResult, HistoryItem, ConnectorHistoryMatch, HistoryResult, RequestContextResponse, ShownSnapshotPayload, ShownHashEntry, ShownHashes, AuthTemplate, ModeOptionDecl, SignInGroup, IntegrationManifest, GateContentEntry, EnrichedAuthorizationEntry, ProposalOutcome, ProposalContentWire, NoteEncryptedWire, Proposal, CumulativeUsageEntry, ExecutionReceipt, ReceiptPage, CapKind, ProfileConfig } from '@suveren/approval-card/types';
 
@@ -25,6 +27,14 @@ export type { ProfileSummary, PreviewBody, PreviewVersionInfo, PreviewReadOutcom
  */
 export const SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = ['0.8', '0.7'];
 
+/** Ticket headline values from this gateway's own archive, keyed by ticket id (UI spec §13.4). */
+export interface TicketHeadlineMaps {
+  /** Automatic tickets: what this gateway sent. */
+  automatic: Record<string, Record<string, unknown>>;
+  /** Review-path tickets: the approved toolArgs archived when this gateway executed them. */
+  approved: Record<string, Record<string, unknown>>;
+}
+
 export interface SPUser {
   id: string;
   name: string;
@@ -37,6 +47,8 @@ export interface SPGroup {
   name: string;
   myDomains: string[];
   isAdmin: boolean;
+  /** The creator, who is the team's admin on the Authority Server (groups-store `createdBy`). */
+  createdBy?: string;
   /** v0.4: true for the auto-provisioned single-member personal workspace. */
   isPersonal?: boolean;
 }
@@ -432,6 +444,20 @@ export const SESSION_GONE_EVENT = 'suveren:session-gone';
 /** Where the client announces a lost session; the auth context listens. */
 export const sessionEvents = new EventTarget();
 
+/** What a 401 of a password gateway says about the page session (control plane: lib/page-session.ts). */
+export const SESSION_CODES: ReadonlySet<string> = new Set(['session_missing', 'session_invalid', 'session_idle', 'session_expired', 'locked']);
+
+/** Detail of {@link SESSION_GONE_EVENT} on a gateway with a page session: why the session ended. */
+export interface SessionGoneDetail { code: string }
+
+/** Asked when a change to a stored connector login needs the person's confirmation; resolves the confirmed request id, or null when the person cancelled. */
+export type ChangeConfirmer = (ask: { kind: 'replace' | 'remove'; name: string; change: unknown }) => Promise<string | null>;
+
+/** The person cancelled a confirmation: nothing was sent. */
+export class ConfirmationCancelled extends Error {
+  constructor() { super('confirmation_cancelled'); this.name = 'ConfirmationCancelled'; }
+}
+
 /** Requests whose 401 means "wrong credentials", not "session gone". */
 export function isAuthPath(path: string): boolean {
   return /^\/(api\/)?auth\//.test(path);
@@ -514,6 +540,30 @@ export interface BuiltinStatus {
  * below, instead of re-deriving this per method (and re-missing the new
  * envelope per method, which is exactly how this bug happened).
  */
+/** What a give would grant, as the gateway checked it (POST /api/mandate/prepare); the page shows this and echoes `planHash` with the give. */
+export interface PreparedMandate {
+  planHash: string; profileId: string; profileName: string; profileHash: string;
+  mode: 'automatic' | 'review' | 'review_above_cap'; ttlSeconds: number; expiresAt: number;
+  bounds: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  scope: Array<{ field: string; label: string; value: string | number; unit?: string }>;
+  intent: string;
+  team: { approvers: Array<{ userId: string; did: string; identityCode: string; isYou: boolean; confirmed: boolean }>; approvals: number | null; caps: Array<{ field: string; label: string; value: string | number; unit?: string }> } | null;
+  blocked: { code: string; message: string; approvers?: Array<{ userId: string; did: string; identityCode: string }> } | null;
+  /** Another active device of the person's chain can grant it (DEC-90): the page offers "Give on your phone" when this computer cannot. */
+  onPhone?: boolean;
+}
+
+/** A refused `/api/mandate/sign`: the same message as before, plus the gateway's code (and, for unconfirmed approvers, who). */
+/** The approver ids a grant refusal names (approver_has_no_chain); only strings, never anything else from the answer. */
+function approverIdsOf(body: unknown): string[] | undefined {
+  const v = (body as { approverIds?: unknown } | null)?.approverIds;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
+}
+
+export class MandateSignError extends Error {
+  constructor(message: string, readonly code: string | undefined, readonly status: number, readonly approvers?: Array<{ userId: string; did: string; identityCode: string }>, readonly reason?: string, readonly approverIds?: string[]) { super(message); this.name = 'MandateSignError'; }
+}
+
 export function asErrorMessage(body: unknown, fallback: string): string {
   const r = readRefusal(body, fallback);
   return r.code && r.message !== r.code ? `${r.message} (${r.code})` : r.message;
@@ -534,11 +584,160 @@ export interface GatewaySettings {
   openApprovalsAutomatically: boolean;
 }
 
+/**
+ * Does `/health` say this gateway has device keys? Only an explicit `deviceKeys: true` does; a gateway without
+ * them does not send the member at all, so its decisions keep the legacy path.
+ */
+export function deviceDecisionsFromHealth(health: unknown): boolean {
+  return (health as { deviceKeys?: unknown } | null | undefined)?.deviceKeys === true;
+}
+
 class SPClient {
   private apiKey: string | null = null;
+  /**
+   * The page session's header token (device-keys plan 7). Kept in memory only, sent as `X-Suveren-Session` on every
+   * request. Null on a gateway without an unlock password: every request is then exactly what it was before.
+   */
+  private sessionToken: string | null = null;
+  private confirmer: ChangeConfirmer | null = null;
+  /**
+   * Device keys (plan 6.3, step 12): on a gateway with a device chain a decision is signed with this
+   * computer's key by the control plane (`/device-decision/:id/:route`), which then forwards it to the
+   * Authority Server. Off (the default) every decision goes the legacy way, byte for byte as before.
+   * Set by {@link detectDeviceDecisions} once the page has its session (the unlock screens, O19), never guessed.
+   */
+  private deviceDecisions = false;
+
+  setDeviceDecisions(on: boolean): void {
+    this.deviceDecisions = on;
+  }
+
+  /**
+   * Ask the gateway whether it has a device chain. Only an explicit yes switches the path; 404 (switch
+   * off), 401, 409 or anything unreadable keeps the legacy path, whose refusal by a chain account's
+   * Authority Server (DEVICE_DECISION_REQUIRED) is then what the person sees: never a silent fallback to unsigned.
+   */
+  async detectDeviceDecisions(): Promise<boolean> {
+    try {
+      const res = await this.fetch('/device-decision/status');
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      this.deviceDecisions = (body as { deviceKeys?: unknown } | null)?.deviceKeys === true;
+    } catch {
+      this.deviceDecisions = false;
+    }
+    return this.deviceDecisions;
+  }
+
+  /**
+   * The words for a refused decision. On the device path the control plane's neutral code gets its text
+   * (lib/device-texts.ts); anything else, and every gateway without device keys, reads as it always did.
+   */
+  private decisionError(body: unknown, fallback: string): string {
+    const code = (body as { code?: unknown } | null)?.code;
+    if (this.deviceDecisions) {
+      // On the device path only the gateway's own codes have words; anything else (a refusal of the Authority Server
+      // passed through, an unknown code) reads as the generic text, never as the server's message.
+      return typeof code === 'string' && isDecisionCode(code) ? textForCode(code, { screen: 'general' }) : T.generic;
+    }
+    return asErrorMessage(body, fallback);
+  }
+
+  /** Where a decision on `id` goes: the same four route names, locally signed on a gateway with a device chain. */
+  private decisionPath(id: string, route: 'approve' | 'reject' | 'resolve' | 'withdraw'): string {
+    return `${this.deviceDecisions ? '/device-decision' : '/api/proposals'}/${encodeURIComponent(id)}/${route}`;
+  }
 
   setApiKey(key: string): void {
     this.apiKey = key;
+  }
+
+  setSessionToken(token: string | null): void {
+    this.sessionToken = token;
+    if (!token) unreachableRetry.cancelAll();
+  }
+
+  hasPageSession(): boolean {
+    return this.sessionToken !== null;
+  }
+
+  /** The screen that asks the person to confirm a change to a stored login (screen 5). */
+  setConfirmer(fn: ChangeConfirmer | null): void {
+    this.confirmer = fn;
+  }
+
+  /** Any call of the control plane with the page's credentials (device screens use this; nothing is retried). */
+  async request(path: string, init?: RequestInit): Promise<Response> {
+    return this.fetch(path, init ?? {});
+  }
+
+  /**
+   * Is the page session still accepted? One cheap call; a 401 announces why (SESSION_GONE_EVENT). Used when the event
+   * stream ended, which is how a session's end shows.
+   */
+  async sessionStillOpen(): Promise<boolean> {
+    try {
+      const res = await this.fetch('/auth/device/status', {});
+      // 404: no device routes (the unlock password alone): the stream ended for another reason.
+      return res.status !== 401;
+    } catch { return true; }
+  }
+
+  /** The event stream, read with fetch because EventSource cannot send the session header. */
+  async openEventStream(signal: AbortSignal): Promise<Response> {
+    return this.fetch('/events', { signal, headers: { Accept: 'text/event-stream' } });
+  }
+
+  /**
+   * Send a change to a stored login. When the gateway asks for the person's confirmation of exactly this change
+   * (403 `confirmation_required`), the confirmer is asked and the same call is sent again with the confirmed request.
+   * `change` is what the control plane hashes for this route (routes/vault.ts, routes/oauth-flow.ts).
+   */
+  private async sendConfirmed(path: string, init: RequestInit, change: unknown): Promise<Response> {
+    const res = await this.fetch(path, init);
+    if (res.status !== 403 || !this.sessionToken) return res;
+    const body = await res.clone().json().catch(() => null) as { code?: string; kind?: string; name?: string } | null;
+    if (body?.code !== 'confirmation_required' || (body.kind !== 'replace' && body.kind !== 'remove') || !body.name) return res;
+    if (!this.confirmer) return res;
+    const id = await this.confirmer({ kind: body.kind, name: body.name, change });
+    if (!id) throw new ConfirmationCancelled();
+    return this.fetch(path, { ...init, headers: { ...init.headers, 'X-Suveren-Confirmation': id } });
+  }
+
+  /**
+   * Where the page opens an OAuth sign-in. Without a page session: the plain start address, as before. With one: a
+   * one-time start ticket (the new window cannot send the header); over a stored sign-in it needs the person's
+   * confirmation of that exact change first.
+   */
+  async oauthStartUrl(integrationId: string): Promise<string> {
+    const plain = `/auth/oauth/${encodeURIComponent(integrationId)}/start`;
+    if (!this.sessionToken) return plain;
+    const res = await this.sendOAuthChange(integrationId, `/auth/oauth/${encodeURIComponent(integrationId)}/start-ticket`, 'sign-in');
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error((err as { code?: string } | null)?.code ?? `start-ticket ${res.status}`);
+    }
+    const body = await res.json() as { url?: string };
+    if (!body.url) throw new Error('start_ticket_invalid');
+    return body.url;
+  }
+
+  /** Sign out of an OAuth connector (a removal of a login: confirmed on a password gateway). */
+  async oauthDisconnect(integrationId: string): Promise<Response> {
+    return this.sendOAuthChange(integrationId, `/auth/oauth/${encodeURIComponent(integrationId)}/disconnect`, 'disconnect');
+  }
+
+  private async sendOAuthChange(integrationId: string, path: string, op: 'sign-in' | 'disconnect'): Promise<Response> {
+    const init: RequestInit = { method: 'POST' };
+    const res = await this.fetch(path, init);
+    if (res.status !== 403 || !this.sessionToken || !this.confirmer) return res;
+    const body = await res.clone().json().catch(() => null) as { code?: string; kind?: string; name?: string } | null;
+    if (body?.code !== 'confirmation_required' || (body.kind !== 'replace' && body.kind !== 'remove') || !body.name) return res;
+    // The exact change the control plane will hash: it names it itself.
+    const ch = await this.fetch(`/auth/oauth/${encodeURIComponent(integrationId)}/change?op=${op}`);
+    const change = ch.ok ? ((await ch.json().catch(() => null)) as { change?: unknown } | null)?.change ?? null : null;
+    const id = await this.confirmer({ kind: body.kind, name: body.name, change });
+    if (!id) throw new ConfirmationCancelled();
+    return this.fetch(path, { ...init, headers: { 'X-Suveren-Confirmation': id } });
   }
 
   clearApiKey(): void {
@@ -561,6 +760,7 @@ class SPClient {
       headers: {
         'Content-Type': 'application/json',
         ...(this.apiKey ? { 'X-API-Key': this.apiKey } : {}),
+        ...(this.sessionToken ? { 'X-Suveren-Session': this.sessionToken } : {}),
         ...init?.headers,
       },
     });
@@ -571,7 +771,17 @@ class SPClient {
     // event. Without this every page shows its own wrong error (Integrations
     // said "MCP server is not reachable"). Sign-in calls are excluded: a
     // wrong key there is the login form's own error, not a lost session.
-    if (res.status === 401 && this.apiKey && !isAuthPath(path)) {
+    if (this.sessionToken) {
+      // A page session: the 401 says why it ended (idle, 12 hours, locked, closed). Sign-in calls count too, but only
+      // for the session codes: a wrong password is the unlock screen's own error.
+      if (res.status === 401) {
+        const body = await res.clone().json().catch(() => null) as { code?: string; reason?: string } | null;
+        const code = body?.reason ?? body?.code ?? 'session_missing';
+        if (SESSION_CODES.has(code)) {
+          sessionEvents.dispatchEvent(new CustomEvent<SessionGoneDetail>(SESSION_GONE_EVENT, { detail: { code } }));
+        }
+      }
+    } else if (res.status === 401 && this.apiKey && !isAuthPath(path)) {
       sessionEvents.dispatchEvent(new Event(SESSION_GONE_EVENT));
     }
     return res;
@@ -604,6 +814,21 @@ class SPClient {
     }
     const data = await res.json();
     return data.user;
+  }
+
+  /**
+   * Who is signed in, on a gateway whose page signed in by device key (no account key was typed, so `login()`
+   * never returned the person). The control plane has no route for it, so it is read from the person's own
+   * Personal workspace, which has exactly one member: the person. Null when it cannot be read.
+   */
+  async loadSessionUser(): Promise<SPUser | null> {
+    try {
+      const groups = await this.getGroups();
+      const personal = groups.find(g => g.isPersonal) ?? groups[0];
+      if (!personal) return null;
+      const detail = await this.getGroupById(personal.id);
+      return sessionUserFromGroup(detail);
+    } catch { return null; }
   }
 
   async logout(): Promise<void> {
@@ -795,11 +1020,23 @@ class SPClient {
    * The values automatic tickets' headlines are built from (UI spec §13.4),
    * keyed by ticket id — this device's archive only, trimmed for headlines.
    */
-  async getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+  /** The approved toolArgs of a proposal this gateway executed, from its archive; `null` = no local copy. */
+  async getArchivedProposalArgs(proposalId: string): Promise<Record<string, unknown> | null> {
+    const res = await this.fetch(`/api/evidence/proposal/${encodeURIComponent(proposalId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
+    const data = await res.json();
+    return (data?.toolArgs ?? null) as Record<string, unknown> | null;
+  }
+
+  async getTicketHeadlines(): Promise<TicketHeadlineMaps> {
     const res = await this.fetch('/api/evidence/headlines');
     if (!res.ok) throw new Error(`Local evidence unavailable (${res.status})`);
     const data = await res.json();
-    return (data?.headlines ?? {}) as Record<string, Record<string, unknown>>;
+    return {
+      automatic: (data?.headlines ?? {}) as Record<string, Record<string, unknown>>,
+      approved: (data?.approved ?? {}) as Record<string, Record<string, unknown>>,
+    };
   }
 
   // ─── Report (evidence-backed reports) ──────────────────────────────────
@@ -858,6 +1095,128 @@ class SPClient {
       const err = await res.json().catch(() => ({ error: 'Failed to revoke' }));
       throw new Error(asErrorMessage(err, `Revoke failed: ${res.status}`));
     }
+  }
+
+  /**
+   * End a mandate on a gateway with a device chain (step 13, screen 4): signed by an active device key, final, no Touch ID.
+   * Answers a code the page maps to its text; never throws for a refusal. A gateway without a chain answers 409 not_set_up.
+   */
+  async endMandate(authorizationId: string): Promise<{ ok: true } | { ok: false; code: 'already_ended' | 'unknown' | 'offline' | 'other' }> {
+    let res: Response;
+    try {
+      res = await this.fetch('/api/mandate/revoke', { method: 'POST', body: JSON.stringify({ authorizationId }) });
+    } catch { return { ok: false, code: 'offline' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    const code = body.grantCode ?? body.code;
+    if (code === 'mandate_revoked') return { ok: false, code: 'already_ended' };
+    if (code === 'mandate_unknown') return { ok: false, code: 'unknown' };
+    if (code === 'as_unreachable' || res.status === 502 || res.status === 503) return { ok: false, code: 'offline' };
+    return { ok: false, code: 'other' };
+  }
+
+  /**
+   * The join screens' routes on this gateway's own control plane (DEC-73 step 4; a gateway with a device chain only).
+   * Never throws: a refusal, an unreachable gateway or an answer of another shape is `{ ok: false, code }`. Backend truth only:
+   * what the screen shows (the person's own code, the tries left, whether a code matched) is what the gateway answered.
+   */
+  private async joinCall<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<JoinResult<T>> {
+    let res: Response;
+    try {
+      res = await this.fetch(`/api/team-join${path}`, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    } catch { return { ok: false, code: 'as_unreachable' }; }
+    const data = await res.json().catch(() => null) as ({ ok?: boolean; code?: string; triesLeft?: number } & Record<string, unknown>) | null;
+    if (data && data.ok === true) return data as unknown as JoinResult<T>;
+    return { ok: false, code: typeof data?.code === 'string' ? data.code : 'other', ...(typeof data?.triesLeft === 'number' ? { triesLeft: data.triesLeft } : {}) };
+  }
+
+  /** The member's column of the join (the person who asked to join). */
+  readonly memberJoin: MemberJoinApi = {
+    view: (teamId) => this.joinCall('GET', `/member/${encodeURIComponent(teamId)}`),
+    check: (teamId, code) => this.joinCall('POST', `/member/${encodeURIComponent(teamId)}/check`, { code }),
+    anchor: (teamId) => this.joinCall('POST', `/member/${encodeURIComponent(teamId)}/anchor`, {}),
+  };
+
+  /** The admin's column of the join. */
+  readonly adminJoin: AdminJoinApi = {
+    view: (teamId) => this.joinCall('GET', `/admin/${encodeURIComponent(teamId)}`),
+    check: (teamId, userId, code) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/check`, { code }),
+    add: (teamId, userId) => this.joinCall('POST', `/admin/${encodeURIComponent(teamId)}/${encodeURIComponent(userId)}/add`, {}),
+  };
+
+  private async changesCall<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<JoinResult<T>> {
+    let res: Response;
+    try {
+      res = await this.fetch(`/api/team-changes${path}`, { method, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    } catch { return { ok: false, code: 'as_unreachable' }; }
+    const data = await res.json().catch(() => null) as ({ ok?: boolean; code?: string; triesLeft?: number } & Record<string, unknown>) | null;
+    if (data && data.ok === true) return data as unknown as JoinResult<T>;
+    return { ok: false, code: typeof data?.code === 'string' ? data.code : 'other', ...(typeof data?.triesLeft === 'number' ? { triesLeft: data.triesLeft } : {}) };
+  }
+
+  /** Changes of the team's member list after the join (DEC-73 step 5): remove, new identity, re-sign, hand-over. */
+  readonly teamChanges: TeamChangesApi = {
+    view: async (teamId) => {
+      const r = await this.changesCall<Record<string, unknown>>('GET', `/${encodeURIComponent(teamId)}`);
+      if (!r.ok) return r;
+      const { ok: _ok, ...rest } = r as Record<string, unknown>;
+      return { ok: true, changes: rest as unknown as TeamChangesView };
+    },
+    remove: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/remove`, { did }),
+    replaceCheck: (teamId, userId, oldDid, code) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}/check`, { oldDid, code }),
+    replace: (teamId, userId, oldDid) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/replace/${encodeURIComponent(userId)}`, { oldDid }),
+    resign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/resign`, {}),
+    handoverOffer: (teamId, did) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover`, { did }),
+    handoverBuild: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/build`, {}),
+    handoverSign: (teamId) => this.changesCall('POST', `/${encodeURIComponent(teamId)}/handover/sign`, {}),
+    handoverWithdraw: (teamId) => this.changesCall('DELETE', `/${encodeURIComponent(teamId)}/handover`),
+  };
+
+  /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
+  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null }> | null> {
+    try {
+      const res = await this.fetch('/api/mandate/held-back');
+      if (!res.ok) return null;
+      const body = await res.json() as { held?: unknown };
+      return Array.isArray(body.held) ? body.held as never : null;
+    } catch { return null; }
+  }
+
+  /** The prepared change for a mandate: the gateway's diff and the team's terms before (signed) and after (settings now). Signs nothing. */
+  async previewMandateChange(authorizationId: string, changes: Record<string, unknown>): Promise<
+    | { ok: true; profileName: string; diff: import('@hap/core/mandate-change').MandateDiff; before: import('@suveren/approval-card/mandate-screens').TeamTerms | null; after: import('@suveren/approval-card/mandate-screens').TeamTerms | null }
+    | { ok: false; code: 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'other' }
+  > {
+    try {
+      const res = await this.fetch(`/api/mandate/change-preview?authorizationId=${encodeURIComponent(authorizationId)}&changes=${encodeURIComponent(JSON.stringify(changes))}`);
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true as const, ...(body as { profileName: string; diff: never; before: null; after: null }) };
+      const code = body.code as string | undefined;
+      return { ok: false, code: code === 'no_change' || code === 'not_your_mandate' || code === 'mandate_not_active' ? code : 'other' };
+    } catch { return { ok: false, code: 'other' }; }
+  }
+
+  /** Sign the change with this computer's check (Touch ID). `sealedDiff` is the diff that was shown: a different change is refused. */
+  async changeMandate(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown, fromProposal?: string): Promise<{ ok: true } | { ok: false; code: 'changed_since_proposal' | 'no_change' | 'not_your_mandate' | 'mandate_not_active' | 'cancelled' | 'no_check_key' | 'other' }> {
+    let res: Response;
+    try { res = await this.fetch('/api/mandate/change', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff, ...(fromProposal ? { fromProposal } : {}) }) }); } catch { return { ok: false, code: 'other' }; }
+    if (res.ok) return { ok: true };
+    const body = await res.json().catch(() => ({})) as { code?: string; grantCode?: string };
+    if (body.grantCode === 'check_failed') return { ok: false, code: 'cancelled' };
+    if (body.grantCode === 'no_check_key') return { ok: false, code: 'no_check_key' };
+    const c = body.code;
+    return { ok: false, code: c === 'changed_since_proposal' || c === 'no_change' || c === 'not_your_mandate' || c === 'mandate_not_active' ? c : 'other' };
+  }
+
+  /** The same change sent to the phone (DEC-90): this computer has no Touch ID. Then wait with `pollGiveOnPhone`. A refusal throws. */
+  async changeOnPhone(authorizationId: string, changes: Record<string, unknown>, sealedDiff: unknown, fromProposal?: string): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+    const res = await this.fetch('/api/mandate/change-on-phone', { method: 'POST', body: JSON.stringify({ authorizationId, changes, sealedDiff, ...(fromProposal ? { fromProposal } : {}) }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
+    }
+    return body as { mandateId: string; mandateVersion: number; expiresAt: number };
   }
 
   async getAttestations(authorizationId: string): Promise<AttestationsResult> {
@@ -1072,6 +1431,14 @@ class SPClient {
 
   // ─── Archived mandates (local display flag; deletes nothing) ───
 
+  /** Ids of mandates the person replaced whose revoke on the AS is still open (no longer used here). */
+  async getReplacedMandates(): Promise<string[]> {
+    const res = await this.fetch('/api/replaced-mandates');
+    if (!res.ok) throw new Error(`Failed to load replaced mandates: ${res.status}`);
+    const body = (await res.json()) as { entries?: Array<{ authorizationId?: unknown }> };
+    return (body.entries ?? []).map((e) => e.authorizationId).filter((id): id is string => typeof id === 'string');
+  }
+
   async getArchivedMandates(): Promise<string[]> {
     const res = await this.fetch('/api/archived-mandates');
     if (!res.ok) throw new Error(`Failed to load archived mandates: ${res.status}`);
@@ -1157,10 +1524,10 @@ class SPClient {
   }
 
   async setCredential(name: string, fields: Record<string, string>): Promise<void> {
-    const res = await this.fetch(`/vault/credentials/${encodeURIComponent(name)}`, {
+    const res = await this.sendConfirmed(`/vault/credentials/${encodeURIComponent(name)}`, {
       method: 'PUT',
       body: JSON.stringify(fields),
-    });
+    }, { route: 'credentials', op: 'put-merge', fields });
     if (!res.ok) throw new Error(`Failed to save credential: ${res.status}`);
   }
 
@@ -1499,7 +1866,7 @@ class SPClient {
     },
   ): Promise<{ status: string; receipt?: unknown }> {
     const { noteEncrypted, contentHash, shownHash, note, ...rest } = opts ?? {};
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/resolve`, {
+    const res = await this.fetch(this.decisionPath(id, 'resolve'), {
       method: 'POST',
       body: JSON.stringify({
         action,
@@ -1516,7 +1883,7 @@ class SPClient {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `Failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `Failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1574,13 +1941,13 @@ class SPClient {
     // PE1 — the fingerprint of the toolArgs THIS device decrypted and showed.
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/approve`, {
+    const res = await this.fetch(this.decisionPath(id, 'approve'), {
       method: 'POST',
       body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `approveProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `approveProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1618,13 +1985,13 @@ class SPClient {
     }
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/reject`, {
+    const res = await this.fetch(this.decisionPath(id, 'reject'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `rejectProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `rejectProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -1669,13 +2036,13 @@ class SPClient {
     };
     if (contentHash) { body.content_hash = contentHash; body.proposalContentHash = contentHash; } // v0.8 wire name beside the legacy one
     if (shownHash) body.shown_hash = shownHash;
-    const res = await this.fetch(`/api/proposals/${encodeURIComponent(id)}/withdraw`, {
+    const res = await this.fetch(this.decisionPath(id, 'withdraw'), {
       method: 'POST',
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed' }));
-      throw new Error(asErrorMessage(err, `withdrawProposal failed: ${res.status}`));
+      throw new Error(this.decisionError(err, `withdrawProposal failed: ${res.status}`));
     }
     return res.json();
   }
@@ -2090,6 +2457,16 @@ class SPClient {
     return data.authorizations ?? [];
   }
 
+  /** A dry run of the give on a chain gateway: what would be granted and what would be refused before the touch. Writes and touches nothing. */
+  async prepareMandate(request: Record<string, unknown>): Promise<{ ok: true; prepared: PreparedMandate } | { ok: false; message: string; code?: string }> {
+    try {
+      const res = await this.fetch('/api/mandate/prepare', { method: 'POST', body: JSON.stringify(request) });
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+      if (res.ok) return { ok: true, prepared: body as unknown as PreparedMandate };
+      return { ok: false, message: asErrorMessage(body, `Preparing failed: ${res.status}`), code: (body.grantCode ?? body.code) as string | undefined };
+    } catch { return { ok: false, message: 'The gateway could not be reached.', code: 'offline' }; }
+  }
+
   /** Sign a mandate through the control plane: the same steps as the AI path. */
   async signMandate(request: {
     team: string;
@@ -2103,11 +2480,49 @@ class SPClient {
     title: string;
     discloseIdentity: boolean;
     replaces?: string;
+    /** A chain gateway: the hash of the plan `prepareMandate` returned for this request. */
+    planHash?: string;
+    /** The AI proposal this give carries out: its give waiting on the phone is dropped (given here instead). */
+    fromProposal?: string;
   }): Promise<{ authorizationId: string; revokeError?: string }> {
     const res = await this.fetch('/api/mandate/sign', { method: 'POST', body: JSON.stringify(request) });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(asErrorMessage(body, `Signing failed: ${res.status}`));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; approvers?: unknown; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Signing failed: ${res.status}`), b.grantCode ?? b.code, res.status, Array.isArray(b.approvers) ? b.approvers as MandateSignError['approvers'] : undefined, b.reason, approverIdsOf(body));
+    }
     return body as { authorizationId: string; revokeError?: string };
+  }
+
+  /**
+   * Give on the phone (DEC-90): the same prepared plan as `signMandate` (echo `planHash`), sealed to the person's devices; nothing is granted
+   * here. A refusal throws {@link MandateSignError} like a give.
+   */
+  async giveOnPhone(request: Record<string, unknown> & { planHash: string; fromProposal?: string }): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+    const res = await this.fetch('/api/mandate/give-on-phone', { method: 'POST', body: JSON.stringify(request) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Sending to your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
+    }
+    return body as { mandateId: string; mandateVersion: number; expiresAt: number };
+  }
+
+  /** Has the phone given it? `waiting`, `unknown` (nothing waits under this id), or `done` once the mandate is issued. A refusal throws. */
+  async pollGiveOnPhone(mandateId: string): Promise<{ state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+    const res = await this.fetch(`/api/mandate/give-on-phone/${encodeURIComponent(mandateId)}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const b = body as { code?: string; grantCode?: string; reason?: string };
+      throw new MandateSignError(asErrorMessage(body, `Checking your phone failed: ${res.status}`), b.grantCode ?? b.code, res.status, undefined, b.reason, approverIdsOf(body));
+    }
+    return body as { state: 'waiting' } | { state: 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string };
+  }
+
+
+  /** Stop waiting for the phone on this page. The prepared request runs out at the Authority Server by itself. */
+  async cancelGiveOnPhone(mandateId: string): Promise<void> {
+    await this.fetch(`/api/mandate/give-on-phone/${encodeURIComponent(mandateId)}`, { method: 'DELETE' }).catch(() => {});
   }
 
   /** Extend a mandate: only its expiry moves. */
@@ -2207,3 +2622,18 @@ class SPClient {
 }
 
 export const spClient = new SPClient();
+
+/**
+ * The signed-in person from their personal workspace's detail. The Authority Server answers `{ group, members, isAdmin }` with each
+ * member's `userId` (not `id`): reading `id` alone found nobody, so a gateway with device keys could never finish an unlock in the
+ * browser ("This did not work"). The owner of the personal workspace is the person; a single member is taken when no owner is named.
+ */
+export function sessionUserFromGroup(detail: unknown): SPUser | null {
+  const d = (detail ?? {}) as { group?: { ownerUserId?: unknown }; ownerUserId?: unknown; members?: Array<Record<string, unknown>> };
+  const members = Array.isArray(d.members) ? d.members : [];
+  const idOf = (m: Record<string, unknown>): string => (typeof m.userId === 'string' && m.userId) || (typeof m.id === 'string' && m.id) || '';
+  const owner = typeof d.group?.ownerUserId === 'string' ? d.group.ownerUserId : typeof d.ownerUserId === 'string' ? d.ownerUserId : null;
+  const me = owner ? members.find((m) => idOf(m) === owner) : members.length === 1 ? members[0] : undefined;
+  if (!me || !idOf(me)) return null;
+  return { id: idOf(me), name: typeof me.name === 'string' ? me.name : '', email: typeof me.email === 'string' ? me.email : '', did: '' };
+}

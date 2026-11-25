@@ -82,6 +82,8 @@ export interface ApprovalHost {
   useSession(): ApprovalHostSession;
   /** Calls `handler` each time the host's event stream delivers `type`. A host without a stream does nothing. */
   useServerEvent(type: string, handler: (payload: unknown) => void): void;
+  /** True when the mandate is given with a device touch (chain account): the card says "Give this mandate" and "Approve". Absent = today's words. */
+  useGiveWording?(): boolean;
   /** The gateway-wide simulation flag; null until known. */
   useSimulationMode(): boolean | null;
   /**
@@ -90,8 +92,30 @@ export interface ApprovalHost {
    * such screen — then those two links are not shown.
    */
   useOpenMandateScreen(): ((handoff: MandateScreenHandoff) => void) | null;
+  /**
+   * A device-key gateway: the ONE give driver (the give page uses the same) for an AI-proposed mandate, run IN PLACE on the card from
+   * exactly the arguments the card opened and shows — prepare, Touch ID or the phone, the progress lines, the result stamp. Null when
+   * the host does not give mandates this way (no chain, no args yet, the phone app).
+   */
+  useMandateGive?(proposal: { id: string; tool: string }, args: Record<string, unknown> | null, o: { onClose: () => void; onGiven: () => void }): MandateGive | null;
   /** A link to a page of the host (`to` is a host path). */
   Link: ComponentType<{ to: string; className?: string; children?: ReactNode }>;
+}
+
+/** A give the card runs in place (see `useMandateGive`). */
+export interface MandateGive {
+  /** Starts it (Touch ID here, or the phone where this computer cannot give it). */
+  start: () => void;
+  /** Started and not back at the offer: the card shows `footer` instead of its buttons. */
+  active: boolean;
+  /** It did not go through (refused, stopped, a touch that failed): the reason, shown at the top of the card with the mandate readable
+   *  below it and one full-width pinned button (DEC-88). Null while it runs or once it is given. */
+  problem: string | null;
+  /** The give's own footer: the touch wait, each step the gateway reports, the result stamp, or a refusal.
+   *  `onGiven` (from the card) runs the moment the mandate is live, BEFORE the proposal is closed, so the card stays on screen with the stamp. */
+  footer: ReactNode;
+  /** How this computer gives it: with Touch ID here, or on the phone (no check key). Null until the gateway has checked the plan. */
+  via?: 'touch' | 'phone' | null;
 }
 
 let configured: ApprovalHost | null = null;

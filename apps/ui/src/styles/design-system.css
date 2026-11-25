@@ -47,6 +47,11 @@
    BASE
    ══════════════════════════════════════════════ */
 html { scroll-behavior: smooth; }
+/* The app frame keeps its content below the fixed top bar with a margin (.main-content); without this that margin
+   collapses through #root into <body>, so the body itself moves down whenever a page with that frame replaces one
+   without it (the unlock screen → the greyed-out dashboard → the dashboard: CLS 0.087, DEC-100). Nothing visible
+   changes: the content stays where it was, inside #root. */
+#root { display: flow-root; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
@@ -152,6 +157,14 @@ code {
   background: var(--accent-subtle);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* On a narrow screen the version gives way (shortened with …, its full text in the tooltip): the menu button at the
+   right must always stay on screen. */
+@media (max-width: 768px) {
+  .logo-group { flex-shrink: 1; min-width: 0; }
+  .logo, .version-badge { flex-shrink: 0; }
+  .gw-version { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .mobile-menu-btn { flex-shrink: 0; }
 }
 .gw-version[data-stale='true'] {
   color: var(--text-primary);
@@ -451,6 +464,12 @@ code {
    Not capped: dialogs and floating pieces, and the two-pane writing layouts. */
 :where(.dash-page, .ob-page, .su-page, .av3-page) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols)) { max-width: var(--box-max); }
 .page-inner > :where(.card, .step-indicator, .context-strip) { max-width: var(--box-max); }
+/* DEC-98: the page gate's wrappers (LoadGate, Gated, SkelArea) are display: contents; the caps above look through them,
+   so a gated page keeps its 760px column, greyed out and loaded alike. */
+:where(.dash-page, .ob-page, .su-page, .av3-page) > :where(.load-gate, .skel-area) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols, [data-gated], .skel-area)),
+:where(.dash-page, .ob-page, .su-page, .av3-page) > :where(.load-gate) > :where([data-gated], .skel-area) > :where(:not(.page-header, .modal-backdrop, .floating-help, .bottom-sheet, .bottom-sheet-backdrop, .update-overlay, .page-wide, .dash-cols)) { max-width: var(--box-max); }
+.page-inner > :where(.load-gate) > :where(.card),
+.page-inner > :where(.load-gate) > :where([data-gated]) > :where(.card, .step-indicator, .context-strip) { max-width: var(--box-max); }
 
 .page-title {
   font-size: 1.5rem;
@@ -1996,7 +2015,6 @@ code {
   border-radius: 0.375rem;
   font-family: var(--font-mono);
   color: var(--text-primary);
-  user-select: all;
 }
 
 .update-banner-hint {
@@ -2845,6 +2863,26 @@ body.is-updating .simulation-banner {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; background-image: none; }
 }
+
+/* DEC-98 (approved mockup temp/loading-mockup/skeletons.html): the page skeletons of the LoadGate primitives
+   (packages/approval-card/src/components/LoadGate.tsx). A visible grey in both themes, derived from the page's own
+   tokens so day and dark follow by themselves; the shimmer is the .skeleton band above; still under reduced motion.
+   Sizes match the real elements, so nothing moves when the content replaces them. */
+.skeleton.skel-line, .skeleton.skel-block, .skeleton.skel-button, .skeleton.skel-title {
+  background-color: color-mix(in srgb, var(--text-primary) 9%, var(--bg-elevated));
+  border-radius: 0.375rem;
+}
+.skel-line { display: block; }
+.skel-block { display: block; }
+.skel-button { display: inline-block; height: 2.5rem; border-radius: var(--radius-md, 0.5rem) !important; }
+.skel-button-lg { height: 3rem; }
+.skel-title { display: block; }
+.skel-title-1 { height: 1.75rem; margin-bottom: 1rem; }
+.skel-title-2 { height: 1.35rem; margin-bottom: 0.75rem; }
+.skel-title-3 { height: 1.1rem; margin-bottom: 0.5rem; }
+.skel-card { display: block; }
+.skel-area { display: contents; }
+.load-gate { display: contents; }
 
 /* ══════════════════════════════════════════════
    INTENT GATE — two-pane layout (chat | document)
@@ -4405,6 +4443,9 @@ video.document-preview-media { width: 100%; }
 .av3-error { margin: 0 0 var(--space-2); font-size: var(--text-body-sm); }
 .av3-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
 .av3-btns-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* A give button with its long name: alone on the first row; one button left over also takes a whole row. */
+.av3-btns-give { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.av3-btns-give > :first-child, .av3-btns-give > :last-child:nth-child(2) { grid-column: 1 / -1; }
 .av3-btn {
   height: 44px; padding: 0 var(--space-2); border: 0; border-radius: var(--radius-md);
   background: var(--neutral-subtle); color: var(--text-primary); font: inherit; font-size: var(--text-body-sm); font-weight: 500;
@@ -4440,13 +4481,20 @@ video.document-preview-media { width: 100%; }
   gap: var(--space-1); padding: var(--space-6); text-align: center; animation: av3-fade 0.2s ease;
 }
 @keyframes av3-fade { from { opacity: 0; } }
+/* The given result (GiveTouchFooter): over the whole card, the stamp centred in the space above the pinned Close. */
+.av3-given { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; background: var(--bg-elevated); }
+.av3-given > .av3-stamp { position: static; inset: auto; flex: 1; min-height: 0; }
+.av3-given > .av3-foot { flex: none; }
+/* The give page shows the result alone in its card: give that card a height to centre in. */
+/* (.av3-card.av3-given-alone outranks .card.av3-card's min-height: 0, which collapsed the result card to nothing.) */
+.av3-card.av3-given-alone, .av3-given-alone { position: relative; min-height: 360px; }
 .av3-stamp-wait { flex-direction: row; gap: var(--space-2); font-size: var(--text-body); color: var(--text-muted); font-weight: 500; }
 .av3-spin { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--text-primary); border-radius: var(--radius-circle); animation: av3-spin 0.7s linear infinite; }
 @keyframes av3-spin { to { transform: rotate(360deg); } }
 .av3-check { width: 56px; height: 56px; stroke: var(--text-primary); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: av3-draw 0.35s ease forwards; }
 @keyframes av3-draw { to { stroke-dashoffset: 0; } }
 .av3-stamp-w { font-size: var(--text-h2); font-weight: 700; letter-spacing: -0.015em; }
-.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); font-family: var(--font-mono); }
+.av3-stamp-t { font-size: var(--text-body-sm); color: var(--text-muted); }
 @media (prefers-reduced-motion: reduce) {
   .av3-stage, .av3-stage.av3-in, .av3-stage.av3-out { transition: none; animation: none; transform: none; }
   .av3-check { animation: none; stroke-dashoffset: 0; }
@@ -5156,3 +5204,87 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .mc-details ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
 .mc-edit { margin-top: var(--space-4); }
 @media (max-width: 520px) { .mc-tag { justify-self: start; } .mc-row { grid-template-columns: 1fr auto; } .mc-row .mc-val { grid-column: 1 / -1; white-space: normal; } }
+
+/* ─── Device-key screens (unlock password, Connect, recovery code, confirm) ───────────────────────── */
+.device-screen { width: 100%; max-width: 28rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
+/* Gateway page only (the phone app has no fixed top bar): start the device column below the fixed .top-nav. */
+.device-page { padding-top: calc(var(--nav-height) + var(--update-banner-h, 0px) + var(--sim-banner-h, 0px)); }
+.device-screen h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin-bottom: 1rem; }
+.device-screen p { color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem; }
+.device-screen .btn + .btn { margin-top: 0.75rem; }
+.recovery-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 1.125rem; letter-spacing: 0.04em; line-height: 1.6; text-align: center;
+  padding: 1rem; margin: 1rem 0; border: 2px solid var(--border-strong); border-radius: 6px;
+  /* DEC-88: the code wraps only between its groups (after a hyphen), never inside one. */
+  word-break: normal; overflow-wrap: normal; hyphens: manual;
+}
+.device-check { display: flex; gap: 0.625rem; align-items: flex-start; margin: 1rem 0 1.5rem; line-height: 1.5; }
+.device-check input { margin-top: 0.25rem; }
+.identity-reset-banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+@media print {
+  body.print-recovery-code * { visibility: hidden; }
+  body.print-recovery-code .recovery-code-print, body.print-recovery-code .recovery-code-print * { visibility: visible; }
+  body.print-recovery-code .recovery-code-print { position: absolute; left: 0; top: 0; width: 100%; }
+}
+
+/* ─── Small shared utilities (spacing and quiet text), used by the phone app's screens ─── */
+.mt-6 { margin-top: var(--space-6); }
+.mb-6 { margin-bottom: var(--space-6); }
+.text-sm { font-size: var(--text-body-sm); }
+.text-muted, .device-screen .text-muted { color: var(--text-muted); }
+
+/* A QR code (the shared QrCode component: the pairing QR on the gateway page, the recovery code's QR on the phone). SVG rects, no image,
+   no inline style. A QR is dark on light whatever the theme: `color-scheme: light` makes the system colours Canvas and CanvasText light and dark. */
+.device-qr { display: block; width: 100%; max-width: 16rem; height: auto; margin: var(--space-4) auto; color-scheme: light; background: Canvas; }
+.device-qr rect { fill: CanvasText; }
+
+/* Three comparison codes to tap on one row (the shared CodeChoices component: the phone admits a computer, the gateway page admits a phone). */
+.device-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); margin: var(--space-4) 0; }
+.device-choices .btn { font-family: var(--font-mono); font-size: var(--text-lead); padding: var(--space-4) var(--space-2); }
+/* `.device-screen .btn + .btn` (above) puts a gap between stacked buttons; in a row of three it would push buttons two and three down. */
+.device-screen .device-choices .btn + .btn { margin-top: 0; }
+
+/* ── UI review (DEC-88, mockup phone-d3-live.html v6): one look on the gateway page and the phone ── */
+/* Mandate cards: a one-line summary of the numbers under the title. */
+.sum-line { font-size: var(--text-body-sm); color: var(--text-secondary); font-weight: 600; margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* "More below": a fade at the bottom of a scrolling card while there is more; gone at the end. */
+.more-cue {
+  position: sticky; bottom: 0; margin: calc(-1 * var(--space-10)) 0 0; padding: var(--space-10) 0 var(--space-2);
+  text-align: center; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary);
+  background: linear-gradient(to bottom, transparent, var(--bg-elevated) 60%); pointer-events: none;
+}
+/* A warning that carries a destructive step (End a mandate, Remove a device). */
+.warn-box { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--text-primary); border-radius: var(--radius-lg); padding: var(--space-4); margin: 0 0 var(--space-4); }
+.warn-box svg { width: 24px; height: 24px; flex: none; stroke: var(--text-primary); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.warn-box p { margin: 0 0 var(--space-1); }
+.warn-box p:last-child { margin-bottom: 0; }
+/* The safe option above the destructive one, both full width. */
+.btns-stack { display: grid; grid-template-columns: 1fr; gap: var(--space-2); }
+.btns-stack .btn { width: 100%; min-height: 44px; }
+/* Device rows: name and tag on line one, kind and date on line two; a warning on the row it is about. */
+.su-m.su-dev { flex-wrap: wrap; }
+.su-m.su-dev .su-who b { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.su-m.su-dev .su-who b .su-role { margin: 0; }
+/* The name keeps the row's bold line (the detail rule above styles every span in .su-who). */
+.su-m .su-who b > .su-name { font-size: inherit; color: inherit; }
+.su-m.su-dev .su-rm { min-height: 44px; min-width: 72px; }
+.su-warn { flex-basis: 100%; margin: 0 0 0 calc(32px + var(--space-3)); font-size: var(--text-caption); font-weight: 600; color: var(--text-primary); border-left: 3px solid var(--text-primary); padding-left: var(--space-2); }
+.su-top { background: var(--bg-sunken); border-radius: var(--radius-lg); padding: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
+/* Panel head: Previous and Next carry the same weight (only the decision button is primary); disabled is clearly fainter. */
+.apr-nav .av3-btn.apr-o { background: transparent; color: var(--text-primary); box-shadow: inset 0 0 0 1.5px var(--text-primary); }
+.apr-nav .av3-btn.apr-o:disabled { box-shadow: inset 0 0 0 1px var(--border); color: var(--text-muted); opacity: 0.45; }
+@media (max-width: 430px) { .apr-title .t-rest { display: none; } }
+/* The result: what opens next, while it waits to open. */
+.stamp-next { font-size: var(--text-body-sm); color: var(--text-secondary); margin-top: var(--space-3); }
+/* A result that stays (refused, not known): on top of the card, the card below, one full-width button pinned at the bottom. */
+.res-top { margin-bottom: var(--space-4); }
+.res-top .refusal-result { margin: 0; }
+.res-check { font-size: var(--text-caption); color: var(--text-muted); margin: 0 0 var(--space-2); text-align: center; }
+.av3-btns-stack { display: grid; grid-template-columns: 1fr; gap: var(--space-2); }
+.av3-btns-stack .av3-btn { width: 100%; }
+/* The change card inside the panel: no inner "Waiting for you" bar (the panel already says it). */
+.mc-card.mc-flat { border: 0; background: transparent; }
+.mc-card.mc-flat .mc-in { padding: 0; }
+.av3-spin-inline { display: inline-block; vertical-align: middle; margin-right: var(--space-2); }
+

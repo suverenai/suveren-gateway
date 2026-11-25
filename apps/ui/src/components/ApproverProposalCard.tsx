@@ -36,9 +36,10 @@ interface Props {
   onOutcome?: (outcome: ApprovalOutcome) => void;
   dismissLabel?: string;
   onDismissResult?: () => void;
+  nextProposal?: Proposal | null;
 }
 
-export function ApproverProposalCard({ proposal, currentUserId, onDecided, proposalLinks, toolDisplay, manifests, mandateTitle, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult }: Props) {
+export function ApproverProposalCard({ proposal, currentUserId, onDecided, proposalLinks, toolDisplay, manifests, mandateTitle, nextLabelText, onBusyChange, onOutcome, dismissLabel, onDismissResult, nextProposal }: Props) {
   // TR5: the proposer must never be shown as (or able to act as) one of their
   // own action's approvers — filtered defensively even if a stale cache lists them.
   const pendingApprovers = visibleApprovers(proposal);
@@ -111,6 +112,7 @@ export function ApproverProposalCard({ proposal, currentUserId, onDecided, propo
       onOutcome={onOutcome}
       dismissLabel={dismissLabel}
       onDismissResult={onDismissResult}
+      nextProposal={nextProposal}
       topExtras={extras}
       canApprove={!isProposer}
       alreadyDecided={alreadyApproved}

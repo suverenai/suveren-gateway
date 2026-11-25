@@ -84,6 +84,34 @@ describe('rejected — domain-owner path', () => {
   });
 });
 
+describe('replaced — an AI-proposed mandate or change the person GAVE (on the card or the phone)', () => {
+  const asked: string[] = [];
+  const withGateway = async (answer: unknown, proposal: SPProposal) => {
+    const prevSecret = process.env.SUVEREN_INTERNAL_SECRET;
+    process.env.SUVEREN_INTERNAL_SECRET = 'sekret';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => { asked.push(String(url)); return new Response(JSON.stringify(answer), { status: 200 }); }));
+    try { return await textOf(proposal); } finally { vi.unstubAllGlobals(); if (prevSecret === undefined) delete process.env.SUVEREN_INTERNAL_SECRET; else process.env.SUVEREN_INTERNAL_SECRET = prevSecret; }
+  };
+  const change = { ...BASE, tool: 'setup__change_mandate', rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'replaced' } } as SPProposal;
+
+  it('given: the AI hears that ITS change is in force, with the new mandate id (dev lane 2026-11-23 said "their own version")', async () => {
+    const text = await withGateway({ given: { authorizationId: 'authz_new', op: 'change' } }, change);
+    expect(text).toBe('Proposal p1 was GIVEN: the person gave the change you proposed with their touch, exactly as proposed. It is in force now as authz_new. Check list-authorizations before you use it.');
+    expect(asked.at(-1)).toContain('/internal/mandate/given/p1');
+    expect(text).not.toContain('own version');
+  });
+
+  it('given on the phone, not yet in force: it comes in a moment', async () => {
+    const text = await withGateway({ waiting: true }, { ...change, tool: 'setup__create_mandate' } as SPProposal);
+    expect(text).toContain("was GIVEN on the person's phone: the mandate you proposed comes into force in a moment");
+  });
+
+  it('the gateway knows nothing of a give (Edit before signing, or a restart): the replaced line as before', async () => {
+    const text = await withGateway({}, change);
+    expect(text).toContain('REPLACED: the person signed their own version of this mandate');
+  });
+});
+
 describe('rejected — above-cap approver path', () => {
   it('a legacy reason (no outcome, no note) still shows as REJECTED with the reason quoted', async () => {
     const text = await textOf({

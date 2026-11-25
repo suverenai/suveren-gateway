@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelButton, SkelArea } from '@suveren/approval-card/components/LoadGate';
+import { autoTitleUnlessTyped } from '../lib/auto-title';
 import { COMMITMENT_LABEL, COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,14 +15,23 @@ import { formatScopeFieldValue } from '../lib/scope-labels';
 import { useSourceManifests } from '@suveren/approval-card/lib/source-manifests';
 import { useSimulationMode } from '../hooks/useSimulationMode';
 import { hiddenLimitKeys, type ManifestGatingLike } from '@suveren/approval-card/lib/simulation-only-limits';
-import { mandateRight } from '../lib/mandate-rights';
+import { sharedLimitLabel, limitWordsForProfile, type LimitWords } from '@suveren/approval-card/lib/limit-words';
+import { humanizeFieldName } from '../components/BoundsEditor';
+import { isTeamAdmin, mandateRight } from '../lib/mandate-rights';
 import { replacedRevokeProblem } from '../lib/mandate-replace';
 import { replacedOutcomeArgs, replacedWithdrawRoute } from '@suveren/approval-card/lib/reject-outcome';
 import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
 import { unmetForMandate, atLeastOneSignHint } from '@hap/core/scope-rules';
 import { MandateChangeDiff } from '@suveren/approval-card/components/MandateChangeCard';
 import type { AgentProfile, AgentBoundsParams, AgentScopeParams } from '@hap/core';
-import { effectiveGrantors, type ProfileConfig } from '../lib/sp-client';
+import { effectiveGrantors, MandateSignError, type ProfileConfig } from '../lib/sp-client';
+import { useDeviceChain } from '../lib/use-device-chain';
+import {
+  S13, GiveApprovers, giveBlocked, approverLines, limitRows, limitValueText, scopeLabel, durationText, endDateText, giveErrorText,
+  GivePhoneFooter, giveSummaryLine, GiveTouchFooter,
+} from '@suveren/approval-card/mandate-screens';
+import { useGive, closeReplacedProposal } from '../lib/use-give';
+import { useSpUrl, teamSettingsHref, ENABLE_IN_TEAM_SETTINGS } from '../lib/use-sp-url';
 
 /** An existing active grant under the same profile, with its local scope. */
 interface ExistingGrant {
@@ -61,10 +72,18 @@ interface AuthData {
 
 export function AgentReviewPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, activeMembership, activeTeam } = useAuth();
+  const spUrl = useSpUrl();
+  // Chain accounts only (device keys on, a set-up device): the review step gives the mandate with Touch ID (DEC-80). Everyone else sees today's page.
+  const chain = useDeviceChain();
+  const [adminName, setAdminName] = useState('');
+  const [approverIds, setApproverIds] = useState<string[]>([]);
+  // What the gateway checked (POST /api/mandate/prepare): the plan, the approvers with their confirmation, and any refusal before the touch.
+  const [given, setGiven] = useState<{ authorizationId: string; text: string } | null>(null);
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [gateData, setGateData] = useState<GateData | null>(null);
   const [profile, setProfile] = useState<AgentProfile | null>(null);
+  const [profileFailed, setProfileFailed] = useState(false);
   const sourceManifests = useSourceManifests();
   const simulation = useSimulationMode();
   // Review is the DEFAULT commitment mode: the agent proposes, the human
@@ -180,10 +199,12 @@ export function AgentReviewPage() {
           const title = contextParts.length > 0
             ? `${shortName}: ${contextParts.join(' · ')}`
             : shortName;
-          setAuthTitle(title);
+          // The profile can arrive after the person typed: never overwrite what they typed (this closure saw the first, empty title).
+          setAuthTitle(prev => autoTitleUnlessTyped(prev, title));
         }
       })
-      .catch(() => {});
+      // The review card shows without the profile (as before), never an endless skeleton (DEC-98).
+      .catch(() => setProfileFailed(true));
 
     // Resolve profile-config + approver display names for the Review surface.
     // Mirrors GateWizardPage so the creator sees the same people named both
@@ -216,6 +237,9 @@ export function AgentReviewPage() {
           }
           const names = (config.approvers ?? []).map(id => map.get(id) ?? id);
           setApproverNames(names);
+          setApproverIds(config.approvers ?? []);
+          const admin = ((groupData as { members?: Array<{ name?: string; email?: string; role?: string }> })?.members ?? []).find(m => m.role === 'admin');
+          if (admin) setAdminName(admin.name || admin.email || '');
         }
       }).finally(() => {
         setProfileConfigLoaded(true);
@@ -301,12 +325,35 @@ export function AgentReviewPage() {
     return () => { cancelled = true; };
   }, [gateData, profile, existingSameProfile]);
 
+  // The request the give would send, as one object: prepared here (chain gateways) and given from here, so they cannot differ.
+  const giveRequest = authData && gateData && authData.groupId && authTitle.trim() && ttlSeconds > 0 ? {
+    team: authData.isPersonal ? 'personal' : authData.groupId,
+    profile: authData.profileId,
+    limits: gateData.bounds as Record<string, string | number>,
+    scope: gateData.context as Record<string, string | number>,
+    contextLabels: gateData.contextLabels,
+    intent: gateData.gateContent.intent,
+    mode: toProtocolMode(commitMode),
+    ttlSeconds,
+    title: authTitle.trim(),
+    discloseIdentity,
+    replaces: sessionStorage.getItem('agentEditReplaces') || undefined,
+  } : null;
+  // The one give driver (lib/use-give.ts): the same as the approval card's "Give this mandate".
+  const fromProposal = sessionStorage.getItem('agentReplacesProposal') || undefined;
+  const driver = useGive(chain ? giveRequest : null, { chain, fromProposal, userId: user?.id ?? '' });
+  const { prepared, prepareError, touchView, phoneGive } = driver;
+  const setPrepareTick = (_: unknown) => driver.recheck();
+  const unconfirmedIds: Set<string> | null = prepared?.team ? new Set(prepared.team.approvers.filter(a => !a.isYou && !a.confirmed).map(a => a.userId)) : prepared ? new Set() : null;
+
   const handleCommit = async () => {
     if (!authData || !gateData || !profile || !user) return;
     if (!authData.groupId) {
       setError('No active group; cannot create mandate.');
       return;
     }
+    // A chain gateway gives with the shared driver (Touch ID, progress, result) — the same as the approval card.
+    if (chain) { setError(''); await driver.give(); return; }
     setSubmitting(true);
     setError('');
     try {
@@ -334,6 +381,8 @@ export function AgentReviewPage() {
         title: authTitle.trim(),
         discloseIdentity,
         replaces: replacesId,
+        // a chain gateway gives only what it prepared for this page
+        ...(chain && prepared ? { planHash: prepared.planHash } : {}),
       });
 
       // A failed revoke of the old mandate must be told, never swallowed
@@ -352,24 +401,7 @@ export function AgentReviewPage() {
       // domain (/resolve), an above-cap one by its approvers (/reject). Using
       // /reject for everything left review proposals PENDING (found live
       // 2026-10-12). A failure is shown, never swallowed.
-      let withdrawProblem = '';
-      if (replacesProposalId) {
-        try {
-          const proposal = await spClient.getProposal(replacesProposalId);
-          if (proposal.status === 'pending') {
-            const route = replacedWithdrawRoute(proposal, user?.id ?? '');
-            if (!route) {
-              withdrawProblem = 'you are not one of the people who may decide it';
-            } else if (route.route === 'approver') {
-              await spClient.rejectProposal(replacesProposalId, replacedOutcomeArgs());
-            } else {
-              await spClient.resolveProposal(replacesProposalId, 'reject', route.domain, replacedOutcomeArgs());
-            }
-          }
-        } catch (e) {
-          withdrawProblem = e instanceof Error ? e.message : 'unknown error';
-        }
-      }
+      const withdrawProblem = replacesProposalId ? await closeReplacedProposal(replacesProposalId, user?.id ?? '') : '';
 
       sessionStorage.removeItem('agentAuth');
       sessionStorage.removeItem('agentGate');
@@ -389,18 +421,56 @@ export function AgentReviewPage() {
       }
       navigate(`/mandates?highlight=${encodeURIComponent(authorizationId)}`);
     } catch (e) {
+      if (chain && e instanceof MandateSignError) {
+        if (e.code === 'approver_identity_unconfirmed' || e.code === 'changed_since_prepare' || e.code === 'prepare_required') setPrepareTick(0);   // look at the plan again
+        if (e.code !== 'approver_identity_unconfirmed') setError(giveErrorText({ code: e.code, reason: e.reason, approverNames: (e.approverIds ?? []).map(id => approverNames[approverIds.indexOf(id)] ?? '').filter(Boolean) }));
+        return;
+      }
       setError(e instanceof Error ? e.message : 'Signing the mandate failed');
     } finally {
       setSubmitting(false);
     }
   };
 
+  // "Give on your phone" (DEC-90) and the Touch ID give: the shared driver.
+  const phoneOffered = driver.phoneOffered;
+  const handleGiveOnPhone = driver.giveOnPhone;
+  const handleStopPhone = driver.stopPhone;
+  // Given (here or on the phone): the hand-over keys go, the result stays on screen.
+  useEffect(() => {
+    if (!driver.givenId || !authData) return;
+    for (const k of ['agentAuth', 'agentGate', 'agentEditReplaces', 'agentReplacesProposal', 'agentChangeAiIntent']) sessionStorage.removeItem(k);
+    if (driver.error) { setError(driver.error); return; }
+    setGiven({ authorizationId: driver.givenId, text: S13.giveDone(profileDisplayName(authData.profileId), endDateText(Date.now(), ttlSeconds)) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driver.givenId]);
+  useEffect(() => { if (driver.error) setError(driver.error); }, [driver.error]);
+  // The result replaces the long form: bring the page to its top, so the result card is seen whole below the header
+  // (the page kept the form's scroll position, and the card's top sat under the header).
+  useEffect(() => { if (given) window.scrollTo({ top: 0, behavior: 'auto' }); }, [given]);
+
   if (!authData || !gateData) {
-    return <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>;
+    return <GiveSkeleton />;
+  }
+  if (given) {
+    // The gateway's own result stamp (DEC-86/88), then back to the mandate list, where the new mandate is marked.
+    return (
+      <div className="card av3-card av3-given-alone" style={{ maxWidth: 560 }} data-testid="give-done">
+        <GiveTouchFooter view={{ s: 'given' }} onGive={() => {}} onBack={() => {}} onClose={() => navigate(`/mandates?highlight=${encodeURIComponent(given.authorizationId)}`)} />
+      </div>
+    );
   }
 
   // Outside simulation, a limit only test-data tools use is not listed; it is still signed.
   const hiddenLimits = hiddenLimitKeys(profile, sourceManifests as ManifestGatingLike[] | undefined, simulation);
+  // The review names each limit as the form does (the connector's limit words + the window,
+  // else the profile's displayName) — never by its field name (found 2026-11-23: "send_weekly_max 3").
+  const limitWords: LimitWords | undefined = profile ? limitWordsForProfile(sourceManifests as never, profile.id) : undefined;
+  const limitLabel = (k: string): string => {
+    const def = profile?.boundsSchema?.fields?.[k];
+    return sharedLimitLabel({ profile, key: k, team: !authData.isPersonal, words: limitWords })?.name
+      ?? (def ? humanizeFieldName(k, def as never) : k);
+  };
   const boundsEntries = Object.entries(gateData.bounds).filter(([k]) => k !== 'profile' && k !== 'path' && !hiddenLimits.has(k));
   const contextEntries = Object.entries(gateData.context);
 
@@ -429,8 +499,12 @@ export function AgentReviewPage() {
     userId: user?.id,
     profileName: profileDisplayName(authData.profileId),
     teamName: authData.groupName,
+    isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
   });
   const blockedByTeamGate = !right.can;
+  const giveCaps = Object.entries(profileConfig?.caps ?? {}).map(([k, v]) => ({ label: profile?.boundsSchema?.fields?.[k]?.displayName ?? k, value: limitValueText(profile?.boundsSchema?.fields?.[k], v) }));
+  const giveCapText = giveCaps.length === 0 ? null : giveCaps.length === 1 ? giveCaps[0].value : giveCaps.map(c => `${c.label} ${c.value}`).join(', ');
+  const approverBlocked = chain && giveBlocked(approverLines(approverIds.map(id => ({ userId: id, name: id })), unconfirmedIds), user?.id);
   // The profile may allow only some modes (e.g. review only); offer exactly
   // those — the AS refuses any other (commitment_mode_not_allowed).
   const offeredModes = offeredCommitModes(profile);
@@ -489,7 +563,10 @@ export function AgentReviewPage() {
   //     ('fail-safe-approval'), so review is NOT weakened by an automatic twin.
   // The earlier copy said "the more permissive limits effectively apply" for all
   // three — understating the cumulative case and overstating the mode case.
+  const giveSummary = giveSummaryLine({ limits: gateData.bounds as Record<string, string | number>, scope: gateData.context, durationSeconds: ttlSeconds, boundsSchema: profile?.boundsSchema as never, scopeSchema: profile?.scopeSchema as never, hidden: hiddenLimits });
   const overlapWarningText = `This grant's scope overlaps an existing grant on ${overlapProfileName} (scoped to: ${overlapScopes}). The agent may act under either. Per-action limits take the more permissive value, and daily limits add together — two grants of 10/day allow 20/day. Approval is not weakened: if either grant requires review, review still applies. Confirm this is intended before authorizing.`;
+
+  const giveDisabled = submitting || approverBlocked || (chain && (!prepared || !!prepared.blocked)) || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0;
 
   return (
     <>
@@ -497,11 +574,15 @@ export function AgentReviewPage() {
         if (s <= 3) navigate(`/mandates/new/intent?step=${s}`);
       }} />
 
+      {/* DEC-98: the whole review card appears once the profile and its team rules are in. */}
+      <LoadGate parts={['give']}>
+      <Gated part="give" ready={(!!profile || profileFailed) && profileConfigLoaded} skeleton={<GiveSkeleton bare />}>
       <div className="card">
         <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>Review &amp; Commit</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
           Review your mandate details before signing.
         </p>
+        {chain && giveSummary && <p className="sum-line" data-testid="mandate-summary">{giveSummary}</p>}
 
         {/* Copy/Edit moved this mandate to a newer profile version — the AS
             refuses to sign a new one under the old version it was pinned to
@@ -644,6 +725,11 @@ export function AgentReviewPage() {
               Maximum: {ttlMax >= 86400 ? `${Math.floor(ttlMax / 86400)} days` : `${Math.floor(ttlMax / 3600)} hours`}
             </span>
           )}
+          {chain && ttlSeconds > 0 && !ttlExceedsMax && (
+            <span data-testid="give-end" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              {S13.giveUntil(durationText(ttlSeconds), endDateText(Date.now(), ttlSeconds))}
+            </span>
+          )}
         </div>
         </div>
 
@@ -686,16 +772,22 @@ export function AgentReviewPage() {
               <button className="info-edit" onClick={() => navigate('/mandates/new/intent?step=2')}>edit in step 2</button>
             </div>
             <dl className="info-kv">
-              {contextEntries.map(([k, v]) => (
+              {chain && prepared && prepared.scope.map(r => (
+                <span key={`p-${r.field}`} style={{ display: 'contents' }}><dt>{r.label}</dt><dd>{limitValueText({ unit: r.unit }, r.value)}</dd></span>
+              ))}
+              {chain && prepared && prepared.bounds.map(r => (
+                <span key={`p-${r.field}`} style={{ display: 'contents' }}><dt>{r.label}</dt><dd>{limitValueText({ unit: r.unit }, r.value)}</dd></span>
+              ))}
+              {!(chain && prepared) && contextEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
-                  <dt>{k}</dt>
+                  <dt>{scopeLabel(k, profile?.scopeSchema)}</dt>
                   <dd>{formatScopeFieldValue(k, v, profile?.scopeSchema?.fields?.[k], sourceManifests, gateData.contextLabels)}</dd>
                 </span>
               ))}
-              {boundsEntries.map(([k, v]) => (
+              {!(chain && prepared) && boundsEntries.map(([k, v]) => (
                 <span key={k} style={{ display: 'contents' }}>
-                  <dt>{k}</dt>
-                  <dd>{String(v)}</dd>
+                  <dt>{limitLabel(k)}</dt>
+                  <dd>{limitValueText(profile?.boundsSchema?.fields?.[k], v as string | number)}</dd>
                 </span>
               ))}
             </dl>
@@ -736,7 +828,21 @@ export function AgentReviewPage() {
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.125rem' }}>
                       {right.reason} {right.fix}
                     </div>
+                    {right.adminCanEnable && teamSettingsHref(spUrl, authData.groupId) && (
+                      <a className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', textDecoration: 'none' }} href={teamSettingsHref(spUrl, authData.groupId)} target="_blank" rel="noopener noreferrer" data-testid="enable-in-team-settings">
+                        {ENABLE_IN_TEAM_SETTINGS}
+                      </a>
+                    )}
                   </>
+                ) : chain && approverIds.length > 0 ? (
+                  <GiveApprovers
+                    capText={giveCapText}
+                    count={profileConfig?.approvals ?? 1}
+                    approvers={approverLines(approverIds.map((id, i) => ({ userId: id, name: approverNames[i] ?? id })), unconfirmedIds)}
+                    adminName={adminName || S13.heldAdminUnknown}
+                    ownId={user?.id}
+                    mode={toProtocolMode(commitMode)}
+                  />
                 ) : (
                   <>
                     {approverNamesStr}
@@ -804,22 +910,80 @@ export function AgentReviewPage() {
           </p>
         )}
 
+        {chain && prepared?.blocked && prepared.blocked.code !== 'approver_identity_unconfirmed' && !phoneOffered && (
+          <p role="alert" data-testid="give-prepare-blocked" className="msg-error">{giveErrorText({ code: prepared.blocked.code })}</p>
+        )}
+        {chain && !prepared && prepareError && <p role="alert" data-testid="give-prepare-error" className="msg-error">{prepareError}</p>}
+        {chain && !phoneOffered && phoneGive.s === 'offered' && (
+          <p className="cta-helper" data-testid="give-touch-note" style={{ marginBottom: '0.5rem' }}>
+            {S13.giveTouchNote.replace('{area}', profileDisplayName(authData.profileId))}
+            {approverBlocked && <> <button type="button" className="info-edit" onClick={() => setPrepareTick(0)}>{S13.heldCheckAgain}</button></>}
+          </p>
+        )}
+
+        {phoneOffered || phoneGive.s !== 'offered' ? (
+          <div className={phoneGive.s === 'given' ? 'card av3-card av3-given-alone' : 'card av3-card'} data-testid="give-phone-card" style={{ position: 'relative' }}>
+            <GivePhoneFooter
+              view={phoneGive.s === 'refused' ? { s: 'refused', message: phoneGive.message } : { s: phoneGive.s }}
+              disabled={!giveRequest || !prepared || approverBlocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+              onGive={() => { void handleGiveOnPhone(); }}
+              onStop={handleStopPhone}
+              onClose={() => {
+                if (phoneGive.s === 'given') { navigate(`/mandates?highlight=${encodeURIComponent(phoneGive.authorizationId)}`); return; }
+                if (phoneGive.s === 'offered') { navigate('/mandates/new/intent'); return; }
+                driver.resetPhone();
+              }}
+            />
+          </div>
+        ) : chain ? (
+          <div className="card av3-card" style={{ position: 'relative' }}>
+            <GiveTouchFooter
+              view={touchView}
+              disabled={submitting || approverBlocked || !prepared || !!prepared.blocked || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
+              onGive={() => { void handleCommit(); }}
+              onBack={() => navigate('/mandates/new/intent')}
+              onClose={() => {}}
+            />
+          </div>
+        ) : (
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
-          <button
-            className="btn btn-primary btn-lg"
-            style={{ flex: 1 }}
-            onClick={handleCommit}
-            disabled={submitting || !authTitle.trim() || blockedByTeamGate || noModeAllowed || ttlSeconds <= 0 || atLeastOneUnmet.length > 0}
-          >
-            {submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
-          </button>
-        </div>
+            <button className="btn btn-ghost" onClick={() => navigate('/mandates/new/intent')}>Back</button>
+            <button
+              className="btn btn-primary btn-lg"
+              style={{ flex: 1 }}
+              onClick={handleCommit}
+              disabled={giveDisabled}
+            >
+              {chain ? (submitting ? S13.giveBusy : S13.giveButton) : submitting ? 'Signing...' : commitMode === 'immediate' ? 'Sign mandate' : 'Sign mandate (asks first)'}
+            </button>
+          </div>
+        )}
 
         <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', textAlign: 'center', display: showBottomNote ? 'block' : 'none' }}>
           {bottomNote}
         </div>
       </div>
+      </Gated>
+      </LoadGate>
     </>
   );
 }
+
+/** DEC-98: the review card greyed out — title, summary, the detail blocks and the give button, at the real sizes. */
+function GiveSkeleton({ bare }: { bare?: boolean }) {
+  const card = (
+    <div className="card" data-testid="give-skeleton">
+      <SkelArea>
+        <SkelLine w="35%" h="1.2rem" style={{ marginBottom: '0.5rem' }} />
+        <SkelLine w="55%" style={{ marginBottom: '1.5rem' }} />
+        <SkelLine w="80%" style={{ marginBottom: '1.25rem' }} />
+        <SkelBlock h="6rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+        <SkelBlock h="5rem" radius="0.75rem" style={{ marginBottom: '0.75rem' }} />
+        <SkelBlock h="4rem" radius="0.75rem" style={{ marginBottom: '1.5rem' }} />
+        <SkelButton full large />
+      </SkelArea>
+    </div>
+  );
+  return bare ? card : <>{card}</>;
+}
+

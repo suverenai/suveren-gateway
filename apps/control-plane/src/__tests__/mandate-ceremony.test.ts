@@ -328,6 +328,47 @@ describe('replacing a mandate', () => {
     expect((await createMandate(base, d)).revokeError).toBeUndefined();
   });
 
+  it('the old mandate stops being honoured locally BEFORE the revoke, and a failed revoke stays recorded for the retry', async () => {
+    const { as } = fakeAs();
+    const order: string[] = [];
+    const failing: CeremonyDeps['as'] = async (m, p, b) => {
+      order.push(p);
+      return p.endsWith('/revoke') ? { status: 503, body: { error: 'down' } } : as(m, p, b);
+    };
+    const replaced = {
+      record: vi.fn(async (oldId: string, newId: string) => { order.push(`record ${oldId}->${newId}`); }),
+      noteAttempt: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    const { d } = deps(failing, { replaced });
+    const r = await createMandate(base, d);
+    expect(r).toMatchObject({ authorizationId: 'authz_new', revokeError: 'down', oldStoppedLocally: true });
+    expect(order.indexOf('record authz_old->authz_new')).toBeLessThan(order.indexOf('/api/authorizations/authz_old/revoke'));
+    expect(replaced.noteAttempt).toHaveBeenCalledWith('authz_old', 'down');
+    expect(replaced.clear).not.toHaveBeenCalled();
+  });
+
+  it('a revoke that goes through clears the local record', async () => {
+    const { as } = fakeAs();
+    const replaced = { record: vi.fn(async () => {}), noteAttempt: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
+    const { d } = deps(as, { replaced });
+    const r = await createMandate(base, d);
+    expect(r.revokeError).toBeUndefined();
+    expect(r.oldStoppedLocally).toBeUndefined();
+    expect(replaced.record).toHaveBeenCalledWith('authz_old', 'authz_new');
+    expect(replaced.clear).toHaveBeenCalledWith('authz_old');
+  });
+
+  it('when even the local record fails, the failed revoke is reported without claiming a local stop', async () => {
+    const { as } = fakeAs();
+    const failing: CeremonyDeps['as'] = async (m, p, b) => (p.endsWith('/revoke') ? { status: 500, body: { error: 'down' } } : as(m, p, b));
+    const replaced = { record: vi.fn(async () => { throw new Error('mcp down'); }), noteAttempt: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
+    const { d } = deps(failing, { replaced });
+    const r = await createMandate(base, d);
+    expect(r.revokeError).toBe('down');
+    expect(r.oldStoppedLocally).toBeUndefined();
+  });
+
   it('an undelivered new mandate is revoked and the old one is left alone', async () => {
     const { as, calls } = fakeAs();
     const { d } = deps(as, { deliverGateContent: vi.fn(async () => { throw new Error('mcp down'); }) });
@@ -435,5 +476,37 @@ describe('changing a mandate: built from the signed old one, never from what the
     const r = await changeMandate({ old: OLD, changes: { limits: { quote_daily_max: 15 } }, sealedDiff: diff }, deps(failing).d);
     expect(r.revokeError).toBe('down');
     expect(calls.find((c) => c.path === '/api/as/mandate')!.body).toMatchObject({ replaces: 'authz_old', title: 'Quotes' });
+  });
+});
+
+describe('device keys (step 13): a gateway without a device chain creates mandates exactly as before', () => {
+  const inactive = { active: () => false, issue: async () => { throw new Error('must not be asked'); }, revoke: async () => { throw new Error('must not be asked'); } } as unknown as CeremonyDeps['grants'];
+
+  it('with a grants object that has no chain (switch on, not set up) the requests to the Authority Server are identical to those without one', async () => {
+    const a = fakeAs();
+    const b = fakeAs();
+    await createMandate(REQ, deps(a.as).d);
+    await createMandate(REQ, deps(b.as, { grants: inactive }).d);
+    expect(b.calls).toEqual(a.calls);
+    // the request is the legacy one: a ttl, no mandate id, no expiry
+    const attest = b.calls.find((c) => c.path === '/api/as/mandate')!.body;
+    expect(attest.ttl).toBe(24 * 3600);
+    expect(attest.mandate_id).toBeUndefined();
+    expect(attest.expires_at).toBeUndefined();
+  });
+
+  it('a renewal and a replacement without a chain are identical too (the old mandate is revoked through the Authority Server)', async () => {
+    const a = fakeAs();
+    const b = fakeAs();
+    const renew = { authorizationId: 'authz_1', profileId: SALES.id, groupId: 'g_personal', bounds: { ...LIMITS, profile: SALES.id }, context: { currency: 'EUR' }, intent: REQ.intent, mode: 'automatic' as const, domain: 'owner', ttlSeconds: 3600 };
+    await renewMandate(renew, deps(a.as).d);
+    await renewMandate(renew, deps(b.as, { grants: inactive }).d);
+    expect(b.calls).toEqual(a.calls);
+    const c = fakeAs();
+    const e = fakeAs();
+    await createMandate({ ...REQ, replaces: 'authz_old' }, deps(c.as).d);
+    await createMandate({ ...REQ, replaces: 'authz_old' }, deps(e.as, { grants: inactive }).d);
+    expect(e.calls).toEqual(c.calls);
+    expect(e.calls.some((x) => x.path === '/api/authorizations/authz_old/revoke')).toBe(true);
   });
 });

@@ -33,6 +33,10 @@ import {
 import { readRefusal } from '@hap/core/refusal';
 import { carryValues, computeMandateDiff, diffIsEmpty, type MandateDiff } from '@hap/core/mandate-change';
 import { atLeastOneBuildRefusal, unmetForMandate } from '@hap/core/scope-rules';
+import type { MandateGrants, Issued, IssueInput, PreparedGrant, PhoneGive, PhonePrevious } from './mandate-grants';
+import { createHash } from 'node:crypto';
+import { canonicalize } from '@hap/core';
+import { GrantRefusal } from './mandate-grants';
 
 export interface MandateRequest {
   /**
@@ -73,6 +77,11 @@ export interface MandateRequest {
   contextLabels?: Record<string, Record<string, string>>;
   /** Replace this mandate: after the new one is signed and delivered, it is revoked. */
   replaces?: string;
+  /**
+   * NOT USED any more (DEC-73): colleagues come from the team's verified member list (lib/team-trust.ts). Was, on a gateway with a device chain: the DIDs of approvers whose identity code the person
+   * compared on the screen.
+   */
+  confirmedApproverDids?: string[];
 }
 
 export interface AsResponse { status: number; body: any }
@@ -102,6 +111,41 @@ export interface CeremonyDeps {
   newAuthorizationId: () => string;
   /** Drop a revoked mandate from the MCP server's list now rather than at next login. */
   resyncGates?: () => Promise<unknown>;
+  /**
+   * Present only on a gateway with SUVEREN_DEVICE_KEYS=on. With a device chain, a mandate is granted on this computer
+   * with its check before the Authority Server is asked to sign it (device-keys plan 4.4). Absent or without a chain:
+   * the steps below are exactly the ones of every earlier release.
+   */
+  grants?: MandateGrants;
+  /**
+   * Where a give on this computer is (device-chain ceremony only), so the page never waits in silence: `touched` once the person's touch
+   * was given, `requesting` while the Authority Server is asked, `delivering` while the gate content reaches this gateway. No content.
+   */
+  progress?: (stage: 'touched' | 'requesting' | 'delivering') => void;
+  /** Told the moment the Authority Server ACCEPTED a mandate request of a device-chain ceremony: from here a retry would make a second live mandate. */
+  onIssued?: (info: { mandateId: string }) => void;
+  /** The mandate id a NEW mandate must get (chosen when the approval was claimed); undefined: the grant picks one. */
+  newMandateId?: () => string | undefined;
+  /** This computer's copy of a mandate it holds (limits, scope, intent, end): what a change on the phone shows as the previous version. */
+  signedMandate?: (authorizationId: string) => Promise<SignedMandate | null>;
+  /**
+   * The replaced-mandates record on the MCP server (replaced-mandates.ts): once
+   * recorded, the old mandate is no longer honoured on this gateway, and the
+   * record is the revoke outbox (replaced-revoke-retry.ts).
+   */
+  replaced?: {
+    record: (authorizationId: string, replacedBy: string) => Promise<void>;
+    noteAttempt: (authorizationId: string, error?: string) => Promise<void>;
+    clear: (authorizationId: string) => Promise<void>;
+  };
+}
+
+/** What happened to the replaced mandate after its replacement was delivered. */
+export interface RetireResult {
+  /** The revoke at the Authority Server did not go through (it is retried). */
+  revokeError?: string;
+  /** The old mandate is no longer honoured on this gateway (recorded locally). */
+  oldStoppedLocally?: boolean;
 }
 
 /** Everything `create` needs, resolved and checked. */
@@ -119,11 +163,13 @@ export interface MandatePlan {
   title: string;
   /** Approvers whose public keys the intent is encrypted for (team only). */
   approvers: string[];
+  /** The team's settings for this profile as read here (team only); a device-chain gateway puts them into the grant. */
+  team: { approvers: string[]; approvals?: number; caps: Record<string, unknown>; eligible?: Array<{ user_id: string; did: string | null }> } | null;
 }
 
 export class MandateRefused extends Error {
   /** Why, in a form a caller can act on without reading the sentence. */
-  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one') { super(message); }
+  constructor(message: string, readonly code?: 'profile_not_enabled' | 'not_a_grantor' | 'not_your_mandate' | 'mandate_not_active' | 'no_change' | 'changed_since_proposal' | 'scope_at_least_one' | 'grant_refused' | 'delivery_failed', readonly detail?: Record<string, unknown>) { super(message); }
 }
 
 const INTENT_MAX = 2000; // the mandate screen's limit
@@ -223,10 +269,14 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
   // Rights — the Authority Server's team authority gate, up front.
   let approvers: string[] = [];
   let teamCaps: Record<string, unknown> = {};
+  let teamApprovals: number | undefined;
+  let teamEligible: Array<{ user_id: string; did: string | null }> | undefined;
   if (!isPersonal) {
     const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
     approvers = (cfg.status === 200 ? cfg.body?.config?.approvers : undefined) ?? [];
     teamCaps = (cfg.status === 200 ? cfg.body?.config?.caps : undefined) ?? {};
+    teamApprovals = typeof cfg.body?.config?.approvals === 'number' ? cfg.body.config.approvals : undefined;
+    teamEligible = Array.isArray(cfg.body?.eligible_approvers) ? cfg.body.eligible_approvers : undefined;
     // Who may give this mandate is `grantors`; `approvers` only decide above-cap actions, and a team may have none.
     const grantors: string[] | 'all' = (cfg.status === 200 ? cfg.body?.config?.grantors : undefined) ?? approvers;
     // The AS carries a team's settings over from an older version of the same
@@ -235,7 +285,7 @@ async function resolveWorkspaceAndRight(req: Pick<MandateRequest, 'team' | 'prof
     if (grantors !== 'all' && grantors.length === 0) refuse(`${name} ${versionOf(profile.id)} is not enabled in "${group.name}". Ask an admin of "${group.name}" to enable ${name} ${versionOf(profile.id)} and name who may give its mandates.`, 'profile_not_enabled');
     if (grantors !== 'all' && !grantors.includes(user.id)) refuse(`Only ${name}'s approvers in "${group.name}" can give this mandate, and the signed-in person is not one of them.`, 'not_a_grantor');
   }
-  return { user, group, isPersonal, profile, name, approvers, teamCaps };
+  return { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals, teamEligible };
 }
 
 /**
@@ -253,7 +303,7 @@ export async function checkMandateRight(
 
 /** Validate the request and resolve everything needed — creates nothing. */
 export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
-  const { user, group, isPersonal, profile, name, approvers, teamCaps } = await resolveWorkspaceAndRight(req, deps);
+  const { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals, teamEligible } = await resolveWorkspaceAndRight(req, deps);
 
   // Limits and scope against the profile.
   const bounds = { ...scalarRecord('limits', req.limits), profile: profile.id };
@@ -314,32 +364,59 @@ export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Prom
     ttlSeconds,
     title: (req.title ?? '').trim() || `${name} (proposed by AI)`,
     approvers,
+    team: isPersonal ? null : { approvers, ...(teamApprovals !== undefined ? { approvals: teamApprovals } : {}), caps: teamCaps, ...(teamEligible ? { eligible: teamEligible } : {}) },
   };
 }
 
 /**
  * Retire a mandate after its replacement is signed AND delivered — never before,
- * so a failed delivery can never leave the person with no mandate at all. Both are
- * live for a moment: a brief overlap is safe, a gap is not. A failed revoke is
- * returned, never swallowed: after a reduction the old, wider mandate stays live.
+ * so a failed delivery can never leave the person with no mandate at all.
+ *
+ * First the old mandate stops being honoured on this gateway (the local record,
+ * replaced-mandates.ts): from that moment only the new limits apply here, even
+ * while the Authority Server still serves the old one. Then the revoke at the
+ * AS. A failed revoke is returned, never swallowed, and stays in the record so
+ * replaced-revoke-retry.ts retries it until the AS confirms.
  */
-async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps): Promise<{ revokeError?: string }> {
-  let res: AsResponse;
-  try {
-    res = await deps.as('POST', `/api/authorizations/${encodeURIComponent(oldId)}/revoke`, { reason: `Replaced by ${newId}` });
-  } catch (err) {
-    return { revokeError: err instanceof Error ? err.message : String(err) };
+async function retireReplaced(oldId: string, newId: string, deps: CeremonyDeps): Promise<RetireResult> {
+  let oldStoppedLocally = false;
+  if (deps.replaced) {
+    try {
+      await deps.replaced.record(oldId, newId);
+      oldStoppedLocally = true;
+    } catch (err) {
+      console.error('[Control Plane] could not record the replaced mandate locally:', err instanceof Error ? err.message : err);
+    }
   }
-  // Already revoked (409) is what was wanted.
-  if (res.status >= 300 && res.status !== 409) return { revokeError: readRefusal(res.body, `status ${res.status}`).message };
+  const revokeError = await revokeReplaced(oldId, newId, deps);
+  if (revokeError) {
+    if (oldStoppedLocally) await deps.replaced!.noteAttempt(oldId, revokeError).catch(() => {});
+    return { revokeError, ...(oldStoppedLocally ? { oldStoppedLocally } : {}) };
+  }
+  if (oldStoppedLocally) await deps.replaced!.clear(oldId).catch(() => {});
   void deps.resyncGates?.().catch(() => {});
   return {};
 }
 
+/** One revoke attempt at the AS. Undefined = done (revoked now, or already). */
+export async function revokeReplaced(oldId: string, newId: string, deps: Pick<CeremonyDeps, 'as'>): Promise<string | undefined> {
+  let res: AsResponse;
+  try {
+    res = await deps.as('POST', `/api/authorizations/${encodeURIComponent(oldId)}/revoke`, { reason: `Replaced by ${newId}` });
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  // Already revoked (409) is what was wanted.
+  if (res.status >= 300 && res.status !== 409) return readRefusal(res.body, `status ${res.status}`).message;
+  return undefined;
+}
+
 /** Create the mandate the plan describes (and retire the one it replaces). Returns its authorization id. */
-export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan } & RetireResult> {
   const plan = await planMandate(req, deps);
   const user = deps.user!;
+  // A device chain: the mandate is granted on this computer with its check first, then requested (device-keys plan 4.4).
+  if (deps.grants?.active()) return createGranted(req, plan, deps);
 
   const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
   const scopeHash = computeScopeHash(plan.context as never, plan.profile);
@@ -406,10 +483,388 @@ export async function createMandate(req: MandateRequest, deps: CeremonyDeps): Pr
     await deps.as('POST', `/api/authorizations/${encodeURIComponent(authorizationId)}/revoke`, {
       reason: 'Auto-revoked: gate content delivery failed',
     }).catch(() => {});
-    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`);
+    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`, 'delivery_failed');
   }
   const retired = req.replaces ? await retireReplaced(req.replaces, authorizationId, deps) : {};
   return { authorizationId, plan, ...retired };
+}
+
+/** A refusal of the grant, in the ceremony's own words: the code and, for an approver's identity code, the people to compare. */
+function grantRefused(err: unknown): never {
+  if (err instanceof GrantRefusal) {
+    throw new MandateRefused(err.message, 'grant_refused', { grantCode: err.code, ...err.extra });
+  }
+  throw err;
+}
+
+/** Will the Authority Server put the owner's verified name on the mandate? It stamps `subjects` for a verified identity the person (or their standing choice) discloses; the grant covers the result. */
+async function subjectsDisclosed(deps: CeremonyDeps, discloseIdentity: boolean | undefined): Promise<boolean> {
+  const r = await deps.as('GET', '/api/users/me/identity-disclosure');
+  if (r.status !== 200) refuse('The Authority Server did not say whether your verified name is shown, so the mandate was not granted.');
+  return r.body?.verified === true && (discloseIdentity === true || r.body?.always === true);
+}
+
+/**
+ * The same ceremony for a gateway with a device chain (device-keys plan 4.4): the mandate is built here with the
+ * team's approvers, caps and count, granted on this computer with its check (a Touch ID touch), its sealed body
+ * stored, and only then requested from the Authority Server, which signs exactly what was granted or refuses.
+ * Nothing falls back to a mandate without a grant. A change of an existing mandate is a new version under the
+ * same mandate id; the Authority Server ends the older authorization when the new one is issued.
+ */
+/** Everything the request of a granted mandate needs besides the grant itself. */
+interface GrantedContext {
+  req: MandateRequest;
+  plan: MandatePlan;
+  authorizationId: string;
+  profileHash: string;
+  boundsHash: string;
+  scopeHash: string;
+  intentHash: string;
+  ecHash: string;
+  enc?: EncryptedIntent;
+  issueInput: Parameters<MandateGrants['issue']>[0];
+}
+
+/** The hashes, the intent sealed to the approvers and the input of the grant: computed once, the same for a give here and on the phone. */
+async function grantedContext(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<GrantedContext> {
+  const user = deps.user!;
+  const boundsHash = computeBoundsHash(plan.bounds as never, plan.profile);
+  const scopeHash = computeScopeHash(plan.context as never, plan.profile);
+  const intentHash = computeIntentHash(plan.intent);
+  const ecHash = computeExecutionContextHash(plan.profile);
+  const profileHash = computeProfileHash(plan.profile);
+
+  let enc: EncryptedIntent | undefined;
+  if (!plan.isPersonal) {
+    const keys = await deps.as('GET', `/api/groups/${encodeURIComponent(plan.groupId)}/profile-config/${encodeURIComponent(plan.profile.id)}/approvers/pubkeys`);
+    const recipients = approverPubkeys(keys.body);
+    if (recipients.length > 0) enc = await deps.encrypt(plan.intent, recipients);
+  }
+  const disclosed = await subjectsDisclosed(deps, req.discloseIdentity);
+
+  const authorizationId = deps.newAuthorizationId();
+  const preChosenMandateId = deps.newMandateId?.();
+  const issueInput: Parameters<MandateGrants['issue']>[0] = {
+    ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
+    bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
+    authorizationId, ...(req.replaces ? { replaces: req.replaces } : {}),
+    ...(preChosenMandateId ? { mandateId: preChosenMandateId } : {}),
+    hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
+    ...(enc ? { intentDisclosureHash: enc.intentDisclosureHash } : {}),
+    subjectsDisclosed: disclosed, team: plan.team,
+    ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
+    as: deps.as,
+  };
+  return { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, ...(enc ? { enc } : {}), issueInput };
+}
+
+async function createGranted(req: MandateRequest, plan: MandatePlan, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const ctx = await grantedContext(req, plan, deps);
+  let issued: Issued;
+  try {
+    issued = await deps.grants!.issue(ctx.issueInput, { onTouched: () => deps.progress?.('touched') });
+  } catch (err) { return grantRefused(err); }
+  return requestGranted(ctx, issued, deps);
+}
+
+// ─── give on the phone (device-keys plan 4.4 "Transport", DEC-86) ──────────────
+
+/** What the ceremony keeps of a give waiting on the phone: the context without its functions (it is sealed in the vault, see phone-give-store.ts). */
+type StoredContext = Omit<GrantedContext, 'issueInput'>;
+
+/**
+ * Prepare the give for the person's phone instead of granting it here (a computer without a check key, or the person chose the phone):
+ * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
+ * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
+ */
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, o: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
+  // One give per AI proposal: the one already waiting (offered when the proposal arrived, or sent from the card) is the one the phone shows.
+  if (o.proposalId) {
+    const waiting = deps.grants!.phoneGives.byProposal(o.proposalId);
+    if (waiting) {
+      const g = waiting.record.give as { mandateVersion?: unknown; expiresAt?: unknown };
+      if (typeof g.mandateVersion === 'number' && typeof g.expiresAt === 'number') return { mandateId: waiting.mandateId, mandateVersion: g.mandateVersion, expiresAt: g.expiresAt };
+    }
+  }
+  const plan = await planMandate(req, deps);
+  const ctx = await grantedContext(req, plan, deps);
+  let give: PhoneGive;
+  try {
+    give = await deps.grants!.sendToPhone(ctx.issueInput, {
+      title: plan.title,
+      ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}),
+      ...(o.proposalId ? { proposalId: o.proposalId } : {}),
+    });
+  } catch (err) { return grantRefused(err); }
+  const { issueInput: _fn, ...stored } = ctx;
+  deps.grants!.phoneGives.hold(give.mandateId, { give: give as unknown as Record<string, unknown>, ctx: stored as unknown as Record<string, unknown>, ...(o.proposalId ? { proposalId: o.proposalId } : {}) });
+  return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
+}
+
+/** Stop waiting for the give of this AI proposal on the phone (it was given on this computer instead). True when one was waiting. */
+export function dropProposalGive(proposalId: string, deps: CeremonyDeps): boolean {
+  const waiting = deps.grants?.phoneGives.byProposal(proposalId);
+  return waiting ? deps.grants!.phoneGives.drop(waiting.mandateId) : false;
+}
+
+/** The version a change continues, from this computer's own copy; undefined when it cannot be read (the grants refuse then). */
+async function previousOf(authorizationId: string, deps: CeremonyDeps): Promise<PhonePrevious | undefined> {
+  const old = await deps.signedMandate?.(authorizationId).catch(() => null);
+  if (!old) return undefined;
+  const profile = await resolveProfile(deps.as, old.profileId).catch(() => null);
+  if (!profile) return undefined;
+  return { profile, bounds: old.bounds, scope: old.context, intent: old.intent, expires_at: old.expiresAt };
+}
+
+/**
+ * Has the phone given it? `waiting` while no grant of that version is stored; `done` once the phone's grant verified here with exactly the
+ * planned members AND the Authority Server issued the mandate; a refusal throws (and ends the wait). `unknown`: nothing waits under this id.
+ */
+export async function pollPhoneGive(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+  // The page and the background completion may ask at the same moment: one check at a time per give, so a mandate is never requested twice.
+  if (phoneGiveInFlight.has(mandateId)) return { state: 'waiting' };
+  phoneGiveInFlight.add(mandateId);
+  try {
+    return await pollPhoneGiveOnce(mandateId, deps);
+  } finally {
+    phoneGiveInFlight.delete(mandateId);
+  }
+}
+
+const phoneGiveInFlight = new Set<string>();
+
+/**
+ * AI proposals a give carried out, by proposal id: the mandate now in force and whether it was a change. The proposal is closed as
+ * `replaced` (the Authority Server knows no other word for "closed because the person gave a mandate"); this tells the AI path that
+ * it was ITS proposal that went into force, not a version of the person's own. Kept a day in this process: a restart forgets it and
+ * the AI then hears the generic "replaced" line, which names list-authorizations.
+ */
+const givenForProposal = new Map<string, { at: number; authorizationId: string; op: 'grant' | 'change' }>();
+const GIVEN_KEEP_MS = 24 * 3600_000;
+export function noteProposalGiven(proposalId: string, authorizationId: string, op: 'grant' | 'change'): void {
+  givenForProposal.set(proposalId, { at: Date.now(), authorizationId, op });
+  for (const [id, g] of givenForProposal) if (Date.now() - g.at >= GIVEN_KEEP_MS) givenForProposal.delete(id);
+}
+/** What became of an AI proposal's give: in force (`given`), still waiting on the phone (`waiting`), or nothing known here. */
+export function proposalGiveState(proposalId: string, deps: CeremonyDeps): { given: { authorizationId: string; op: 'grant' | 'change' } } | { waiting: true } | Record<string, never> {
+  const g = givenForProposal.get(proposalId);
+  if (g && Date.now() - g.at < GIVEN_KEEP_MS) return { given: { authorizationId: g.authorizationId, op: g.op } };
+  return deps.grants?.phoneGives.byProposal(proposalId) ? { waiting: true } : {};
+}
+/** Gives finished in this process, kept a little while so a later ask (the page after the background, or the reverse) hears "done". */
+const phoneGiveDone = new Map<string, { at: number; authorizationId: string; revokeError?: string }>();
+const PHONE_GIVE_DONE_KEEP_MS = 10 * 60_000;
+/** Gives REFUSED in this process, kept as long: whoever asks next (the page after the background completion) hears the same refusal, never
+ *  "nothing waits" — the person must see why nothing was given (a phone's grant over other values), not "Stopped". */
+const phoneGiveRefused = new Map<string, { at: number; err: unknown }>();
+
+async function pollPhoneGiveOnce(mandateId: string, deps: CeremonyDeps): Promise<{ state: 'waiting' | 'unknown' } | { state: 'done'; authorizationId: string; revokeError?: string }> {
+  const store = deps.grants!.phoneGives;
+  const p = store.get(mandateId);
+  if (!p) {
+    // Finished a moment ago by the other asker (the page or the background completion): the same answer, not "nothing waits".
+    const done = phoneGiveDone.get(mandateId);
+    if (done && Date.now() - done.at < PHONE_GIVE_DONE_KEEP_MS) return { state: 'done', authorizationId: done.authorizationId, ...(done.revokeError ? { revokeError: done.revokeError } : {}) };
+    const refused = phoneGiveRefused.get(mandateId);
+    if (refused && Date.now() - refused.at < PHONE_GIVE_DONE_KEEP_MS) grantRefused(refused.err);
+    return { state: 'unknown' };
+  }
+  let issued: Issued | null;
+  try {
+    issued = await deps.grants!.phoneGrant(p.give as unknown as PhoneGive);
+  } catch (err) {
+    store.drop(mandateId);
+    phoneGiveRefused.set(mandateId, { at: Date.now(), err });
+    for (const [id, r] of phoneGiveRefused) if (Date.now() - r.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveRefused.delete(id);
+    return grantRefused(err);
+  }
+  if (!issued) return { state: 'waiting' };
+  store.drop(mandateId);
+  const rc = p.ctx as { kind?: unknown; req?: RenewRequest; asBody?: Record<string, unknown>; boundsHash?: string; scopeHash?: string };
+  const r: { authorizationId: string; revokeError?: string } = rc.kind === 'renew'
+    ? await requestRenewal(rc.req!, rc.asBody!, rc.boundsHash!, rc.scopeHash!, issued, deps)
+    : await requestGranted(p.ctx as unknown as StoredContext, issued, deps);
+  phoneGiveDone.set(mandateId, { at: Date.now(), authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) });
+  if (p.proposalId) noteProposalGiven(p.proposalId, r.authorizationId, (p.give as { op?: unknown }).op === 'change' ? 'change' : 'grant');
+  for (const [id, d] of phoneGiveDone) if (Date.now() - d.at >= PHONE_GIVE_DONE_KEEP_MS) phoneGiveDone.delete(id);
+  return { state: 'done', authorizationId: r.authorizationId, ...(r.revokeError ? { revokeError: r.revokeError } : {}) };
+}
+
+/**
+ * A change the person approved (an AI proposal, setup__change_mandate) on a computer that cannot grant it: the same checks as
+ * `changeMandate` (the diff still the one approved), then sent to the phone like a give from the page (DEC-90).
+ */
+export async function changeOnPhone(req: MandateChangeRequest, deps: CeremonyDeps, o: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  const { diff, request } = await planMandateChange(req, deps);
+  if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
+    refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');
+  }
+  return giveOnPhone(request, deps, o);
+}
+
+/** Gives a page on this computer is waiting for (its card or give page asks every 2 s): that page shows "Signed" and then closes
+ *  the AI's request itself — closing it here first would take the card away before the person sees the result. */
+const pageWaiting = new Map<string, number>();
+const PAGE_WAITING_MS = 6_000;
+export function notePageWaiting(mandateId: string): void { pageWaiting.set(mandateId, Date.now()); }
+/** The page heard the end of its give: it no longer waits. (A change keeps its mandate's id: without this, the page that gave
+ *  version 1 a moment ago still counted as waiting when version 2 came from the phone, and that request was never closed —
+ *  e2e 45264582001, 45253266621.) */
+export function notePageDone(mandateId: string): void { pageWaiting.delete(mandateId); }
+export function pageIsWaiting(mandateId: string): boolean {
+  const at = pageWaiting.get(mandateId);
+  return at !== undefined && Date.now() - at < PAGE_WAITING_MS;
+}
+
+/** Is any give waiting on the person's phone? (The completion checks every second while one waits, every 5 s otherwise.) */
+export function anyGiveWaiting(deps: CeremonyDeps): boolean {
+  try { return !!deps.grants?.active() && deps.grants.phoneGives.list().length > 0; } catch { return false; }
+}
+
+/** Can this gateway hand a grant to the person's phone (an active device of the chain, other than this one, with a check key)? */
+export function isNoCheckKeyRefusal(err: unknown): boolean {
+  return err instanceof MandateRefused && err.code === 'grant_refused' && (err.detail as { grantCode?: unknown } | undefined)?.grantCode === 'no_check_key';
+}
+
+/**
+ * Finish every give that waits on the phone, page or not (an approved AI proposal has no page that polls): what the timer in index.ts
+ * runs. A give whose phone grant arrived is requested and delivered; a refusal ends it. `onDone` is told of each mandate that went live.
+ */
+export async function completeWaitingGives(deps: CeremonyDeps, onDone: (r: { mandateId: string; authorizationId: string; proposalId?: string }) => void, onRefused?: (r: { mandateId: string; message: string }) => void): Promise<void> {
+  if (!deps.grants?.active()) return;
+  let waiting: Array<{ mandateId: string; proposalId?: string }>;
+  try { waiting = deps.grants.phoneGives.list(); } catch { return; }
+  for (const g of waiting) {
+    try {
+      const r = await pollPhoneGive(g.mandateId, deps);
+      if (r.state === 'done') onDone({ mandateId: g.mandateId, authorizationId: r.authorizationId, ...(g.proposalId ? { proposalId: g.proposalId } : {}) });
+    } catch (err) {
+      onRefused?.({ mandateId: g.mandateId, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+}
+
+/** The person stopped waiting for the phone on this page. The prepared row runs out at the Authority Server by itself. */
+export function cancelPhoneGive(mandateId: string, deps: CeremonyDeps): boolean {
+  return deps.grants?.phoneGives.drop(mandateId) ?? false;
+}
+
+/** Request the granted mandate from the Authority Server, deliver its gate content, retire what it replaces. */
+async function requestGranted(ctx: StoredContext, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+  const { req, plan, authorizationId, profileHash, boundsHash, scopeHash, intentHash, ecHash, enc } = ctx;
+  const user = deps.user!;
+  const grants = deps.grants!;
+  deps.progress?.('requesting');
+  const res = await deps.as('POST', '/api/as/mandate', {
+    authorization_id: authorizationId,
+    profile_id: plan.profile.id,
+    profile_hash: profileHash,
+    supported_versions: [...SUPPORTED_VERSIONS],
+    bounds: plan.bounds,
+    bounds_hash: boundsHash,
+    scope_hash: scopeHash,
+    domain: plan.domain,
+    did: user.did,
+    gate_content_hashes: { intent: intentHash },
+    execution_context_hash: ecHash,
+    group_id: plan.groupId,
+    title: plan.title,
+    intent_ciphertext: enc?.intentCiphertext,
+    encrypted_keys: enc?.encryptedKeys,
+    approvers_frozen: enc?.approversFrozen,
+    intent_disclosure_hash: enc?.intentDisclosureHash,
+    ...(req.replaces ? { replaces: req.replaces } : {}),
+    ...(req.discloseIdentity !== undefined ? { disclose_identity: req.discloseIdentity } : {}),
+    // What the grant covers, as the grant names it: the mandate id and version, the expiry (no ttl), mode, caps, approvers, count.
+    ...issued.request,
+  });
+  if (res.status >= 300) {
+    refuse(`The Authority Server refused the mandate: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  }
+  deps.onIssued?.({ mandateId: issued.mandateId });
+  deps.progress?.('delivering');
+  try {
+    await deps.deliverGateContent({
+      authorizationId, boundsHash, contextHash: scopeHash, context: plan.context,
+      ...(req.contextLabels && Object.keys(req.contextLabels).length > 0 ? { contextLabels: req.contextLabels } : {}),
+      gateContent: { intent: plan.intent },
+    });
+  } catch (err) {
+    // A mandate whose intent never reached the gateway must not stay active: ended with a device signature (final).
+    await grants.revoke(authorizationId).catch(() => {});
+    refuse(`The mandate was signed but its intent could not be delivered to the gateway, so it was revoked. (${err instanceof Error ? err.message : String(err)})`, 'delivery_failed');
+  }
+  // The Authority Server ended the authorization this one replaces in the same moment the new version was issued.
+  if (req.replaces) void deps.resyncGates?.().catch(() => {});
+  return { authorizationId, plan };
+}
+
+/** One shown value: the profile's label and unit for the field, from this gateway's copy of the profile. */
+export interface PreparedRow { field: string; label: string; value: string | number; unit?: string }
+
+/** What a give would grant, as this gateway checked it. The page shows exactly this and echoes `planHash` back with the give. */
+export interface PreparedMandate {
+  /** Binds the give to this plan: the gateway refuses a give whose request, or whose team part, differs (`changed_since_prepare`). */
+  planHash: string;
+  profileId: string;
+  profileName: string;
+  profileHash: string;
+  mode: PreparedGrant['mode'];
+  ttlSeconds: number;
+  expiresAt: number;
+  bounds: PreparedRow[];
+  scope: PreparedRow[];
+  intent: string;
+  team: { approvers: PreparedGrant['approvers']; approvals: number | null; caps: PreparedRow[] } | null;
+  /** The first refusal the real give would meet before the touch, or null. */
+  blocked: PreparedGrant['blocked'];
+  /** The person's phone can give it instead (`/give-on-phone`): another active device of their chain names a check key. */
+  onPhone: boolean;
+}
+
+type FieldDef = { displayName?: string; unit?: string };
+const rowsOf = (values: Record<string, string | number>, fields: Record<string, FieldDef> | undefined, skip: string[] = []): PreparedRow[] =>
+  Object.entries(values).filter(([k]) => !skip.includes(k)).map(([field, value]) => ({ field, label: fields?.[field]?.displayName ?? field, value, ...(fields?.[field]?.unit ? { unit: fields[field]!.unit } : {}) }));
+
+/**
+ * A dry run of a give on a gateway with a device chain: the same validation and the same team computation as the real give, WITHOUT the touch
+ * and without any write at the Authority Server or here (nothing is remembered, no grant, no body, no mandate). Refusals of the validation
+ * (rights, limits, scope, duration) are thrown as {@link MandateRefused}, as the real give would; those the team part meets before the touch come
+ * back as `blocked`, with the approvers the team's verified member list does not hold.
+ */
+export async function prepareMandate(req: MandateRequest, deps: CeremonyDeps): Promise<PreparedMandate> {
+  const grants = deps.grants;
+  if (!grants?.active()) refuse('Device keys are not set up on this gateway.');
+  const plan = await planMandate(req, deps);
+  const user = deps.user!;
+  const profileHash = computeProfileHash(plan.profile);
+  const disclosed = await subjectsDisclosed(deps, req.discloseIdentity);
+  const pg = await grants.prepare({
+    ownUserId: user.id, ownDid: user.did, groupId: plan.groupId, isPersonal: plan.isPersonal, profile: plan.profile,
+    bounds: plan.bounds as Record<string, string | number>, scope: plan.context, intent: plan.intent, mode: plan.mode, ttlSeconds: plan.ttlSeconds,
+    authorizationId: deps.newAuthorizationId(), ...(req.replaces ? { replaces: req.replaces } : {}),
+    hashes: { profile: profileHash, bounds: computeBoundsHash(plan.bounds as never, plan.profile), scope: computeScopeHash(plan.context as never, plan.profile), intent: computeIntentHash(plan.intent), executionContext: computeExecutionContextHash(plan.profile) },
+    subjectsDisclosed: disclosed, team: plan.team,
+    ...(req.confirmedApproverDids ? { confirmedApproverDids: req.confirmedApproverDids } : {}),
+    as: deps.as,
+  });
+  const caps = pg.caps ?? {};
+  const planHash = `sha256:${createHash('sha256').update(canonicalize({
+    profile_id: plan.profile.id, profile_hash: profileHash, group_id: plan.groupId, bounds: plan.bounds, scope: plan.context, intent: plan.intent,
+    ttl_seconds: plan.ttlSeconds, title: plan.title, disclose_identity: req.discloseIdentity ?? null, replaces: req.replaces ?? null,
+    mode: pg.mode, caps: pg.caps, approvals: pg.approvals, approvers: pg.approvers.map(a => a.did).sort(),
+  } as never)).digest('hex')}`;
+  return {
+    planHash, profileId: plan.profile.id, profileName: plan.profile.name ?? plan.profile.id.replace(/@.*$/, '').split('/').pop() ?? plan.profile.id,
+    profileHash, mode: pg.mode, ttlSeconds: plan.ttlSeconds, expiresAt: pg.expiresAt,
+    bounds: rowsOf(plan.bounds as Record<string, string | number>, plan.profile.boundsSchema?.fields as Record<string, FieldDef> | undefined, ['profile', 'path']),
+    scope: rowsOf(plan.context, plan.profile.scopeSchema?.fields as Record<string, FieldDef> | undefined),
+    intent: plan.intent,
+    team: plan.isPersonal ? null : { approvers: pg.approvers, approvals: pg.approvals, caps: rowsOf(caps, plan.profile.boundsSchema?.fields as Record<string, FieldDef> | undefined) },
+    blocked: pg.blocked,
+    onPhone: pg.onPhone,
+  };
 }
 
 export interface RenewRequest {
@@ -433,6 +888,7 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
   const profile = await resolveProfile(deps.as, req.profileId);
   const boundsHash = computeBoundsHash(req.bounds as never, profile);
   const scopeHash = computeScopeHash(req.context as never, profile);
+  if (deps.grants?.active()) return renewGranted(req, profile, boundsHash, scopeHash, deps);
   const res = await deps.as('POST', '/api/as/mandate', {
     authorization_id: req.authorizationId,
     renew: true,
@@ -463,6 +919,105 @@ export async function renewMandate(req: RenewRequest, deps: CeremonyDeps): Promi
   return { authorizationId: req.authorizationId };
 }
 
+
+/** What a renewal grants: the issue input for the grant and the request it then makes (shared by this computer and the phone path). */
+interface RenewPlan {
+  input: IssueInput;
+  asBody: Record<string, unknown>;
+}
+
+async function planRenewal(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<RenewPlan> {
+  const user = deps.user!;
+  const groups = ((await deps.as('GET', '/api/groups')).body?.groups ?? []) as Array<{ id: string; isPersonal?: boolean }>;
+  const group = groups.find(g => g.id === req.groupId);
+  if (!group) refuse('This mandate belongs to a workspace you are not in.');
+  let team: MandatePlan['team'] = null;
+  if (!group.isPersonal) {
+    const cfg = await deps.as('GET', `/api/groups/${encodeURIComponent(group.id)}/profile-config/${encodeURIComponent(profile.id)}`);
+    if (cfg.status !== 200) refuse('The team settings could not be read, so the mandate was not extended.');
+    team = {
+      approvers: cfg.body?.config?.approvers ?? [],
+      ...(typeof cfg.body?.config?.approvals === 'number' ? { approvals: cfg.body.config.approvals } : {}),
+      caps: cfg.body?.config?.caps ?? {},
+      ...(Array.isArray(cfg.body?.eligible_approvers) ? { eligible: cfg.body.eligible_approvers } : {}),
+    };
+  }
+  const intentHash = computeIntentHash(req.intent);
+  const ecHash = computeExecutionContextHash(profile);
+  const profileHash = computeProfileHash(profile);
+  return {
+    input: {
+      ownUserId: user.id, ownDid: user.did, groupId: req.groupId, isPersonal: !!group.isPersonal, profile,
+      bounds: req.bounds, scope: req.context, intent: req.intent, mode: req.mode, ttlSeconds: req.ttlSeconds,
+      authorizationId: req.authorizationId, renewal: true,
+      hashes: { profile: profileHash, bounds: boundsHash, scope: scopeHash, intent: intentHash, executionContext: ecHash },
+      subjectsDisclosed: false, team, as: deps.as,
+    },
+    asBody: {
+      authorization_id: req.authorizationId,
+      profile_id: profile.id,
+      profile_hash: profileHash,
+      supported_versions: [...SUPPORTED_VERSIONS],
+      bounds: req.bounds,
+      bounds_hash: boundsHash,
+      scope_hash: scopeHash,
+      domain: req.domain,
+      did: user.did,
+      gate_content_hashes: { intent: intentHash },
+      execution_context_hash: ecHash,
+      group_id: req.groupId,
+    },
+  };
+}
+
+/** Request the renewed version and deliver its gate content (after the grant, here or from the phone). */
+async function requestRenewal(req: RenewRequest, asBody: Record<string, unknown>, boundsHash: string, scopeHash: string, issued: Issued, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const res = await deps.as('POST', '/api/as/mandate', { ...asBody, ...issued.request });
+  if (res.status >= 300) refuse(`The Authority Server refused the renewal: ${readRefusal(res.body, `status ${res.status}`).message}`);
+  await deps.deliverGateContent({
+    authorizationId: req.authorizationId,
+    boundsHash: res.body?.bounds_hash ?? boundsHash,
+    contextHash: scopeHash,
+    context: req.context,
+    gateContent: { intent: req.intent },
+    ...(req.path ? { path: req.path } : {}),
+  });
+  return { authorizationId: req.authorizationId };
+}
+
+/** Extend = a `change` of the same mandate under the same authorization: granted again on this computer, only the expiry moves. */
+async function renewGranted(req: RenewRequest, profile: AgentProfile, boundsHash: string, scopeHash: string, deps: CeremonyDeps): Promise<{ authorizationId: string }> {
+  const plan = await planRenewal(req, profile, boundsHash, scopeHash, deps);
+  let issued: Issued;
+  try {
+    issued = await deps.grants!.issue(plan.input);
+  } catch (err) { return grantRefused(err); }
+  return requestRenewal(req, plan.asBody, boundsHash, scopeHash, issued, deps);
+}
+
+/**
+ * Extend on the phone (a computer without a check key, DEC-90): the same renewal plan, sent to the phone with the version it continues
+ * (this computer's own copy), so the phone shows "lasts until" old → new and checks the rest is unchanged against the previous grant.
+ */
+export async function renewOnPhone(req: RenewRequest, deps: CeremonyDeps): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+  if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to extend the mandate on.');
+  if (!deps.user) refuse('The gateway is not signed in.');
+  const profile = await resolveProfile(deps.as, req.profileId);
+  const boundsHash = computeBoundsHash(req.bounds as never, profile);
+  const scopeHash = computeScopeHash(req.context as never, profile);
+  const plan = await planRenewal(req, profile, boundsHash, scopeHash, deps);
+  const previous = await previousOf(req.authorizationId, deps);
+  if (!previous) refuse('The mandate being extended could not be read on this computer, so it was not sent to your phone.');
+  let give: PhoneGive;
+  try {
+    give = await deps.grants!.sendToPhone(plan.input, { title: profile.name ?? profile.id, previous });
+  } catch (err) { return grantRefused(err); }
+  deps.grants!.phoneGives.hold(give.mandateId, {
+    give: give as unknown as Record<string, unknown>,
+    ctx: { kind: 'renew', req, asBody: plan.asBody, boundsHash, scopeHash } as unknown as Record<string, unknown>,
+  });
+  return { mandateId: give.mandateId, mandateVersion: give.mandateVersion, expiresAt: give.expiresAt };
+}
 
 // ─── Changing a mandate ─────────────────────────────────────────────────────
 
@@ -604,7 +1159,7 @@ function diffForCompare(d: MandateDiff): string {
  * proposal, possibly long after: everything is computed again from the signed old mandate,
  * and anything that would differ from what the person saw is refused.
  */
-export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan; revokeError?: string }> {
+export async function changeMandate(req: MandateChangeRequest, deps: CeremonyDeps): Promise<{ authorizationId: string; plan: MandatePlan } & RetireResult> {
   const { diff, request } = await planMandateChange(req, deps);
   if (req.sealedDiff && diffForCompare(diff) !== diffForCompare(req.sealedDiff)) {
     refuse('The mandate or its area changed after this was proposed, so what you approved is no longer what would be signed. Nothing was signed. Ask for the change again.', 'changed_since_proposal');

@@ -13,7 +13,7 @@ import { requireAuth } from '../middleware/auth';
 import { createGatewaySettingsRouter } from '../routes/gateway-settings';
 
 const KEY = 'test-key';
-const fakeVault = { isUnlocked: () => true, validateApiKey: (k: string) => k === KEY } as never;
+const fakeVault = { hasPassword: () => false, isUnlocked: () => true, validateApiKey: (k: string) => k === KEY } as never;
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'gs-route-'));

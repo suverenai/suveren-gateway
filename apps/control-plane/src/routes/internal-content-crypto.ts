@@ -14,9 +14,28 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { encryptProposalContent, decryptProposalContent, type V08Readers } from '../lib/content-crypto';
+import { encryptProposalContent, decryptProposalContent, decryptProposalContext, NoWrapError, type V08Readers } from '../lib/content-crypto';
+import type { CardContext } from '../lib/content-wraps';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import type { Vault } from '../lib/vault';
+import type { DeviceReaders } from '../lib/device-readers';
+import type { ProposalRewrap } from '../lib/proposal-rewrap';
+import type { DeviceChainStore } from '../lib/device-chain-store';
+
+/** Device keys, step 8: present only on a gateway that set up a device chain. */
+export interface DeviceContentDeps {
+  readers: DeviceReaders;
+  rewrap: ProposalRewrap;
+  store: DeviceChainStore;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The card context the MCP server hands over: the gateway's own four members, nothing else (plan 5). */
+function cardContextOf(v: unknown): CardContext | null {
+  if (!isObj(v) || typeof v.gateway_version !== 'string' || !('display' in v) || !('execution_mapping' in v) || !('linked_record' in v)) return null;
+  return { display: v.display, execution_mapping: v.execution_mapping, ...('static_execution' in v ? { static_execution: v.static_execution } : {}), linked_record: v.linked_record, gateway_version: v.gateway_version };
+}
 
 /** The wire contract's cap (PE1 brief): ≤ 50 recipients per proposal. */
 const MAX_RECIPIENTS = 50;
@@ -33,6 +52,7 @@ export function createInternalContentCryptoRouter(
   vault: Vault,
   spUrl: string,
   dataDir: string,
+  device?: DeviceContentDeps,
 ): Router {
   const router = Router();
 
@@ -41,7 +61,7 @@ export function createInternalContentCryptoRouter(
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    const { toolArgs, recipientUserIds, readers } = (req.body ?? {}) as { toolArgs?: unknown; recipientUserIds?: unknown; readers?: unknown };
+    const { toolArgs, recipientUserIds, readers, context } = (req.body ?? {}) as { toolArgs?: unknown; recipientUserIds?: unknown; readers?: unknown; context?: unknown };
     if (typeof toolArgs !== 'object' || toolArgs === null || Array.isArray(toolArgs)) {
       res.status(400).json({ error: 'toolArgs must be an object' });
       return;
@@ -68,6 +88,12 @@ export function createInternalContentCryptoRouter(
       }
       v08 = { ownerDid: r.ownerDid, deciders: r.deciders as string[] };
     }
+    let cardContext: CardContext | undefined;
+    if (context !== undefined) {
+      const c = cardContextOf(context);
+      if (!c) { res.status(400).json({ error: 'context must be { display, execution_mapping, linked_record, gateway_version }' }); return; }
+      cardContext = c;
+    }
     const me = vault.getSessionUser();
     const cookie = vault.getSpCookie();
     if (!me || !cookie) {
@@ -76,13 +102,19 @@ export function createInternalContentCryptoRouter(
     }
     try {
       const selfPublicKey = v08 ? (await getPublicKey(vault)) ?? undefined : undefined;
-      const { content, unreadableFor } = await encryptProposalContent(
+      // Device keys: a gateway with a chain encrypts to every device of every reader (lib/content-crypto.ts encryptToDevices).
+      const selfPrivateKey = v08 && device?.readers.active() ? (await loadOrGenerateKeyPair(vault)).privateKey : undefined;
+      const { content, unreadableFor, unreadableReaders } = await encryptProposalContent(
         toolArgs as Record<string, unknown>,
         recipientUserIds as string[],
-        { spUrl, cookie, dataDir, selfUserId: me.id, ...(v08 ? { selfDid: me.did, selfPublicKey } : {}) },
+        {
+          spUrl, cookie, dataDir, selfUserId: me.id, ...(v08 ? { selfDid: me.did, selfPublicKey } : {}),
+          ...(device && selfPrivateKey ? { device: { readers: device.readers, selfPrivateKey } } : {}),
+        },
         v08,
+        cardContext,
       );
-      res.json({ content, unreadableFor });
+      res.json({ content, unreadableFor, ...(unreadableReaders ? { unreadableReaders } : {}) });
     } catch (err) {
       console.error('[Control Plane] /internal/encrypt-content failed:', err);
       res.status(500).json({ error: err instanceof Error ? err.message : 'encryption failed' });
@@ -95,7 +127,7 @@ export function createInternalContentCryptoRouter(
       return;
     }
     const body = (req.body ?? {}) as {
-      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; hash?: unknown; proposalContentHash?: unknown;
+      ciphertext?: unknown; keys?: unknown; encrypted_keys?: unknown; device_keys?: unknown; context?: unknown; hash?: unknown; proposalContentHash?: unknown;
     };
     const { ciphertext, hash, proposalContentHash } = body;
     // Both names: under a 0.8 mandate `encrypted_keys` is keyed by DID and
@@ -119,22 +151,38 @@ export function createInternalContentCryptoRouter(
     }
     try {
       const kp = await loadOrGenerateKeyPair(vault);
-      const plaintext = await decryptProposalContent(
-        {
-          ciphertext,
-          keys: keys as Record<string, { ct: string; enc: string }>,
-          // v0.8 rule 8: checked against the fingerprint before it is returned.
-          ...(typeof hash === 'string' ? { hash } : {}),
-          ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
-        },
-        me.id,
-        kp.privateKey,
-        me.did,
-      );
-      res.json({ plaintext });
+      let myKeyId: string | undefined;
+      try { myKeyId = device?.store.read()?.keyId; } catch { /* an unreadable slot: the legacy wrap is tried */ }
+      const wire = {
+        ciphertext,
+        keys: keys as Record<string, { ct: string; enc: string }>,
+        ...(isObj(body.device_keys) ? { device_keys: body.device_keys as Record<string, { ct: string; enc: string }> } : {}),
+        ...(typeof body.context === 'string' ? { context: body.context } : {}),
+        // v0.8 rule 8: checked against the fingerprint before it is returned.
+        ...(typeof hash === 'string' ? { hash } : {}),
+        ...(typeof proposalContentHash === 'string' ? { proposalContentHash } : {}),
+      };
+      const plaintext = await decryptProposalContent(wire, me.id, kp.privateKey, me.did, myKeyId);
+      // The card context is checked on open, bound to this proposal; its failure never hides the arguments.
+      const ctx = await decryptProposalContext(wire, me.id, kp.privateKey, me.did, myKeyId);
+      res.json({ plaintext, ...(ctx ? ctx : {}) });
     } catch (err) {
       console.error('[Control Plane] /internal/decrypt-content failed:', err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'decryption failed' });
+      res.status(500).json({ error: err instanceof Error ? err.message : 'decryption failed', ...(err instanceof NoWrapError ? { code: err.code } : {}) });
+    }
+  });
+
+  // Device keys, step 8: wrap the open proposals' content keys for this person's other devices (lib/proposal-rewrap.ts).
+  router.post('/rewrap-proposals', async (req, res) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    if (!device) { res.status(404).json({ error: 'not found' }); return; }
+    try {
+      res.json(await device.rewrap.run());
+    } catch {
+      res.status(500).json({ error: 'rewrap failed' });
     }
   });
 

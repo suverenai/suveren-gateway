@@ -1,4 +1,6 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { LoadGate, Gated, SkelLine, SkelBlock, SkelArea } from '@suveren/approval-card/components/LoadGate';
+import { replacedLine } from '../lib/replaced-mandate';
 import { spClient, type PendingItem, type GateContentEntry, type ProfileConfig, type ProfileSummary, type IntegrationManifest } from '../lib/sp-client';
 import { profileIdentity, shortProfileId } from '@suveren/approval-card/lib/profile-identity';
 import { resolveAreaName, areaIcon, type AreaIconName } from '@suveren/approval-card/lib/area';
@@ -7,6 +9,11 @@ import { AreaFilterPills, type AreaFilterOption } from '../components/AreaFilter
 import { AuthorizePicker } from '../components/AuthorizePicker';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { EndMandateHost } from '../components/device/EndMandateHost';
+import { ChangeMandateHost } from '../components/device/ChangeMandateHost';
+import { HeldBackHost } from '../components/device/HeldBackHost';
+import { endIsDeviceSigned } from '../lib/end-mandate';
+import { deviceClient } from '../lib/device-client';
 import { DomainBadge } from '../components/DomainBadge';
 import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
@@ -79,6 +86,8 @@ interface AuthCardProps {
   gateLoading: string | null;
   copiedHash: string | null;
   revokingHash: string | null;
+  /** Device-keys chain on this gateway: the person's own mandate is ended with the device-signed route (screen 4). */
+  deviceEnd?: boolean;
   copyingHash: string | null;
   profileConfigCache: Map<string, ProfileConfig | null>;
   /** Newest available version for this grant's profile, when it is newer than the pinned one. */
@@ -108,6 +117,8 @@ interface AuthCardProps {
    *  mandate's protocol version. Learned lazily (only once an execution
    *  was actually attempted), so absence does not mean "confirmed fine". */
   needsReapprovalSet?: Set<string>;
+  /** Mandates the person replaced whose revoke on the AS is still open — no longer used here. */
+  replacedSet?: Set<string>;
   /** Connector manifests — to name the tickets under a mandate, and to tell
    *  which limits only simulation-only tools use. */
   manifests?: IntegrationManifest[];
@@ -125,6 +136,7 @@ function AuthCard({
   gateLoading,
   copiedHash,
   revokingHash,
+  deviceEnd,
   copyingHash,
   profileConfigCache,
   mode,
@@ -141,11 +153,13 @@ function AuthCard({
   onArchive,
   highlightHash,
   needsReapprovalSet,
+  replacedSet,
   manifests = [],
   simulation = null,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
   const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
+  const replacedNote = replacedLine(status, item.authorization_id, replacedSet);
   const archived = isArchived(item, { revokedSet, archivedSet });
   const canArchive = !ownerLabel && !!onArchive && isArchivable(status);
   const isExpanded = expandedHash === item.authorization_id;
@@ -265,6 +279,7 @@ function AuthCard({
 
       {upgradeHint}
       {ownerLabel && <p className="ob-quiet">Owner: <b>{ownerLabel}</b></p>}
+      {replacedNote && <p className="ob-quiet" data-testid="mandate-replaced-note">{replacedNote}</p>}
       {/* Only when it says something: several domains, or one still missing. */}
       {(item.required_domains.length > 1 || item.missing_domains.length > 0) && (
         <div className="ob-badges">
@@ -418,10 +433,10 @@ function AuthCard({
               <button
                 type="button"
                 className="ob-btn"
-                onClick={() => onRevoke(item.authorization_id)}
+                onClick={() => onRevoke(item.authorization_id, undefined, profileShortName)}
                 disabled={revokingHash === item.authorization_id}
               >
-                {revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
+                {deviceEnd ? 'End' : revokingHash === item.authorization_id ? 'Revoking…' : 'Revoke'}
               </button>
             ) : null}
             {/* Archive: a local display flag for finished mandates. Deletes
@@ -597,10 +612,22 @@ export function AuthorizationsPage() {
   // (the gateway's own cache, not AS-sourced), so this only applies to the
   // Mine tab — a team row's data comes straight from the Authority Server.
   const [needsReapprovalSet, setNeedsReapprovalSet] = useState<Set<string>>(new Set());
+  const [replacedSet, setReplacedSet] = useState<Set<string>>(new Set());
 
   const navigate = useNavigate();
   const { group, groupId, domain: activeDomain, mode, activeTeam } = useAuth();
   const isAdmin = activeTeam?.isAdmin === true;
+  const { deviceKeysSwitch, access } = useAuth();
+  const [deviceEnd, setDeviceEnd] = useState(false);
+  const [changeTarget, setChangeTarget] = useState<{ id: string; changes: Record<string, unknown> } | null>(null);
+  const [endTarget, setEndTarget] = useState<{ id: string; name: string; until: string | null } | null>(null);
+  // Only a gateway with the switch on, a password session and a set-up device ends mandates by device key; every other gateway keeps today's Revoke.
+  useEffect(() => {
+    if (!deviceKeysSwitch || access !== 'password') { setDeviceEnd(false); return; }
+    let live = true;
+    void deviceClient.status().then(r => { if (live) setDeviceEnd(r.ok && endIsDeviceSigned({ deviceKeysSwitch, access }, r.data)); });
+    return () => { live = false; };
+  }, [deviceKeysSwitch, access]);
 
   const [profileConfigCache, setProfileConfigCache] = useState<Map<string, ProfileConfig | null>>(
     () => new Map(),
@@ -640,6 +667,14 @@ export function AuthorizationsPage() {
   }, []);
   useEffect(() => { fetchNeedsReapproval(); }, [fetchNeedsReapproval]);
 
+  // Replaced mandates whose revoke on the AS is still open: one quiet line each.
+  const fetchReplaced = useCallback(() => {
+    spClient.getReplacedMandates()
+      .then(ids => setReplacedSet(new Set(ids)))
+      .catch(() => setReplacedSet(new Set()));
+  }, []);
+  useEffect(() => { fetchReplaced(); }, [fetchReplaced]);
+
   const handleArchive = async (authorizationId: string, archived: boolean) => {
     setArchivingHash(authorizationId);
     try {
@@ -668,6 +703,7 @@ export function AuthorizationsPage() {
     fetchMineItems();
     if (isAdmin && groupId) fetchTeamItems();
     fetchNeedsReapproval();
+    fetchReplaced();
   });
 
   // Strip ?highlight= from the URL on mount and clear the in-state highlight
@@ -891,6 +927,11 @@ export function AuthorizationsPage() {
   };
 
   const handleRevoke = async (authorizationId: string, ownerLabel?: string, profileShortName?: string) => {
+    if (deviceEnd && !ownerLabel) {
+      const row = items.find(i => i.authorization_id === authorizationId);
+      setEndTarget({ id: authorizationId, name: row?.title || profileShortName || 'this area', until: row?.earliest_expiry ? new Date(row.earliest_expiry).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null });
+      return;
+    }
     const confirmMsg = ownerLabel && profileShortName
       ? `Revoke ${ownerLabel}'s ${profileShortName} mandate? This cannot be undone.`
       : 'Revoke this mandate? The agent will no longer be able to execute actions under it.';
@@ -996,6 +1037,7 @@ export function AuthorizationsPage() {
     gateLoading,
     copiedHash,
     revokingHash,
+    deviceEnd,
     copyingHash,
     profileConfigCache,
     mode,
@@ -1010,7 +1052,7 @@ export function AuthorizationsPage() {
     highlightHash,
     manifests,
   };
-  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet };
+  const mineCardProps = { ...sharedCardProps, archivedSet, archivingHash, onArchive: handleArchive, needsReapprovalSet, replacedSet };
 
   return (
     <div className="ob-page">
@@ -1041,7 +1083,9 @@ export function AuthorizationsPage() {
           <div
             className="modal"
             onClick={e => e.stopPropagation()}
-            style={{ maxWidth: '960px', width: '90vw' }}
+            // DEC-98: the picker has its full height from the start (capped by .modal's max-height), so the grid of areas
+            // replacing its greyed-out version does not grow the dialog and move it on screen.
+            style={{ maxWidth: '960px', width: '90vw', height: '100%' }}
           >
             <div className="modal-header">
               <h2 className="modal-title">New mandate</h2>
@@ -1099,6 +1143,9 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      {/* DEC-98: tabs, counts, filters and the list appear in one go once the mandates are in. */}
+      <LoadGate parts={['mandates']}>
+      <Gated part="mandates" ready={!loading} skeleton={<MandatesSkeleton />}>
       {/* Status filter tabs */}
       <div className="nav-tabs">
         {filterTabs.map(tab => (
@@ -1143,7 +1190,8 @@ export function AuthorizationsPage() {
       )}
 
       {loading && activeItems.length === 0 ? (
-        <p style={{ color: 'var(--text-tertiary)' }}>Loading...</p>
+        // A later load (the Team tab's first fetch): the list's own skeleton, never "No mandates" while loading.
+        <MandatesSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={'☰'}
@@ -1189,11 +1237,36 @@ export function AuthorizationsPage() {
         </div>
       )}
 
+      </Gated>
+      </LoadGate>
+
+      {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
+      {deviceEnd && <HeldBackHost />}
+      {changeTarget && (
+        <ChangeMandateHost
+          authorizationId={changeTarget.id}
+          changes={changeTarget.changes}
+          onChanged={() => { spClient.resyncGates().catch(() => {}); fetchMineItems(); }}
+          onClose={() => setChangeTarget(null)}
+        />
+      )}
+
+      {endTarget && (
+        <EndMandateHost
+          authorizationId={endTarget.id}
+          profileName={endTarget.name}
+          activeUntil={endTarget.until}
+          onEnded={() => { setRevokedSet(prev => new Set(prev).add(endTarget.id)); spClient.resyncGates().catch(() => {}); }}
+          onClose={() => setEndTarget(null)}
+        />
+      )}
+
       {/* Extend Modal */}
       {extendItem && (
         <ExtendAuthModal
           item={extendItem}
           onClose={() => setExtendItem(null)}
+          {...(deviceEnd ? { onPickDuration: (ttl: number) => { setChangeTarget({ id: extendItem.authorization_id, changes: { durationHours: ttl / 3600 } }); setExtendItem(null); } } : {})}
           onSuccess={() => {
             setExtendItem(null);
             fetchMineItems();
@@ -1201,5 +1274,27 @@ export function AuthorizationsPage() {
         />
       )}
     </div>
+  );
+}
+
+/** DEC-98: the mandates page greyed out — the filter tabs and two area groups of cards, at the real sizes. */
+function MandatesSkeleton() {
+  return (
+    <SkelArea>
+      <div className="nav-tabs" style={{ gap: '1rem' }}>
+        {[4.5, 5, 5, 5.5].map((w, i) => <SkelLine key={i} w={`${w}rem`} h="1.1rem" style={{ margin: '0.6rem 0' }} />)}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }} data-testid="mandates-skeleton">
+        {[0, 1].map(g => (
+          <section key={g}>
+            <div className="area-group-h"><SkelLine w="12rem" h="1.1rem" /></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <SkelBlock h="6.5rem" radius="0.75rem" />
+              <SkelBlock h="6.5rem" radius="0.75rem" />
+            </div>
+          </section>
+        ))}
+      </div>
+    </SkelArea>
   );
 }

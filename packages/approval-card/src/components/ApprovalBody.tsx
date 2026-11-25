@@ -34,6 +34,7 @@ import { useMandateUsage } from '../lib/mandate-usage';
 import { limitWordsForTool } from '../lib/limit-words';
 import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
+import { giveSummaryLine, type SchemaLike } from '../mandate-screens/give-view';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
@@ -97,6 +98,8 @@ interface Props {
    * differ" (doc §8.4).
    */
   onShownSnapshot?: (snapshot: ShownSnapshotPayload | null) => void;
+  /** The proposed mandate's arguments as opened here (null while not readable): the card gives exactly these (device-key gateway). */
+  onMandateArgs?: (args: Record<string, unknown> | null) => void;
   /**
    * Real-gateway e2e (2026-10-15) — the "Cannot read this proposal yet"
    * note used to join raw userIds (`tom-fecb81a6-…@test.local`), which the
@@ -116,7 +119,7 @@ interface Props {
  *  limits/scope/intent/mode/duration_hours) is acceptable even though every
  *  other part of this module stays generic (brief decision 6). */
 
-export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras }: Props) {
+export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDisplay, manifests, onContentState, onShownSnapshot, nameOf, mandateTitle, topExtras, onMandateArgs }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editingBeforeSigning, setEditingBeforeSigning] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -264,6 +267,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   // One fetch for the card; where the box sits depends on what it shows.
   const previewState = useProposalPreview(proposal.id, systemName, content.toolArgs, setPreviewTone, setPreviewData, readable);
+  // The card gives exactly what this body opened and shows (device-key gateway, lib/use-give.ts in the host).
+  useEffect(() => {
+    if (!onMandateArgs) return;
+    onMandateArgs((proposal.tool === CREATE_MANDATE_TOOL || proposal.tool === CHANGE_MANDATE_TOOL) && readable ? (content.toolArgs as Record<string, unknown>) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onMandateArgs, readable, proposal.id, content.toolArgs]);
   const previewView = previewData ? previewBoxView(previewData, systemName, content.toolArgs ?? undefined) : undefined;
   // A record read from the system that is NOT shown as a change is context,
   // not what runs: it sits after the sealed tile, and the bound values are open.
@@ -362,21 +371,35 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
   const sealedHeading = sealedTileHeading(previewView, isMandate);
+  // UI review (DEC-88): the numbers the person signs, in one line under the title, before the detail blocks.
+  const mandateSummary = isMandate && readable && mandateArgs ? giveSummaryLine({
+    limits: plainRecord(mandateArgs.limits) as Record<string, string | number>,
+    scope: plainRecord(mandateArgs.scope),
+    durationSeconds: typeof mandateArgs.duration_hours === 'number' ? Math.round(mandateArgs.duration_hours * 3600) : null,
+    boundsSchema: targetProfile?.boundsSchema as SchemaLike | undefined,
+    scopeSchema: targetProfile?.scopeSchema as SchemaLike | undefined,
+    hidden: hiddenTarget,
+  }) : '';
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {
+    // The host's lines above the card (a failed check on the phone, how this one is given) show on a change as on every other card.
+    const extras = topExtras ? <div className="av3-extras" style={{ order: 3 }}>{topExtras}</div> : null;
     if (content.loading || !readable || !content.toolArgs) {
-      return <div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div>;
+      return <>{extras}<div className="av3-note" style={{ order: 5 }} data-testid="proposal-decrypting">{content.loading ? 'Decrypting…' : 'This content is not readable on this device yet.'}</div></>;
     }
     return (
-      <MandateChangeBody
-        proposalId={proposal.id}
-        args={content.toolArgs as ChangeArgs}
-        areaTitle={typeArea}
-        onChangeMyself={openMandateScreen ? () => void handleChangeMyself() : undefined}
-        editBusy={editingBeforeSigning}
-        editError={editError}
-      />
+      <>
+        {extras}
+        <MandateChangeBody
+          proposalId={proposal.id}
+          args={content.toolArgs as ChangeArgs}
+          areaTitle={typeArea}
+          onChangeMyself={openMandateScreen ? () => void handleChangeMyself() : undefined}
+          editBusy={editingBeforeSigning}
+          editError={editError}
+        />
+      </>
     );
   }
 
@@ -392,6 +415,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
       <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
+      {mandateSummary && <p className="sum-line" style={{ order: 1 }} data-testid="mandate-summary">{mandateSummary}</p>}
       {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
@@ -418,6 +442,12 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
             This device was added after the proposal was made, and no device of yours has shared it yet.
             It is shared automatically once a device that can read it comes online — or open it there.
           </p>
+        </div>
+      )}
+      {content.mismatch && (
+        <div className="av3-note" style={{ order: 5 }} role="alert" data-testid="proposal-content-mismatch">
+          <strong>The content does not match.</strong>
+          <p>What the server shows for this request is not what was sealed for you. Nothing can be approved here. Tell whoever runs your account.</p>
         </div>
       )}
       {content.sealed && content.loading && (
@@ -671,4 +701,10 @@ function MandateIntent({ intent, loading, error, expanded, onToggle }: {
       )}
     </div>
   );
+}
+
+/** The object's own string/number/array entries, or {} (a proposal's limits and scope as the AI sent them). */
+function plainRecord(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === 'string' || typeof x === 'number' || Array.isArray(x)));
 }

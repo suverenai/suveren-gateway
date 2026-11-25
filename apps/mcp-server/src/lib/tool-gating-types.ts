@@ -13,11 +13,14 @@
  * contract — only the TypeScript shape moved out of the shared library.)
  */
 
+// The one copy of the list: packages/hap-core/src/execution-mapping.ts (the phone approval app maps with the same code).
+import { LIST_TRANSFORMS as SHARED_LIST_TRANSFORMS } from '@hap/core/execution-mapping';
+
 /** How to transform an array-valued tool argument into one execution field. */
 export type ExecutionMappingTransform = 'join' | 'join_domains' | 'length';
 
 /** The list transforms — the only ones several arguments may share a field through. */
-export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = ['length', 'join', 'join_domains'];
+export const LIST_TRANSFORMS: readonly ExecutionMappingTransform[] = SHARED_LIST_TRANSFORMS as readonly ExecutionMappingTransform[];
 
 /**
  * Execution mapping value — how a tool argument maps to execution context field(s).

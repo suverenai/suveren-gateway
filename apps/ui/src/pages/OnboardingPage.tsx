@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { TopNav } from '../components/TopNav';
 import { useAuth } from '../contexts/AuthContext';
 import { spClient, type JoinPreview, type PersonalEndingPreview, type PersonalMandateSummary } from '../lib/sp-client';
+import { JoinMemberHost } from '../components/device/JoinHosts';
+import { useDeviceChain } from '../lib/use-device-chain';
+import { S13 } from '@suveren/approval-card/mandate-screens';
 import { shouldRestoreWaitingState, shouldLeaveOnboardingForTeam, declinedGroupName, type OnboardingScreen } from '../lib/onboarding-view';
 
 /**
@@ -50,6 +53,7 @@ function MandateEndingList({ mandates, pendingProposals }: { mandates: PersonalM
 export function OnboardingPage() {
   const { mode, pendingRequest, refreshGroups } = useAuth();
   const navigate = useNavigate();
+  const deviceChain = useDeviceChain();
 
   const [screen, setScreen] = useState<OnboardingScreen>('choose');
   const [inviteCode, setInviteCode] = useState('');
@@ -261,9 +265,33 @@ export function OnboardingPage() {
                 Waiting for the team admin to confirm. Until then your account stays Personal and your
                 mandates keep working.
               </p>
+              {/* DEC-73: a gateway with a device chain compares identity codes with the admin first (the host reads backend truth). */}
+              {deviceChain && pendingRequest && (
+                <div style={{ marginBottom: '1rem' }}>
+                  <JoinMemberHost
+                    teamId={pendingRequest.groupId}
+                    teamName={pendingRequest.groupName}
+                    adminName={joinPreview?.admin.name ?? null}
+                    onLocked={() => {
+                      // Three wrong codes: the request is withdrawn on this side. The screen changes FIRST, so the
+                      // "declined" screen (pendingRequest going away) never replaces what the person must read.
+                      setScreen('join-locked');
+                      void spClient.withdrawJoinRequest().then(() => refreshGroups()).catch(() => {});
+                    }}
+                  />
+                </div>
+              )}
               <button className="btn btn-secondary" onClick={handleWithdraw} disabled={loading}>
                 {loading ? 'Withdrawing…' : 'Withdraw request'}
               </button>
+            </div>
+          )}
+
+          {screen === 'join-locked' && (
+            <div className="card" data-testid="join-locked">
+              <h3 style={{ marginBottom: '0.25rem' }}>{S13.joinTriesUsed}</h3>
+              <p role="alert" className="msg-error">{S13.joinMemberDifferResult}</p>
+              <button className="btn btn-primary" onClick={resetToChoose} disabled={loading}>Back</button>
             </div>
           )}
 

@@ -256,6 +256,23 @@ export function retireMemberSignIns(
   return retired;
 }
 
+/**
+ * The vault entries that hold a stored sign-in for this group: the group's own
+ * entry and every member's own entry that still carries a token. Touching the
+ * group (writing its entry, signing in again, signing out) replaces or retires
+ * ALL of them, so a confirmation has to cover all of them.
+ */
+export function storedSignInEntries(group: SignInGroup, get: (name: string) => Record<string, string> | null): string[] {
+  const out: string[] = [];
+  const first = group.members[0]?.oauth;
+  const gname = groupCredentialName(group.id);
+  if (first && get(gname)?.[first.tokenStorage]) out.push(gname);
+  for (const m of group.members) {
+    if (m.oauth && get(m.id)?.[m.oauth.tokenStorage]) out.push(m.id);
+  }
+  return out.sort();
+}
+
 /** Would saving `incoming` change the group's OAuth client (which invalidates its token)? */
 export function changesGroupClient(
   group: SignInGroup,

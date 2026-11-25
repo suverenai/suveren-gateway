@@ -32,7 +32,8 @@ describe('AttestationCache.syncAuthorization — revoked filtering', () => {
 
   it('caches a non-revoked authorization', async () => {
     const cache = new AttestationCache(fakeSP(baseResult(false)));
-    const auth = await cache.syncAuthorization('sha256:active');
+    // asked for the id the answer names (an answer for another authorization is refused: see mandate-grants.test.ts)
+    const auth = await cache.syncAuthorization('authz_act');
     expect(auth).not.toBeNull();
     expect(cache.getAllAuthorizations().some(a => a.authorizationId === 'authz_act')).toBe(true);
   });

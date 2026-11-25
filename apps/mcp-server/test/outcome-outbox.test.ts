@@ -278,3 +278,12 @@ describe('outcomeEntryFor — which rejections become an outbox entry', () => {
     expect(outcomeEntryFor(both, true, 'b', NOW)).toMatchObject({ outcome: 'change_needed', note: 'x' });
   });
 });
+
+describe('a replaced AI mandate proposal the person GAVE (dev lane 2026-11-23: the notice said "the person\'s own mandate")', () => {
+  it('the notice names it GIVEN, with the mandate in force — the same words as check-pending-commitments', async () => {
+    const { formatOutcomeLine } = await import('../src/lib/outcome-outbox');
+    const line = formatOutcomeLine({ proposalId: 'p9', outcome: 'replaced', who: 'x', decidedAt: 0, given: { authorizationId: 'authz_new', isChange: true } });
+    expect(line).toBe('[Suveren gateway] Since your last call: proposal p9 was GIVEN: the person gave the change you proposed with their touch, exactly as proposed. It is in force now as authz_new.');
+    expect(formatOutcomeLine({ proposalId: 'p9', outcome: 'replaced', who: 'x', decidedAt: 0 })).toContain("REPLACED by the person's own mandate");
+  });
+});

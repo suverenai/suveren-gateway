@@ -32,14 +32,37 @@
  */
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync, realpathSync, lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkHelperBuild, checkWindowsHelperBuild, WINDOWS_ARCHS } from './lib/helper-check.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 
 const buildApps = process.argv.includes('--build-apps');
+
+// The native helper (opt-in) is checked FIRST, before anything is cleaned or built: a debug helper (software keys,
+// serves any caller) or a file that does not match its hash list never goes into the package.
+const withHelper = process.argv.includes('--with-helper');
+const HELPER_BUILT = process.env.SUVEREN_HELPER_BUILD_DIR ?? join(REPO_ROOT, 'packages/unlock-helper/macos/dist');
+if (withHelper) {
+  const problems = checkHelperBuild(HELPER_BUILT);
+  if (problems.length) {
+    for (const p of problems) console.error(`[bundle] --with-helper: ${p}`);
+    process.exit(1);
+  }
+}
+// The Windows helper (opt-in), from packages/unlock-helper/windows/build.mjs: the same checks.
+const withWindowsHelper = process.argv.includes('--with-windows-helper');
+const WINDOWS_HELPER_BUILT = process.env.SUVEREN_WINDOWS_HELPER_BUILD_DIR ?? join(REPO_ROOT, 'packages/unlock-helper/windows/dist');
+if (withWindowsHelper) {
+  const problems = checkWindowsHelperBuild(WINDOWS_HELPER_BUILT);
+  if (problems.length) {
+    for (const p of problems) console.error(`[bundle] --with-windows-helper: ${p}`);
+    process.exit(1);
+  }
+}
 
 const SRC = {
   ui: join(REPO_ROOT, 'apps/ui/dist'),
@@ -81,6 +104,30 @@ cpSync(SRC.ui,  join(OUT, 'dist', 'ui'),            { recursive: true });
 cpSync(SRC.cp,  join(OUT, 'dist', 'control-plane'), { recursive: true });
 cpSync(SRC.mcp, join(OUT, 'dist', 'mcp-server'),    { recursive: true });
 
+// ─── Native Touch ID helper (device-keys step 5a; opt-in) ───────────────────
+// macOS on Apple silicon only: an ad-hoc signed Suveren.app and the hashes of its files. The app goes
+// to helper/, the hashes into the control plane's own folder (NOT beside the helper): the gateway
+// refuses a helper file that does not match them. Build it first:
+//   packages/unlock-helper/macos/build-app.sh
+// Without --with-helper nothing changes: the package carries no helper, and the gateway says so
+// ("no helper here") and works with the password, as before.
+if (withHelper) {
+  const built = HELPER_BUILT;   // checked above
+  cpSync(join(built, 'Suveren.app'), join(OUT, 'helper', 'Suveren.app'), { recursive: true });
+  cpSync(join(built, 'helper-manifest.json'), join(OUT, 'dist', 'control-plane', 'helper-manifest.json'));
+  chmodSync(join(OUT, 'helper', 'Suveren.app', 'Contents', 'MacOS', 'suveren-unlock-helper'), 0o755);
+  console.log('[bundle] ✓ native helper (Suveren.app) included');
+}
+// Windows: helper/windows-<arch>/suveren-unlock-helper.exe, its hashes in the control plane's folder (not beside it).
+// Until Windows Hello is measured (DESIGN.md section 8) this helper says "no secure hardware" and the password stays.
+if (withWindowsHelper) {
+  for (const arch of WINDOWS_ARCHS) {
+    cpSync(join(WINDOWS_HELPER_BUILT, `windows-${arch}`, 'suveren-unlock-helper.exe'), join(OUT, 'helper', `windows-${arch}`, 'suveren-unlock-helper.exe'));
+    cpSync(join(WINDOWS_HELPER_BUILT, `helper-manifest-windows-${arch}.json`), join(OUT, 'dist', 'control-plane', `helper-manifest-windows-${arch}.json`));
+  }
+  console.log('[bundle] ✓ Windows helper (x64, arm64) included');
+}
+
 // Ship integration manifests so the UI's Integrations page works
 // out of the box (Docker copies these too via COPY content/integrations/).
 const MANIFESTS_SRC = join(REPO_ROOT, 'content/integrations');
@@ -103,10 +150,19 @@ if (existsSync(GUIDES_SRC)) {
 // build error instead of a silently-empty package (the 0.2.8 bug).
 const PROFILES_SRC = process.env.HAP_PROFILES_SRC ?? join(REPO_ROOT, '..', 'hap-profiles');
 if (existsSync(PROFILES_SRC)) {
-  cpSync(PROFILES_SRC, join(OUT, 'profiles'), {
+  // realpathSync + dereference: a symlinked hap-profiles (a checkout linked next to the gateway) was copied as a LINK,
+  // which the guard below saw through, but `npm pack` drops — a package with no profiles from a green build.
+  cpSync(realpathSync(PROFILES_SRC), join(OUT, 'profiles'), {
     recursive: true,
+    dereference: true,
     filter: (src) => !src.includes('/.git') && !src.includes('/test-results'),
   });
+}
+
+// npm pack leaves out a symlinked folder: the catalog must be real files in the bundle.
+if (existsSync(join(OUT, 'profiles')) && lstatSync(join(OUT, 'profiles')).isSymbolicLink()) {
+  console.error('[bundle] ✗ profiles is a symlink in the bundle — npm pack would ship no profiles');
+  process.exit(1);
 }
 
 // ─── Guard: essential catalogs MUST be present, or fail the build ──────────

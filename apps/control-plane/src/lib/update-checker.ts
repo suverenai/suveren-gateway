@@ -27,7 +27,7 @@
  * app get an accurate update status in the same response.
  */
 
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proxiedFetch } from './proxied-fetch';
@@ -50,14 +50,46 @@ export function getUpdateStatus() {
   return { updateAvailable, runningSha: runningVersion, latestVersion, lastCheckedAt };
 }
 
-/** Force an immediate registry check, bypassing the cache. Used by
- *  /health?refresh=1 on UI mount. Swallows errors. */
+/**
+ * A forced check is shared: every top bar, update bar and version card of a page asks /health?refresh=1 when it
+ * mounts, so one page load sends several at once and a sign-in sends them again seconds later. Calls while a check
+ * runs wait for that same check; a check finished less than FORCED_FRESH_MS ago answers at once. Before this, each
+ * call ran its own check, and the dev check (`git fetch`) blocked the whole control plane for up to 20 s per call:
+ * a page waited on them in turn and the gateway answered nothing else meanwhile (CI 45097746048, report-e2e 9.0).
+ */
+const FORCED_FRESH_MS = 60_000;
+let inFlight: Promise<void> | null = null;
+
+/** Force an immediate registry check (see above). Used by /health?refresh=1 on UI mount. Swallows errors. */
 export async function forceCheck(): Promise<void> {
-  try {
-    await check();
-  } catch {
-    // Registry unreachable — state stays at last-known value
-  }
+  if (inFlight) return inFlight;
+  if (lastCheckedAt !== 0 && Date.now() - lastCheckedAt < FORCED_FRESH_MS) return;
+  inFlight = check()
+    .catch(() => {
+      // Registry unreachable — state stays at last-known value
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
+}
+
+/** Runs git without blocking the event loop; rejects on failure or timeout. Replaceable in tests. */
+type GitRunner = (args: string[], cwd: string, timeoutMs: number) => Promise<string>;
+const execGit: GitRunner = (args, cwd, timeoutMs) =>
+  new Promise((resolve, reject) => {
+    execFile('git', args, { cwd, timeout: timeoutMs, encoding: 'utf8' }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+let runGit: GitRunner = execGit;
+
+/** Tests only: replace git and the install method, and forget every earlier check. */
+export function setUpdateCheckerForTests(opts: { git?: GitRunner; method?: InstallMethod } = {}): void {
+  runGit = opts.git ?? execGit;
+  if (opts.method) installMethod = opts.method;
+  inFlight = null;
+  lastCheckedAt = 0;
+  updateAvailable = false;
+  latestVersion = null;
 }
 
 // ─── GHCR (Docker) check ────────────────────────────────────────────────
@@ -128,15 +160,11 @@ function compareSemver(a: string, b: string): number {
  *  that aren't in HEAD. Quiet failure modes: not a git repo, no
  *  network, missing origin — all return updateAvailable=false (silent
  *  is better than crying wolf). */
-function checkDev(): void {
+async function checkDev(): Promise<void> {
   const cwd = dirname(fileURLToPath(import.meta.url));
   try {
-    execSync('git fetch origin --quiet', { cwd, stdio: 'ignore', timeout: 15_000 });
-    const out = execSync('git rev-list HEAD..origin/main --count', {
-      cwd,
-      encoding: 'utf8',
-      timeout: 5_000,
-    }).trim();
+    await runGit(['fetch', 'origin', '--quiet'], cwd, 15_000);
+    const out = (await runGit(['rev-list', 'HEAD..origin/main', '--count'], cwd, 5_000)).trim();
     const behind = parseInt(out, 10) || 0;
     updateAvailable = behind > 0;
     latestVersion = behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind origin/main` : null;
@@ -152,7 +180,7 @@ function checkDev(): void {
 async function check(): Promise<void> {
   try {
     if (installMethod === 'dev') {
-      checkDev();
+      await checkDev();
       return;
     }
     if (installMethod === 'npm' || installMethod === 'managed' || installMethod === 'msi') {

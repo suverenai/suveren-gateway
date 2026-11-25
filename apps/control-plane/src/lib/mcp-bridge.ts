@@ -60,6 +60,39 @@ export async function configure(sessionCookie: string, vaultKeyHex?: string): Pr
  *   an agent is told, see locked-notice.ts) says why, instead of always
  *   defaulting to "your sign-in ended" regardless of the actual cause.
  */
+/**
+ * The vault key changed (the move to an unlock password): the MCP server
+ * re-seals the stores it holds under the new key and switches to it, in one
+ * step; safe to repeat. Throws unless it answered 200.
+ */
+export async function rekeyMcp(oldKeyHex: string, newKeyHex: string): Promise<void> {
+  const res = await fetch(`${MCP_BASE}/internal/rekey`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify({ oldKeyHex, newKeyHex }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`MCP rekey failed: ${res.status}`);
+}
+
+/** Which of the two keys the MCP server's stores are sealed with, as the server itself reports it. */
+export async function mcpKeyState(oldKeyHex: string, newKeyHex: string): Promise<{ sealedWith: 'old' | 'new' | 'mixed' | 'empty' }> {
+  const res = await fetch(`${MCP_BASE}/internal/key-state`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify({ oldKeyHex, newKeyHex }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`MCP key-state failed: ${res.status}`);
+  const body = await res.json() as { sealedWith?: unknown };
+  if (body.sealedWith !== 'old' && body.sealedWith !== 'new' && body.sealedWith !== 'mixed' && body.sealedWith !== 'empty') {
+    throw new Error('MCP key-state: unreadable answer');
+  }
+  return { sealedWith: body.sealedWith };
+}
+
+export const mcpRekeyClient = { state: mcpKeyState, rekey: rekeyMcp };
+
 export async function unconfigureSession(reason?: 'as-key-mismatch' | 'as-tls-mismatch' | 'as-url-changed' | 'managed-wrong-team'): Promise<void> {
   const res = await fetch(`${MCP_BASE}/internal/clear-session`, {
     method: 'POST',
@@ -138,6 +171,47 @@ export async function resyncGates(): Promise<{ synced: number }> {
   return res.json() as Promise<{ synced: number }>;
 }
 
+/** A mandate the person replaced; not honoured on this gateway (mcp-server replaced-mandates.ts). */
+export interface ReplacedMandateEntry {
+  authorizationId: string;
+  replacedBy: string;
+  since: number;
+  attempts: number;
+  lastError?: string;
+  lastAttemptAt?: number;
+}
+
+async function replacedCall(method: string, path: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(`${MCP_BASE}/internal/replaced-mandates${path}`, {
+    method,
+    headers: internalHeaders(),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `status ${res.status}` }));
+    throw new Error(`MCP replaced-mandates ${method} failed: ${(err as { error: string }).error}`);
+  }
+  return res.json();
+}
+
+/** Stop honouring `authorizationId` on this gateway: it was replaced by `replacedBy`. */
+export async function recordReplacedMandate(authorizationId: string, replacedBy: string): Promise<void> {
+  await replacedCall('POST', '', { authorizationId, replacedBy });
+}
+
+export async function listReplacedMandates(): Promise<ReplacedMandateEntry[]> {
+  const body = (await replacedCall('GET', '')) as { entries?: ReplacedMandateEntry[] };
+  return Array.isArray(body.entries) ? body.entries : [];
+}
+
+export async function noteReplacedRevokeAttempt(authorizationId: string, error?: string): Promise<void> {
+  await replacedCall('POST', `/${encodeURIComponent(authorizationId)}/attempt`, error ? { error } : {});
+}
+
+export async function clearReplacedMandate(authorizationId: string): Promise<void> {
+  await replacedCall('DELETE', `/${encodeURIComponent(authorizationId)}`);
+}
+
 /**
  * Nudge the MCP server to execute any just-committed proposals immediately,
  * so a human approval turns into a send without waiting for the poll loop.
@@ -148,6 +222,45 @@ export async function runCommittedProposals(): Promise<void> {
     method: 'POST',
     headers: internalHeaders(),
   });
+}
+
+/**
+ * What only this gateway knows about a proposal, for a device-signed decision
+ * (device-keys plan 4.2): the signed `mandate_id` of the mandate the proposal is
+ * checked against and the action type the connector's manifest declares. Asked of the
+ * MCP server (its verified mandate, its manifests, its own submission record), never of
+ * the page. Throws when it cannot say.
+ */
+export async function getProposalFacts(p: { proposalId: string; authorizationId: string; tool: string; reportedActionType?: string; approverDid?: string }): Promise<{ mandateId: string; actionType: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/proposal-facts`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify(p),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`MCP proposal-facts failed: ${res.status}`);
+  const body = await res.json() as { mandateId?: unknown; actionType?: unknown };
+  if (typeof body.mandateId !== 'string' || !body.mandateId || typeof body.actionType !== 'string' || !body.actionType) {
+    throw new Error('MCP proposal-facts: unreadable answer');
+  }
+  return { mandateId: body.mandateId, actionType: body.actionType };
+}
+
+/** The mandates this gateway holds back, with its own verdict code (read-only; the MCP server owns the verdicts). */
+export async function getHeldBack(): Promise<Array<{ authorizationId: string; code: string; profileId?: string; ownerDid?: string; mandateId?: string }>> {
+  const res = await fetch(`${MCP_BASE}/internal/held-back`, { headers: internalHeaders(), signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`MCP held-back failed: ${res.status}`);
+  const body = await res.json() as { held?: unknown };
+  return Array.isArray(body.held) ? body.held as never : [];
+}
+
+/** The signed mandate as the MCP server read it, plus the team terms the owner signed. A refusal comes back as `{ refusal, code }`. */
+export async function getSignedMandate(authorizationId: string): Promise<{ old: import('./mandate-ceremony').SignedMandate; team: { approverDids: string[]; approvals: number | null; caps: Record<string, number> } } | { refusal: string; code: string }> {
+  const res = await fetch(`${MCP_BASE}/internal/signed-mandate`, { method: 'POST', headers: internalHeaders(), body: JSON.stringify({ authorizationId }), signal: AbortSignal.timeout(10_000) });
+  const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+  if (res.status === 409) return { refusal: String(body.error ?? 'not readable'), code: String(body.code ?? 'MANDATE_NOT_READABLE') };
+  if (!res.ok) throw new Error(`MCP signed-mandate failed: ${res.status}`);
+  return body as never;
 }
 
 // ─── Integration management ──────────────────────────────────────────────
@@ -417,12 +530,33 @@ export async function getTicketContent(ticketId: string): Promise<{
   }>;
 }
 
-/** UI spec §13.4 — automatic tickets' headline values, keyed by ticket id. */
-export async function getTicketHeadlines(): Promise<Record<string, Record<string, unknown>>> {
+/**
+ * UI spec §13.4 — ticket headline values from this gateway's archive, keyed by
+ * ticket id: `headlines` for automatic tickets (what was sent), `approved` for
+ * review-path tickets (the approved toolArgs archived at execution).
+ */
+export async function getTicketHeadlines(): Promise<{
+  headlines: Record<string, Record<string, unknown>>;
+  approved: Record<string, Record<string, unknown>>;
+}> {
   const res = await fetch(`${MCP_BASE}/internal/evidence/headlines`, { headers: internalHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch ticket headlines: ${res.status}`);
-  const data = (await res.json()) as { headlines?: Record<string, Record<string, unknown>> };
-  return data.headlines ?? {};
+  const data = (await res.json()) as {
+    headlines?: Record<string, Record<string, unknown>>;
+    approved?: Record<string, Record<string, unknown>>;
+  };
+  return { headlines: data.headlines ?? {}, approved: data.approved ?? {} };
+}
+
+/** The approved toolArgs of a proposal this gateway executed, from its archive; `null` = no local copy. */
+export async function getArchivedProposalArgs(proposalId: string): Promise<Record<string, unknown> | null> {
+  const res = await fetch(`${MCP_BASE}/internal/evidence/proposal/${encodeURIComponent(proposalId)}`, {
+    headers: internalHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch archived proposal: ${res.status}`);
+  const data = (await res.json()) as { toolArgs?: Record<string, unknown> };
+  return data.toolArgs ?? null;
 }
 
 // ─── Report (evidence-backed reports) ────────────────────────────────────

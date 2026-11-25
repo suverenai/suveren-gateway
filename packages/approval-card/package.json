@@ -13,7 +13,9 @@
     "./lib/*": "./src/lib/*.ts",
     "./hooks/*": "./src/hooks/*.ts",
     "./components/*": "./src/components/*.tsx",
-    "./fixture/*": "./src/fixture/*"
+    "./fixture/*": "./src/fixture/*",
+    "./mandate-screens": "./src/mandate-screens/index.ts",
+    "./proposal-readers": "./src/proposal-readers/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json",
@@ -23,7 +25,8 @@
     "fixture:build": "vite build --config fixture/vite.config.ts"
   },
   "dependencies": {
-    "@hap/core": "workspace:*"
+    "@hap/core": "workspace:*",
+    "qrcode-generator": "^1.4.4"
   },
   "peerDependencies": {
     "react": "^18.2.0"

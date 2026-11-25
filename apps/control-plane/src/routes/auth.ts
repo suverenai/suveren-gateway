@@ -10,7 +10,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { credentialsToPush } from '../lib/sign-in-group';
 import { runReplacements } from '../lib/connector-replacement';
-import { configure, unconfigureSession, getManifests, replaceIntegration, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
+import { configure, mcpRekeyClient, unconfigureSession, getManifests, replaceIntegration, pushServiceCredentials, resyncGates, startPendingIntegrations, stopAndRemoveAllIntegrations } from '../lib/mcp-bridge';
 import type { Vault } from '../lib/vault';
 import { loadOrGenerateKeyPair, getPublicKey } from '../lib/e2e-key-manager';
 import { clientVersionHeaders } from '../lib/client-version';
@@ -20,6 +20,8 @@ import { resolvePinTls, resolvePinTlsExpectedFingerprint, clearPinTlsExpectedFin
 import { fetchAs, type AsFetchPinning } from '../lib/as-tls-pin';
 import { activeTeamId } from '../lib/managed-team';
 import { managedWrongTeamMessage } from '../lib/session-lock';
+import { pageSessionVerdict, type PageSessionDeps } from '../middleware/auth';
+import { isBearerCredential } from '../lib/as-credential';
 
 const DEFAULT_SP_URL = process.env.SUVEREN_AS_URL ?? 'https://www.suveren.ai';
 
@@ -32,7 +34,7 @@ export interface AuthRouterPairingOptions {
   dataDir: string;
 }
 
-interface AsKeyCheckResult {
+export interface AsKeyCheckResult {
   ok: boolean;
   publicKeyHex?: string;
   /**
@@ -132,7 +134,7 @@ async function fetchAsPublicKey(
  * it to `/api/auth/session`, so a server that fails this check never
  * receives credentials.
  */
-async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
+export async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Promise<AsKeyCheckResult> {
   const existing = readPairing(dataDir);
   const pinnedKey = existing && existing.asUrl === asUrl ? existing.publicKeyHex : undefined;
   // A real, already-captured pin wins; otherwise fall back to a fingerprint
@@ -247,6 +249,18 @@ export function createAuthRouter(
    * whose active workspace is not this team — see managed-team.ts.
    */
   managedTeamId?: string,
+  /**
+   * The page session (lib/page-session.ts). Only consulted for a vault that
+   * has an unlock password; a gateway without one never reads it.
+   */
+  pageSession?: PageSessionDeps,
+  /**
+   * Has this gateway set up device keys (a stored chain)? Only wired where
+   * SUVEREN_DEVICE_KEYS=on. When it has, the account key is no longer how this
+   * gateway signs in: it signs in by its device key (lib/device-signin.ts).
+   * Unset everywhere else, and then /login is exactly what it was.
+   */
+  deviceChainState?: () => 'none' | 'present' | 'unreadable',
 ): Router {
   const router = Router();
   const SP_URL = pairing?.asUrl ?? DEFAULT_SP_URL;
@@ -268,6 +282,36 @@ export function createAuthRouter(
     if (!apiKey) {
       res.status(400).json({ error: 'Missing API key (X-API-Key header or body.apiKey)' });
       return;
+    }
+
+    // A gateway with a device chain signs in by its device key, never by the account key.
+    const chainState = deviceChainState?.();
+    if (chainState === 'present') {
+      res.status(409).json({ error: 'use_device_signin', code: 'use_device_signin', message: 'Refused.' });
+      return;
+    }
+    // A vault that cannot be read is neither "set up" nor "not set up": say so, and sign nothing in.
+    if (chainState === 'unreadable') {
+      res.status(409).json({ error: 'vault_unreadable', code: 'vault_unreadable', message: 'Refused.' });
+      return;
+    }
+
+    // A vault with an unlock password is opened by the password, never by the
+    // account key: this login then only signs the (already unlocked, page-
+    // session-holding) gateway in to the Authority Server. It never derives or
+    // adopts a key, and never wipes — the wipe-and-claim path is closed to an
+    // account key once a password exists.
+    const passwordVault = vault.hasPassword();
+    if (passwordVault) {
+      if (confirmWipe) {
+        res.status(409).json({ error: 'wipe_refused', code: 'wipe_refused', message: 'Refused.' });
+        return;
+      }
+      const v = pageSessionVerdict(vault, pageSession, req);
+      if (!v.ok) {
+        res.status(v.status).json({ error: 'Unauthorized', code: v.code });
+        return;
+      }
     }
 
     try {
@@ -432,58 +476,79 @@ export function createAuthRouter(
       // switching needs a sign-out first, and sign-out needs the current
       // key. The same account signing in again (same key) goes on as before.
       const sessionUser = (data as { user?: { id?: unknown; did?: unknown } }).user;
-      if (vault.isUnlocked() && !vault.isCurrentApiKey(apiKey)) {
-        const current = vault.getSessionUser();
-        const sameAccount = Boolean(current && typeof sessionUser?.id === 'string' && sessionUser.id === current.id);
-        if (!sameAccount) {
-          res.status(409).json({ error: 'signed_in_to_another_account', message: SIGNED_IN_ELSEWHERE });
-          return;
+      // Who owns this vault is decided here, under the same turn-taking as the
+      // move to a password: a wipe-and-claim in flight cannot wipe a vault that
+      // just got a password. The password check is made AGAIN, after the round-trip.
+      const proceed = await vault.exclusive(async () => {
+        if (vault.hasPassword() !== passwordVault) {
+          res.status(409).json({ error: 'password_changed', code: 'password_changed', message: 'Refused.' });
+          return false;
         }
-      }
+        if (passwordVault) {
+          // The vault belongs to the account the password was set for.
+          const bound = vault.getPasswordAccountId();
+          if (bound && sessionUser?.id !== bound) {
+            res.status(409).json({ error: 'account_mismatch', code: 'account_mismatch', message: 'Refused.' });
+            return false;
+          }
+        } else if (vault.isUnlocked() && !vault.isCurrentApiKey(apiKey)) {
+          const current = vault.getSessionUser();
+          const sameAccount = Boolean(current && typeof sessionUser?.id === 'string' && sessionUser.id === current.id);
+          if (!sameAccount) {
+            res.status(409).json({ error: 'signed_in_to_another_account', message: SIGNED_IN_ELSEWHERE });
+            return false;
+          }
+        }
 
-      const candidate = await vault.deriveCandidateFromApiKey(apiKey);
+        if (!passwordVault) {
+          const candidate = await vault.deriveCandidateFromApiKey(apiKey);
 
-      // Vault encryption key is derived from the API key. Logging in with a
-      // different API key on the same gateway means the existing vault
-      // contents (service credentials, integrations, E2EE keypair, gates)
-      // become unreadable and must be wiped. This is destructive — block on
-      // it until the UI has explicitly confirmed. keyMatch looks at the
-      // vault's verifier, or — for a vault from before it — at every
-      // encrypted store, so mandates and tickets count even without a
-      // connector credential.
-      if (vault.keyMatch(candidate) === 'conflict') {
-        if (!confirmWipe) {
-          // Build a summary of what would be lost so the UI can warn clearly.
-          const credentialIds = vault.listCredentials();
-          const services = vault.listServices();
-          // The vault is untouched: whoever is signed in stays signed in.
-          res.status(409).json({
-            error: 'different_account',
-            wouldWipe: true,
-            summary: {
-              credentialCount: credentialIds.length,
-              serviceCount: services.length,
-              credentialIds,
-            },
-          });
-          return;
+          // Vault encryption key is derived from the API key. Logging in with a
+          // different API key on the same gateway means the existing vault
+          // contents (service credentials, integrations, E2EE keypair, gates)
+          // become unreadable and must be wiped. This is destructive — block on
+          // it until the UI has explicitly confirmed. keyMatch looks at the
+          // vault's verifier, or — for a vault from before it — at every
+          // encrypted store, so mandates and tickets count even without a
+          // connector credential.
+          if (vault.keyMatch(candidate) === 'conflict') {
+            if (!confirmWipe) {
+              // Build a summary of what would be lost so the UI can warn clearly.
+              const credentialIds = vault.listCredentials();
+              const services = vault.listServices();
+              // The vault is untouched: whoever is signed in stays signed in.
+              res.status(409).json({
+                error: 'different_account',
+                wouldWipe: true,
+                summary: {
+                  credentialCount: credentialIds.length,
+                  serviceCount: services.length,
+                  credentialIds,
+                },
+              });
+              return false;
+            }
+            console.error('[Control Plane] Different user confirmed — wiping vault and removing previous integrations');
+            // A different API key on this machine means a different person.
+            // Remove the prior user's integrations from the registry so their
+            // configuration doesn't leak into the new user's session.
+            try {
+              await stopAndRemoveAllIntegrations();
+            } catch (err) {
+              console.error('[Control Plane] Failed to remove integrations:', err);
+            }
+            // wipe() also clears the salt, so the candidate derived above no
+            // longer fits: derive again against the fresh salt.
+            vault.wipe();
+            vault.adopt(await vault.deriveCandidateFromApiKey(apiKey));
+          } else {
+            vault.adopt(candidate);
+          }
         }
-        console.error('[Control Plane] Different user confirmed — wiping vault and removing previous integrations');
-        // A different API key on this machine means a different person.
-        // Remove the prior user's integrations from the registry so their
-        // configuration doesn't leak into the new user's session.
-        try {
-          await stopAndRemoveAllIntegrations();
-        } catch (err) {
-          console.error('[Control Plane] Failed to remove integrations:', err);
-        }
-        // wipe() also clears the salt, so the candidate derived above no
-        // longer fits: derive again against the fresh salt.
-        vault.wipe();
-        vault.adopt(await vault.deriveCandidateFromApiKey(apiKey));
-      } else {
-        vault.adopt(candidate);
-      }
+        return true;
+      });
+      if (!proceed) return;
+
       vault.setSpCookie(sessionCookie);
 
       // Session length: the AS reports when THIS session ends (30 days, given
@@ -500,17 +565,32 @@ export function createAuthRouter(
       );
       onSessionEstablished?.();
 
+      // A move to a fresh vault key is finished from what the MCP server REPORTS
+      // about its stores (never from our own record), before anything is
+      // configured: it is handed the key its stores are sealed with, or nothing.
+      let rekeyPending = false;
+      let mcpKeyHex: string | null = vault.getVaultKeyHex();
+      if (passwordVault && vault.hasPendingRekey()) {
+        const moved = await vault.reconcileRekey(mcpRekeyClient);
+        if (moved.outcome === 'locked') {
+          res.status(503).json({ error: 'rekey_incomplete', code: 'rekey_incomplete', message: 'Not finished.' });
+          return;
+        }
+        rekeyPending = moved.outcome === 'pending';
+        mcpKeyHex = moved.mcpKeyHex;
+      }
+
       // Push session cookie + vault key to MCP server (must complete before responding)
-      if (sessionCookie) {
+      if (sessionCookie && mcpKeyHex) {
         try {
-          await configure(sessionCookie, vault.getVaultKeyHex());
+          await configure(sessionCookie, mcpKeyHex);
         } catch (err) {
           console.error('[Control Plane] Failed to configure MCP:', err);
         }
       }
 
       // Return user data
-      res.json(data);
+      res.json(rekeyPending ? { ...data, rekeyPending } : data);
 
       // Background: re-push credentials, trigger a pending-integrations retry,
       // re-sync gates, and register the E2EE public key on the SP (non-blocking).
@@ -659,10 +739,11 @@ export function createAuthRouter(
       unconfigureSession(),
       cookie
         ? fetchAs(
-            `${SP_URL}/api/auth/logout`,
+            // A device session ends where it was opened; a cookie session ends at /api/auth/logout, as before.
+            isBearerCredential(cookie) ? `${SP_URL}/api/devices/session` : `${SP_URL}/api/auth/logout`,
             {
-              method: 'POST',
-              headers: { cookie, ...clientVersionHeaders() },
+              method: isBearerCredential(cookie) ? 'DELETE' : 'POST',
+              headers: isBearerCredential(cookie) ? { Authorization: cookie, ...clientVersionHeaders() } : { cookie, ...clientVersionHeaders() },
               redirect: 'manual',
               // Same reasoning as the session call above — this sat with no
               // timeout of its own before, which would have hung the

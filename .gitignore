@@ -14,3 +14,6 @@ bundle/windows/out/
 bundle/windows/stage*/
 bundle/windows/*.msi
 bundle/windows/*.zip
+
+# Scratch output of packages/unlock-helper/macos/manual-check-gateway.mjs
+apps/control-plane/.manual-check/

@@ -18,8 +18,30 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
-import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
+import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, giveOnPhone, changeOnPhone, proposalGiveState, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 import { eventBus } from '../lib/event-bus';
+
+/** The workspace the Setup tools' mandates go to (the same name builtins/setup.ts declares; keep the two in step). */
+const DELEGATION_PROFILE = 'delegation';
+
+/** The request the Setup tool builds from the arguments a person approved (mirror of builtins/setup.ts `mandateRequest` and `changesFrom`). */
+function createRequestFrom(args: Record<string, unknown>): MandateRequest {
+  return {
+    workspaceOf: DELEGATION_PROFILE, profile: args.profile, limits: args.limits, scope: args.scope, intent: args.intent, mode: args.mode,
+    durationHours: args.duration_hours, title: args.title,
+  } as MandateRequest;
+}
+function changeRequestFrom(args: Record<string, unknown>, old: unknown): { change: MandateChangeRequest } {
+  return { change: {
+    old: old as MandateChangeRequest['old'],
+    changes: {
+      limits: args.limits as Record<string, unknown> | undefined, scope: args.scope as Record<string, unknown> | undefined,
+      mode: typeof args.mode === 'string' ? args.mode : undefined, durationHours: typeof args.duration_hours === 'number' ? args.duration_hours : undefined,
+      intent: typeof args.intent === 'string' ? args.intent : undefined,
+    },
+    sealedDiff: args.change as MandateChangeRequest['sealedDiff'],
+  } };
+}
 
 function secretMatches(provided: string | undefined, expected: string): boolean {
   if (!expected || !provided) return false;
@@ -43,21 +65,33 @@ export function createInternalMandateRouter(
       res.status(400).json({ error: 'missing request' });
       return;
     }
+    // Whether a person compared an approver's identity code is for the page to say, never for the AI path (nor for a proposal's sealed copy).
+    delete (request as { confirmedApproverDids?: unknown }).confirmedApproverDids;
+    if ((request as { change?: { confirmedApproverDids?: unknown } }).change) delete (request as { change?: { confirmedApproverDids?: unknown } }).change!.confirmedApproverDids;
     const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+    // A gateway with a device chain: a mandate is GIVEN by the person on the gateway page (Touch ID or the phone), never created
+    // here from an approval. The approval card's "Give this mandate" opens that page from the proposal and the page closes the
+    // proposal once the mandate is live, so this path is not reached for it (one mechanism, Andreas 2026-11-20). Read-only
+    // checks (dry runs) still answer: they tell the AI whether the mandate could be given at all.
+    if (dryRun !== true && d.grants?.active()) {
+      res.status(403).json({ error: 'give_on_page', code: 'give_on_page', message: 'On this computer the person gives a mandate on the gateway page with Touch ID or the phone; nothing was created here. They give it from the approval card.' });
+      return;
+    }
+    const effective: MandateRequest = request;
     try {
-      const change = (request as { change?: MandateChangeRequest }).change;
+      const change = (effective as { change?: MandateChangeRequest }).change;
       if (change) {
         if (dryRun === true) {
           const { plan, diff } = await planMandateChange(change, d);
           res.json({ ok: true, groupName: plan.groupName, profileId: plan.profile.id, mode: plan.mode, ttlSeconds: plan.ttlSeconds, diff });
           return;
         }
-        const { authorizationId, plan, revokeError } = await changeMandate(change, d);
+        const { authorizationId, plan, revokeError, oldStoppedLocally } = await changeMandate(change, d);
         // The Authority Server holds the new mandate now: the Mandates list and the
         // dashboard re-read it at once (this path never crosses the /api proxy,
         // which is where every other mandate write announces itself).
         eventBus.emit('attestation-changed');
-        res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}) });
+        res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds, ...(revokeError ? { revokeError } : {}), ...(oldStoppedLocally ? { oldStoppedLocally } : {}) });
         return;
       }
       if (dryRun === true && (request as { rightsOnly?: unknown }).rightsOnly === true) {
@@ -71,17 +105,55 @@ export function createInternalMandateRouter(
         res.json({ ok: true, groupName: plan.groupName, profileId: plan.profile.id, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
         return;
       }
-      const { authorizationId, plan } = await createMandate(request, d);
+      const { authorizationId, plan } = await createMandate(effective, d);
       eventBus.emit('attestation-changed'); // see the change branch above
       res.json({ ok: true, authorizationId, profileId: plan.profile.id, groupName: plan.groupName, mode: plan.mode, ttlSeconds: plan.ttlSeconds });
     } catch (err) {
       if (err instanceof MandateRefused) {
-        res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}) });
+        res.status(422).json({ error: 'mandate_refused', message: err.message, ...(err.code ? { code: err.code } : {}), ...(err.detail ?? {}) });
         return;
       }
       console.error('[Control Plane] /internal/mandate failed:', err);
       res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
     }
+  });
+  // POST /internal/mandate/offer — an AI proposed a mandate or a change (setup__create_mandate / setup__change_mandate) on a gateway with
+  // a device chain. The person gives it with their touch, on this computer's card or on their phone; so that the phone can show it at
+  // once, in the request's place, the give is prepared now and sealed to the person's devices, exactly as the card's "Give this mandate
+  // on your phone" does (one give per proposal: the card then waits for this one). Nothing is granted or signed here: the phone's grant
+  // is checked against what was planned, and the proposal is closed by whoever gives it. Body: `{ proposalId, tool, args, old? }`.
+  router.post('/mandate/offer', async (req, res) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const b = (req.body ?? {}) as { proposalId?: unknown; tool?: unknown; args?: unknown; old?: unknown };
+    const args = b.args && typeof b.args === 'object' && !Array.isArray(b.args) ? b.args as Record<string, unknown> : null;
+    if (typeof b.proposalId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(b.proposalId) || !args || (b.tool !== 'create' && b.tool !== 'change')) {
+      res.status(400).json({ error: 'bad_request', code: 'bad_request' });
+      return;
+    }
+    const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
+    if (!d.grants?.active()) { res.json({ ok: false, code: 'no_chain' }); return; }
+    try {
+      const r = b.tool === 'change'
+        ? await changeOnPhone(changeRequestFrom(args, b.old).change, d, { proposalId: b.proposalId })
+        : await giveOnPhone(createRequestFrom(args), d, { proposalId: b.proposalId });
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      // Not offered (no phone that can give, the plan refused): the card on the computer still gives it; the phone shows the request.
+      if (err instanceof MandateRefused) { res.json({ ok: false, code: err.code ?? 'refused', message: err.message }); return; }
+      console.error('[Control Plane] /internal/mandate/offer failed:', err);
+      res.status(500).json({ error: 'internal', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  // GET /internal/mandate/given/:proposalId — what became of an AI proposal's give (see proposalGiveState): the AI path names the
+  // mandate its proposal put in force instead of "the person signed their own version".
+  router.get('/mandate/given/:proposalId', (req, res) => {
+    if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) { res.status(401).json({ error: 'unauthorized' }); return; }
+    const id = req.params.proposalId;
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { res.status(400).json({ error: 'bad_request' }); return; }
+    res.json(proposalGiveState(id, { ...deps(), newAuthorizationId: () => '' }));
   });
   return router;
 }

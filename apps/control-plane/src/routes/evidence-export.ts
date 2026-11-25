@@ -24,6 +24,7 @@ import type { Vault } from '../lib/vault';
 import { readPairing } from '../lib/as-pairing';
 import { resolvePinTls } from '../lib/as-config';
 import { fetchAs, AsTlsMismatchError } from '../lib/as-tls-pin';
+import { asAuthHeaders } from '../lib/as-credential';
 
 const AS_FETCH_TIMEOUT_MS = 20_000;
 
@@ -61,7 +62,7 @@ export function createEvidenceExportRouter(
         const pin = readPairing(dataDir);
         const { res: asRes } = await fetchAs(
           `${spUrl}/api/tickets/export`,
-          { headers: { Cookie: cookie }, signal: controller.signal },
+          { headers: asAuthHeaders(cookie), signal: controller.signal },
           {
             enforce: resolvePinTls(dataDir),
             pinnedSpkiHex: pin && pin.asUrl === spUrl ? pin.tlsSpkiPinHex : undefined,

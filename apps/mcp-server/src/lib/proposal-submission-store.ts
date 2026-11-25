@@ -35,6 +35,8 @@ export interface SubmittedProposal {
    * the review path reads it from here to name it on the ticket request.
    */
   actionType?: string;
+  /** The signed `mandate_id` of the mandate it was submitted under: a decision names this one, never "the newest issued". */
+  mandateId?: string;
 }
 
 interface StoreFile {
@@ -69,6 +71,7 @@ export class ProposalSubmissionStore {
     profileId: string;
     previewHash?: string;
     actionType?: string;
+    mandateId?: string;
   }): void {
     const file = this.load();
     file.entries = file.entries.filter(e => e.proposalId !== entry.proposalId);
@@ -82,6 +85,7 @@ export class ProposalSubmissionStore {
       submittedAt: nowSec(),
       ...(entry.previewHash ? { previewHash: entry.previewHash } : {}),
       ...(entry.actionType ? { actionType: entry.actionType } : {}),
+      ...(entry.mandateId ? { mandateId: entry.mandateId } : {}),
     });
     this.persist(file);
   }

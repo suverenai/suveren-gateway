@@ -12,8 +12,19 @@ import { useEffect, useState } from 'react';
  * `null` until the gateway has answered once. A layout that differs by mode (the Connectors page) waits for
  * it — assuming "off" first drew the production layout and then rebuilt every card in the simulation one.
  */
+/**
+ * The last answer this page got (DEC-100): a frame that replaces another (the dashboard greyed out after the sign-in →
+ * the real dashboard) mounts with the banner already there instead of drawing it a moment later and pushing the page
+ * down. Only a starting point: each mount asks /health again at once.
+ */
+let lastSimulation: boolean | null = null;
+/** Tests only. */
+export function resetSimulationSeenForTests(): void { lastSimulation = null; }
+/** Notes an answer of /health for the next mount. */
+export function noteSimulation(on: boolean): void { lastSimulation = on; }
+
 export function useSimulationMode(): boolean | null {
-  const [simulation, setSimulation] = useState<boolean | null>(null);
+  const [simulation, setSimulation] = useState<boolean | null>(lastSimulation);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,6 +33,7 @@ export function useSimulationMode(): boolean | null {
       fetch('/health')
         .then(r => r.json())
         .then((data: { simulation?: boolean }) => {
+          noteSimulation(data.simulation === true);
           if (!cancelled) setSimulation(data.simulation === true);
         })
         .catch(() => { /* server may be momentarily unreachable — keep last value */ });

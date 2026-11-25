@@ -17,6 +17,7 @@ import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import { useFormInProgress } from '../hooks/useFormInProgress';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { QueueCard } from './QueueCard';
+import { ApprovalPanelHead } from '@suveren/approval-card/components/ApprovalPanelHead';
 import { announceApprovalDecided, type DecisionKind, type DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { QueueEntry } from '../lib/approval-queue';
 import { resultDismissLabel, type ApprovalOutcome } from '@suveren/approval-card/lib/approval-outcome';
@@ -24,10 +25,6 @@ import {
   INITIAL_PANEL, RESULT_SHOW_MS, SLIDE_MS, afterDecision, neighbour, panelChrome, positionOf,
   reconcilePanel, resolveCurrent, stripAutoLabel, type PanelState,
 } from '../lib/approval-panel';
-
-const Chevron = ({ dir }: { dir: 'left' | 'right' }) => (
-  <svg className="apr-i" viewBox="0 0 16 16" aria-hidden="true"><path d={dir === 'left' ? 'M10 3 5 8l5 5' : 'm6 3 5 5-5 5'} /></svg>
-);
 
 export function ApprovalPanelHost() {
   const q = useApprovalQueue();
@@ -43,7 +40,6 @@ export function ApprovalPanelHost() {
   const [settling, setSettling] = useState<{ entry: QueueEntry; before: string[]; stay: boolean } | null>(null);
   const settlingRef = useRef<{ id: string; before: string[] } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [headMenu, setHeadMenu] = useState(false);
   const compact = useMediaQuery('(max-width: 1099px)');
   // The slide-out takes SLIDE_MS; the content stays mounted until it is gone.
   const [mounted, setMounted] = useState(false);
@@ -132,7 +128,7 @@ export function ApprovalPanelHost() {
 
   // ── Actions ──
   const goLater = useCallback(() => {
-    setMenuOpen(false); setHeadMenu(false);
+    setMenuOpen(false);
     setPanel((p) => ({ ...p, open: false }));
     // A result the person sent away is done with: it must not reappear when the next approval opens the panel.
     if (settlingRef.current) { settlingRef.current = null; setSettling(null); }
@@ -191,10 +187,14 @@ export function ApprovalPanelHost() {
   const [busy, setBusy] = useState(false);
   const noAuto = useCallback(() => { goLater(); void q.setAutoOpen(false); }, [goLater, q]);
 
+  // What opens after a decided card: named on its result while it waits (UI review, DEC-88).
+  const nextEntryOf = (before: string[], id: string) => {
+    const n = afterDecision(before, id).next;
+    return n ? q.entries.find((e) => e.id === n)?.proposal ?? null : null;
+  };
   const listForCount = settling ? settling.before : q.ids;
   const pos = positionOf(listForCount, settling ? settling.entry.id : showId);
   const total = listForCount.length;
-  const many = total > 1;
   const prevId = settling || busy ? null : neighbour(q.ids, showId, -1);
   const nextId = settling || busy ? null : neighbour(q.ids, showId, 1);
   const count = q.ids.length;
@@ -221,70 +221,17 @@ export function ApprovalPanelHost() {
       >
         {(mounted || chrome.panel) && (
           <>
-            {compact ? (
-              /* Below 1100px: ONE compact row — title, ‹ k of N ›, then the menu and ✕ Later. */
-              <header className="apr-head is-compact">
-                <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
-                {many ? (
-                  <nav className="apr-nav" aria-label="Move between approvals">
-                    <button type="button" className="av3-btn apr-ico" aria-label="Previous approval" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev"><Chevron dir="left" /></button>
-                    <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
-                    <button type="button" className="av3-btn av3-btn-primary apr-ico" aria-label="Next approval" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next"><Chevron dir="right" /></button>
-                  </nav>
-                ) : <span className="apr-nav-ph" />}
-                <div className="apr-acts">
-                  {q.autoOpen !== null && (
-                    <span className="apr-menu-wrap">
-                      <button type="button" className="apr-btn apr-ico-plain" aria-label="More" title="More" aria-haspopup="menu" aria-expanded={headMenu} onClick={() => setHeadMenu((o) => !o)} data-testid="approval-head-menu">&#8942;</button>
-                      {headMenu && (
-                        <div className="apr-pop apr-head-pop" role="menu">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
-                            onClick={() => { setHeadMenu(false); if (q.autoOpen) noAuto(); else void q.setAutoOpen(true); }}
-                            data-testid="approval-auto-toggle"
-                          >
-                            {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
-                          </button>
-                        </div>
-                      )}
-                    </span>
-                  )}
-                  <button type="button" className="apr-btn apr-ico-plain" aria-label="Later" title="Later" onClick={goLater} data-testid="approval-later">
-                    <svg className="apr-i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
-                  </button>
-                </div>
-              </header>
-            ) : (
-              <header className="apr-head">
-                <h2 className="apr-title" tabIndex={-1} data-apr-focus>Waiting for you</h2>
-                {many ? (
-                  <nav className="apr-nav" aria-label="Move between approvals">
-                    <button type="button" className="av3-btn" disabled={!prevId} onClick={() => prevId && setCurrentId(prevId)} data-testid="approval-prev">
-                      <Chevron dir="left" /> Previous
-                    </button>
-                    <span className="apr-pos" data-testid="approval-position" aria-live="polite">{pos ? `${pos.index} of ${total}` : ''}</span>
-                    <button type="button" className="av3-btn av3-btn-primary" disabled={!nextId} onClick={() => nextId && setCurrentId(nextId)} data-testid="approval-next">
-                      Next <Chevron dir="right" />
-                    </button>
-                  </nav>
-                ) : <span className="apr-nav-ph" />}
-                <div className="apr-acts">
-                  <button type="button" className="apr-btn" onClick={goLater} data-testid="approval-later">Later</button>
-                  {q.autoOpen !== null && (
-                    <button
-                      type="button"
-                      className={`av3-btn apr-auto${q.autoOpen ? '' : ' av3-btn-primary'}`}
-                      onClick={q.autoOpen ? noAuto : () => { void q.setAutoOpen(true); }}
-                      data-testid="approval-auto-toggle"
-                    >
-                      {q.autoOpen ? 'Don’t open automatically' : 'Open automatically'}
-                    </button>
-                  )}
-                </div>
-              </header>
-            )}
+            <ApprovalPanelHead
+              compact={compact}
+              position={pos}
+              total={total}
+              prevId={prevId}
+              nextId={nextId}
+              onMove={setCurrentId}
+              onLater={goLater}
+              autoOpen={q.autoOpen}
+              onToggleAuto={() => { if (q.autoOpen) noAuto(); else void q.setAutoOpen(true); }}
+            />
             <div className="apr-body">
               {shown && (
                 <div className="apr-stage" key={shown.id} data-proposal-id={shown.id}>
@@ -293,6 +240,7 @@ export function ApprovalPanelHost() {
                     onDecided={handleDecided}
                     onBusyChange={setBusy}
                     onOutcome={handleOutcome}
+                    nextProposal={settling && settling.entry.id === shown.id ? nextEntryOf(settling.before, shown.id) : null}
                     {...(settling?.stay && settling.entry.id === shown.id ? {
                       dismissLabel: resultDismissLabel(afterDecision(settling.before, shown.id).next !== null),
                       onDismissResult: () => finishSettling(shown.id),

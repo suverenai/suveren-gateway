@@ -311,6 +311,7 @@ describe('setup__create_mandate', () => {
     expect(seen[1].request).toMatchObject({ profile: 'sales', limits: { value_max: 1000 }, scope: { currency: 'EUR' }, mode: 'automatic', durationHours: 24 });
   });
 
+
   // DL1 decision 1: create_mandate now works OUTSIDE simulation too — gated
   // instead by decision 5 (mandate version) and decision 3 (its scope).
   it('outside simulation mode with a 0.1 (unscoped) Delegation mandate: refused and recorded under Blocked', async () => {

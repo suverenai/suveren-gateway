@@ -14,9 +14,10 @@ import type { Vault, ServiceDef } from '../lib/vault';
 import { getManifests, pushServiceCredentials } from '../lib/mcp-bridge';
 import { credentialView, textFieldsFor, META_KEY } from '../lib/credential-meta';
 import { proxiedFetch } from '../lib/proxied-fetch';
+import { type LoginChangeGate, type ChangeKind, confirmationRequired } from '../lib/change-confirmation';
 import {
   credentialsToPush, parseGroupCredentialName, getGroup, groupOfMember, groupCredentialName,
-  effectiveCredentials, withoutSignIn, changesGroupClient,
+  effectiveCredentials, withoutSignIn, changesGroupClient, storedSignInEntries,
 } from '../lib/sign-in-group';
 
 /**
@@ -38,8 +39,44 @@ async function cachedManifests(): Promise<unknown> {
   return manifestCache.value;
 }
 
-export function createVaultRouter(vault: Vault): Router {
+/**
+ * `gate` decides whether a stored login may be replaced or removed. Without a
+ * password on the vault it is not consulted (today's behaviour). With one, a
+ * missing gate refuses every such change. It is asked where the write really
+ * happens, not by looking at the URL: a first entry needs nothing (DEC-44), a
+ * replacement or removal needs a confirmation of exactly that change.
+ */
+export function createVaultRouter(vault: Vault, gate?: LoginChangeGate): Router {
   const router = Router();
+
+  /**
+   * Is a login stored under this name? For a sign-in group's entry, also: does
+   * any member still hold its own stored sign-in? The group entry is laid over
+   * the members' (effectiveCredentials) and a group sign-in retires theirs, so
+   * writing it replaces them. Unreadable counts as present.
+   */
+  const storedLoginExists = async (name: string): Promise<boolean> => {
+    try {
+      if (vault.getCredential(name) !== null) return true;
+      const groupId = parseGroupCredentialName(name);
+      if (!groupId) return false;
+      const group = getGroup(await cachedManifests(), groupId);
+      return Boolean(group && storedSignInEntries(group, n => vault.getCredential(n)).length > 0);
+    } catch { return true; }
+  };
+  /**
+   * True if the change may go ahead; otherwise the refusal has been sent.
+   * `change` names the route and the operation as well as the data: a
+   * confirmation for one (a merge into credentials) is not one for another
+   * (a replace through services, or a delete).
+   */
+  const allowed = async (req: Request, res: Response, kind: ChangeKind, name: string, change: unknown): Promise<boolean> => {
+    if (!vault.hasPassword()) return true;
+    if (!(await storedLoginExists(name))) return true; // a first entry
+    if (gate?.allow(req, kind, name, change)) return true;
+    res.status(403).json(confirmationRequired(kind, name));
+    return false;
+  };
 
   /**
    * GET /vault/status
@@ -131,6 +168,7 @@ export function createVaultRouter(vault: Vault): Router {
       if (signsOut) fields = withoutSignIn(fields, group.members[0].oauth!); // keeps the client just saved
     }
 
+    if (!(await allowed(req, res, 'replace', name, { route: 'credentials', op: 'put-merge', fields: incoming }))) return;
     vault.setCredential(name, fields);
 
     // Push decrypted creds to MCP for service use (group overlay applied; a
@@ -151,6 +189,7 @@ export function createVaultRouter(vault: Vault): Router {
    */
   router.delete('/credentials/:name', async (req: Request, res: Response) => {
     const { name } = req.params;
+    if (!(await allowed(req, res, 'remove', name, { route: 'credentials', op: 'delete' }))) return;
     vault.deleteCredential(name);
     // Deleting a sign-in group's entry returns its members to their own
     // entries: push what they now run on.
@@ -189,6 +228,9 @@ export function createVaultRouter(vault: Vault): Router {
     const { id } = req.params;
     const { credentials, ...serviceDef } = req.body as ServiceDef & { credentials?: Record<string, string> };
 
+    const hasCredentials = Boolean(credentials && Object.keys(credentials).length > 0);
+    // Before anything is written: a refused request changes nothing.
+    if (hasCredentials && !(await allowed(req, res, 'replace', id, { route: 'services', op: 'put-replace', credentials }))) return;
     vault.setService(id, { ...serviceDef, id });
 
     // If credentials provided, encrypt and store them too
@@ -207,8 +249,9 @@ export function createVaultRouter(vault: Vault): Router {
   /**
    * DELETE /vault/services/:id
    */
-  router.delete('/services/:id', (req: Request, res: Response) => {
+  router.delete('/services/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
+    if (!(await allowed(req, res, 'remove', id, { route: 'services', op: 'delete' }))) return;
     vault.deleteService(id);
     vault.deleteCredential(id);
     res.json({ ok: true });

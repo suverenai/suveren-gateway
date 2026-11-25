@@ -48,13 +48,18 @@ import { CommittedExecutor, ExecutorLock, describeAutoExecutionLog } from '../sr
 import type { SPProposal } from '../src/lib/sp-client';
 import { resolveWhoLabel } from '../src/lib/who-label';
 import { outcomeEntryFor } from '../src/lib/outcome-outbox';
+import { controlPlaneProposalGive } from '../src/lib/cp-mandate';
 import { decryptRejectionNote } from '../src/lib/proposal-content';
-import { checkSentArgs, resultView, headlineArgs } from '../src/lib/ticket-content';
+import { resolveProposalFacts, controlPlaneDevice } from '../src/lib/device-decisions';
+import { readSignedMandate, latestSigned } from '../src/lib/mandate-change';
+import { makeGrantGate, resyncVerdict } from '../src/lib/mandate-grants';
+import { checkSentArgs, resultView, headlineArgs, approvedHeadlineArgs, archivedApprovedArgs } from '../src/lib/ticket-content';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAsUrl, resolvePinTls, validatePinTlsForUrl } from '../src/lib/as-config';
 import { readMcpPairedAsUrl, writeMcpPairedAsUrl } from '../src/lib/mcp-as-tracker';
 import { setAsBaseUrl } from '../src/lib/receipt-footer';
+import { VaultKeyControl } from '../src/lib/vault-key-control';
 
 // Same default every stateful module in this codebase uses (GateStore,
 // ReceiptArchive, …) — see as-config.ts's doc comment.
@@ -225,6 +230,11 @@ function internalOnly(req: Request, res: Response, next: NextFunction): void {
 
 // ─── Internal endpoints (control-plane → MCP) ─────────────────────────────
 
+const keyControl = new VaultKeyControl(dataDir, [
+  state.gateStore, state.denialLog, state.receiptArchive, state.reportStore,
+  state.outcomeOutbox, state.changeLedger, state.executionResults,
+]);
+
 app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   const { sessionCookie, vaultKeyHex, apiKey } = req.body as {
     sessionCookie?: string;
@@ -239,14 +249,7 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   console.error('[Suveren MCP] Session cookie configured by control-plane');
 
   if (vaultKeyHex) {
-    const key = Buffer.from(vaultKeyHex, 'hex');
-    state.gateStore.setVaultKey(key);
-    state.denialLog.setVaultKey(key);
-    state.receiptArchive.setVaultKey(key);
-    state.reportStore.setVaultKey(key);
-    state.outcomeOutbox.setVaultKey(key);
-    state.changeLedger.setVaultKey(key);
-    state.executionResults.setVaultKey(key);
+    keyControl.setKey(Buffer.from(vaultKeyHex, 'hex'));
     console.error('[Suveren MCP] Vault key configured — gate store + denial log + receipt archive + report store + outcome outbox + execution results encryption active');
   }
 
@@ -256,6 +259,24 @@ app.post('/internal/configure', internalOnly, (req: Request, res: Response) => {
   }
 
   res.json({ ok: true });
+});
+
+/**
+ * The vault key changed (the control plane moved the vault to an unlock
+ * password). Everything this process sealed with the old key is re-sealed with
+ * the new one, and the stores switch to it, in one synchronous step: nothing
+ * of ours can write between the two with the old key. Idempotent (lib/rekey.ts).
+ */
+app.post('/internal/rekey', internalOnly, (req: Request, res: Response) => {
+  const r = keyControl.rekey(req.body ?? {});
+  if (r.status === 200) console.error(`[Suveren MCP] Vault key replaced — ${r.body.reSealed} blob(s) re-sealed, ${r.body.unreadable} unreadable`);
+  res.status(r.status).json(r.body);
+});
+
+/** Which of two keys this server's stores are sealed with (never the key). The control plane asks before it ever configures. */
+app.post('/internal/key-state', internalOnly, (req: Request, res: Response) => {
+  const r = keyControl.state(req.body ?? {});
+  res.status(r.status).json(r.body);
 });
 
 /**
@@ -280,6 +301,35 @@ app.post('/internal/clear-session', internalOnly, (req: Request, res: Response) 
   state.spClient.clearSession(validReason);
   console.error(`[Suveren MCP] Session cleared by control-plane (${validReason ?? 'expired'})`);
   res.json({ ok: true });
+});
+
+/**
+ * Mandates this gateway holds back, with its own verdict code (the page's "held back" list; control plane only, read-only).
+ * A check that could not be made (the Authority Server or control plane unreachable) is not a verdict and is not listed.
+ */
+const TRANSIENT_VERDICTS = new Set(['grants_unavailable', 'chain_unavailable', 'device_state_unavailable', 'body_unavailable']);
+app.get('/internal/held-back', internalOnly, (_req: Request, res: Response) => {
+  res.json({ held: state.cache.withheldList().filter(h => !TRANSIENT_VERDICTS.has(h.code)) });
+});
+
+/**
+ * The signed mandate as this gateway read it, for a change the person starts on the page: the old mandate as the change flow takes
+ * it, and the team terms the owner SIGNED (approvers as DIDs, the approval count, the caps). Control plane only.
+ */
+app.post('/internal/signed-mandate', internalOnly, (req: Request, res: Response) => {
+  const id = (req.body as { authorizationId?: unknown } | undefined)?.authorizationId;
+  if (typeof id !== 'string' || !id) { res.status(400).json({ error: 'Missing authorizationId' }); return; }
+  const read = readSignedMandate(state, id);
+  if ('refusal' in read) { res.status(409).json({ error: read.refusal, code: read.code }); return; }
+  const p = latestSigned(read.authorization)?.payload;
+  res.json({
+    old: read.old, short: read.short,
+    team: {
+      approverDids: Array.isArray(p?.above_cap_approvers) ? p!.above_cap_approvers : [],
+      approvals: typeof p?.above_cap_approvals === 'number' ? p!.above_cap_approvals : null,
+      caps: p?.above_cap_caps && typeof p.above_cap_caps === 'object' ? p.above_cap_caps : {},
+    },
+  });
 });
 
 app.post('/internal/gate-content', internalOnly, async (req: Request, res: Response) => {
@@ -307,6 +357,9 @@ app.post('/internal/gate-content', internalOnly, async (req: Request, res: Respo
     // Sync the authorization from the SP so we can verify hashes
     const auth = await state.cache.syncAuthorization(authorizationId);
     if (!auth) {
+      // Device keys: a mandate the gateway does not honour (no grant of its owner's device) says why, and gates nothing.
+      const why = state.cache.withheldReason(authorizationId);
+      if (why) { res.status(409).json({ error: `Not honoured: ${why.text}`, code: why.code }); return; }
       res.status(404).json({ error: `No authorization found for ${authorizationId}` });
       return;
     }
@@ -393,6 +446,45 @@ app.post('/internal/run-committed', internalOnly, (_req: Request, res: Response)
   res.json({ ok: true });
 });
 
+/**
+ * Replaced mandates (src/lib/replaced-mandates.ts). The control plane records
+ * an old mandate here as soon as its replacement is delivered; from then on it
+ * is not honoured on this gateway, whatever the Authority Server still serves.
+ * The same record is the revoke outbox: the control plane retries the revoke,
+ * notes each attempt, and clears the record once the AS confirmed it.
+ */
+app.get('/internal/replaced-mandates', internalOnly, (_req: Request, res: Response) => {
+  res.json({ entries: state.replacedMandates.list() });
+});
+
+app.post('/internal/replaced-mandates', internalOnly, (req: Request, res: Response) => {
+  const { authorizationId, replacedBy } = req.body as { authorizationId?: unknown; replacedBy?: unknown };
+  if (typeof authorizationId !== 'string' || !authorizationId || typeof replacedBy !== 'string' || !replacedBy || authorizationId === replacedBy) {
+    res.status(400).json({ error: 'authorizationId and replacedBy are required and must differ' });
+    return;
+  }
+  const entry = state.replacedMandates.record(authorizationId, replacedBy);
+  // Stop honouring it now, not at the next resync: drop the cached grant and
+  // its local gate (intent). Tools are re-listed so the AI no longer sees it.
+  state.cache.dropReplaced(authorizationId);
+  state.gateStore.delete(authorizationId);
+  for (const [, session] of activeSessions) {
+    try { session.refreshTools(); } catch { /* a closed session refreshes on reconnect */ }
+  }
+  res.json({ ok: true, entry });
+});
+
+app.post('/internal/replaced-mandates/:id/attempt', internalOnly, (req: Request, res: Response) => {
+  const { error } = req.body as { error?: unknown };
+  state.replacedMandates.noteAttempt(req.params.id, typeof error === 'string' && error ? error : undefined);
+  res.json({ ok: true });
+});
+
+app.delete('/internal/replaced-mandates/:id', internalOnly, (req: Request, res: Response) => {
+  state.replacedMandates.clear(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Response) => {
   // WS3 defence-in-depth (work-plan "Added 2026-10-11 — an account is
   // Personal OR in one team"): refresh which workspace is active BEFORE
@@ -416,6 +508,7 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
       // Re-sync each stored grant by its per-ceremony id.
       const authzId = gate.authorizationId;
       const auth = await state.cache.syncAuthorization(authzId);
+      const verdict = resyncVerdict(state.cache, authzId, !!auth);
       if (auth) {
         state.setGateContent(auth.path, authzId, auth.profileId, gate.gateContent, {
           boundsHash: gate.boundsHash,
@@ -427,6 +520,10 @@ app.post('/internal/resync-gates', internalOnly, async (_req: Request, res: Resp
         });
         synced++;
         console.error(`[Suveren MCP] Re-synced gate: ${gate.path}`);
+      } else if (verdict === 'withheld') {
+        // Device keys: the grant of this mandate does not verify right now. Not an ending: nothing is honoured, and the stored
+        // gate (the intent) is kept, so a grant that arrives or verifies later gates again without the person doing anything.
+        console.error(`[Suveren MCP] Mandate not honoured (${state.cache.withheldReason(authzId)!.code}): ${gate.path}`);
       } else {
         // The AS no longer serves this authorization: hard-deleted, or
         // REVOKED (syncAuthorization drops revoked grants so they are
@@ -495,6 +592,46 @@ app.post('/internal/preview', internalOnly, async (req: Request, res: Response) 
     status: result.status,
   });
   res.json(result);
+});
+
+/**
+ * Device keys (plan 4.2, step 12): what a device-signed decision must name that the Authority
+ * Server's proposal read does not carry — the signed `mandate_id` and the action type — from
+ * THIS gateway's own data (its verified mandate, its submission record, its manifests).
+ * Asked by the control plane only; never reaches an MCP client.
+ */
+app.post('/internal/proposal-facts', internalOnly, async (req: Request, res: Response) => {
+  const { proposalId, authorizationId, tool, reportedActionType, approverDid } = (req.body ?? {}) as { proposalId?: unknown; authorizationId?: unknown; tool?: unknown; reportedActionType?: unknown; approverDid?: unknown };
+  if (typeof proposalId !== 'string' || !proposalId || typeof authorizationId !== 'string' || !authorizationId || typeof tool !== 'string' || !tool) {
+    res.status(400).json({ error: 'Missing proposalId, authorizationId, or tool' });
+    return;
+  }
+  const out = await resolveProposalFacts({
+    // device keys: a mandate without its owner's grant offers no decision (lib/mandate-grants.ts)
+    // the decision path: a colleague's mandate this person confirmed by identity code may be decided on (the cache never holds one)
+    grants: makeGrantGate({ sp: state.spClient, cp: controlPlaneDevice, allowConfirmedOwners: true }),
+    // read-only: a grant this gateway does not hold is not fetched into its cache on a request from outside
+    auth: async (id) => state.cache.getAllAuthorizations().find(a => a.authorizationId === id),
+    // An approver's gateway never holds the owner's grant: its mandates are read for this one proposal, not cached.
+    fetchAuth: async (id) => {
+      const r = await state.spClient.getAttestations(id);
+      return r.authorization_id === id ? { attestations: r.attestations.map(a => ({ blob: a.blob, domain: a.domain, expiresAt: a.expires_at })) } : undefined;
+    },
+    submission: (id) => state.proposalSubmissions.get(id),
+    manifestActionType: (t) => {
+      const a = integrationManager.getAllTools().find(x => x.namespacedName === t)?.gating?.staticExecution?.action_type;
+      return typeof a === 'string' ? a : undefined;
+    },
+  }, {
+    proposalId, authorizationId, tool,
+    ...(typeof reportedActionType === 'string' && reportedActionType ? { reportedActionType } : {}),
+    ...(typeof approverDid === 'string' && approverDid ? { approverDid } : {}),
+  });
+  if (!out.ok) {
+    res.status(409).json({ error: out.code });
+    return;
+  }
+  res.json({ mandateId: out.mandateId, actionType: out.actionType });
 });
 
 /**
@@ -1033,7 +1170,27 @@ app.get('/internal/evidence/headlines', internalOnly, (_req: Request, res: Respo
     res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
     return;
   }
-  res.json({ headlines: headlineArgs(state.receiptArchive.getReceipts()) });
+  // `approved`: review-path tickets, from the decrypted proposal copy this
+  // gateway archived when it executed — the AS deletes the proposal's content
+  // once its ticket is issued (DEC-22), so the UI must not depend on it.
+  const receipts = state.receiptArchive.getReceipts();
+  res.json({ headlines: headlineArgs(receipts), approved: approvedHeadlineArgs(receipts) });
+});
+
+// The approved toolArgs of a proposal THIS gateway executed (archived at
+// execution). The decided-proposal card reads it because the AS deletes a
+// proposal's content once its ticket is issued (DEC-22). 404 = no local copy.
+app.get('/internal/evidence/proposal/:id', internalOnly, (req: Request, res: Response) => {
+  if (state.receiptArchive.isLocked()) {
+    res.status(503).json({ error: 'Vault locked — the evidence archive is encrypted until sign-in.' });
+    return;
+  }
+  const toolArgs = archivedApprovedArgs(state.receiptArchive.getReceipts(), String(req.params.id));
+  if (!toolArgs) {
+    res.status(404).json({ error: 'No local copy of this proposal' });
+    return;
+  }
+  res.json({ toolArgs });
 });
 
 // ─── Report (evidence-backed reports, work-plan "evidence-backed reports") ──
@@ -1524,7 +1681,15 @@ app.listen(port, bindHost, () => {
           approverRejectedBy: proposal.approverRejectedBy ? { ...proposal.approverRejectedBy, note } : undefined,
         };
         const entry = outcomeEntryFor(proposalWithDecryptedNote, submittedHere, who, Date.now());
-        if (entry) state.outcomeOutbox.recordIfNew(entry);
+        if (!entry) continue;
+        // An AI mandate (or change) proposal closed because the person GAVE it: say so, with the mandate now in force — the same
+        // words as check-pending-commitments. While the phone's give is still being taken in, wait for the next cycle.
+        if (entry.outcome === 'replaced' && (proposal.tool === 'setup__create_mandate' || proposal.tool === 'setup__change_mandate')) {
+          const g = await controlPlaneProposalGive(proposal.id);
+          if (g.waiting) continue;
+          if (g.given) entry.given = { authorizationId: g.given.authorizationId, isChange: proposal.tool === 'setup__change_mandate' };
+        }
+        state.outcomeOutbox.recordIfNew(entry);
       }
     } catch {
       // SP unreachable or no session — skip this cycle, same as executeCommittedProposals.
