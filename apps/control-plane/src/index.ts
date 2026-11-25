@@ -661,13 +661,13 @@ async function closeGivenProposal(proposalId: string, since: number): Promise<vo
 const LIVE_STREAM_BOUND_MS = 15 * 60_000; // longer than any server's maxStreamS; the server ends a stream well before
 const liveEvents = new LiveEventsClient({
   ready: () => vault.isUnlocked() && !!vault.getSpCookie(),
-  open: async (signal) => {
+  open: async (signal, since) => {
     const cookie = vault.getSpCookie();
     if (!cookie) throw new Error('not signed in');
     const pin = readPairing(DATA_DIR);
     try {
       const { res } = await fetchAsForMandate(
-        `${SP_URL}/api/events`,
+        `${SP_URL}/api/events${since !== undefined ? `?since=${since}` : ''}`,
         { method: 'GET', headers: { ...asAuthHeaders(cookie), Accept: 'text/event-stream' }, signal },
         { enforce: resolvePinTls(DATA_DIR), pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined, boundMs: LIVE_STREAM_BOUND_MS },
       );

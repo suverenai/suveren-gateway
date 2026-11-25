@@ -17,8 +17,11 @@ const KINDS: ReadonlySet<string> = new Set(['proposal', 'mandates', 'devices', '
 export interface LiveEventsDeps {
   /** True while the gateway may talk to the AS (unlocked, signed in). */
   ready: () => boolean;
-  /** Open the stream: the AS fetch with this process's session, TLS pin and a long bound. */
-  open: (signal: AbortSignal) => Promise<Response>;
+  /**
+   * Open the stream: the AS fetch with this process's session, TLS pin and a long bound. `since` is the last version
+   * the AS reported (undefined on the first connection): the AS then says whether anything changed in between.
+   */
+  open: (signal: AbortSignal, since?: number) => Promise<Response>;
   /** A change the server announced. `id` is the proposal or mandate id when the server names one. */
   onChange: (kind: LiveKind, id: string | null) => void;
   /** The stream came up (true) or went away (false). */
@@ -36,6 +39,8 @@ export class LiveEventsClient {
   private up = false;
   private abort: AbortController | null = null;
   private failures = 0;
+  /** The last version the AS reported (hello or change); sent back on reconnect so an unchanged reconnect costs nothing. */
+  private version: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   private wake: (() => void) | null = null;
 
@@ -102,7 +107,7 @@ export class LiveEventsClient {
     (guard as { unref?: () => void }).unref?.();
     let res: Response;
     try {
-      res = await this.deps.open(ac.signal);
+      res = await this.deps.open(ac.signal, this.version);
     } catch (err) {
       clearInterval(guard);
       this.deps.log?.(`[Control Plane] live events: could not connect (${err instanceof Error ? err.message : String(err)})`);
@@ -128,12 +133,19 @@ export class LiveEventsClient {
           if (ev.event === 'hello') {
             gotHello = true;
             this.failures = 0;
+            const h = parseHello(ev.data);
+            const wasUp = this.up;
             this.setUp(true);
-            // Connected (or reconnected): read everything once — something may have changed while no stream was open.
-            this.deps.onChange('resync', null);
+            // Read everything once when something may have changed while no stream was open — always on a first
+            // connection or after the stream was down; on a planned reconnect only when the AS says so.
+            if (!wasUp || h.catchUp) this.deps.onChange('resync', null);
+            if (h.v !== undefined) this.version = h.v;
           } else if (ev.event === 'change' && gotHello) {
             const c = parseChange(ev.data);
-            if (c) this.deps.onChange(c.kind, c.id);
+            if (c) {
+              if (c.v !== undefined) this.version = c.v;
+              this.deps.onChange(c.kind, c.id);
+            }
           }
         }
       }
@@ -159,14 +171,26 @@ function parseFrame(frame: string): { event: string; data: string } | null {
   return { event, data: data.join('\n') };
 }
 
-/** Only known kinds and a plain id string pass — nothing else from the server reaches the gateway. */
-export function parseChange(data: string): { kind: LiveKind; id: string | null } | null {
+const version = (v: unknown): number | undefined => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined);
+
+/** Only known kinds, a plain id string and a version number pass — nothing else from the server reaches the gateway. */
+export function parseChange(data: string): { kind: LiveKind; id: string | null; v?: number } | null {
   try {
-    const p = JSON.parse(data) as { t?: unknown; i?: unknown };
+    const p = JSON.parse(data) as { t?: unknown; i?: unknown; v?: unknown };
     if (typeof p.t !== 'string' || !KINDS.has(p.t)) return null;
     const id = typeof p.i === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(p.i) ? p.i : null;
-    return { kind: p.t as LiveKind, id };
+    return { kind: p.t as LiveKind, id, v: version(p.v) };
   } catch {
     return null;
+  }
+}
+
+/** The hello frame: the version, and whether the AS says something changed since the `since` we sent (default yes). */
+export function parseHello(data: string): { v?: number; catchUp: boolean } {
+  try {
+    const p = JSON.parse(data) as { v?: unknown; catchUp?: unknown };
+    return { v: version(p.v), catchUp: p.catchUp !== false };
+  } catch {
+    return { catchUp: true };
   }
 }

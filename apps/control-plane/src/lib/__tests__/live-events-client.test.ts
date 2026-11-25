@@ -66,6 +66,30 @@ describe('LiveEventsClient', () => {
     h.client.stop();
   });
 
+  it('a planned reconnect sends the last version and skips the catch-up when the AS says nothing changed', async () => {
+    let n = 0;
+    const sinces: Array<number | undefined> = [];
+    const changes: string[] = [];
+    const client = new LiveEventsClient({
+      ready: () => true,
+      open: async (_s, since) => {
+        sinces.push(since);
+        n++;
+        if (n === 1) return sse(['event: hello\ndata: {"v":5,"catchUp":true}\n\n', 'event: change\ndata: {"t":"proposal","i":"p1","v":7}\n\n']).res;
+        return sse(['event: hello\ndata: {"v":7,"catchUp":false}\n\n'], { keepOpen: true }).res;
+      },
+      onChange: (k) => changes.push(k),
+      onStatus: () => {},
+      sleep: async () => { await tick(); },
+    });
+    client.start();
+    for (let k = 0; k < 20 && n < 2; k++) await tick();
+    await tick();
+    expect(sinces).toEqual([undefined, 7]);
+    expect(changes).toEqual(['resync', 'proposal']); // no second resync
+    client.stop();
+  });
+
   it('a failure goes down and backs off', async () => {
     const h = harness([() => { throw new Error('ECONNREFUSED'); }]);
     h.client.start();
@@ -86,9 +110,10 @@ describe('LiveEventsClient', () => {
 
 describe('parseChange', () => {
   it('passes only known kinds and plain ids', () => {
-    expect(parseChange('{"t":"mandates","i":"authz_1-2"}')).toEqual({ kind: 'mandates', id: 'authz_1-2' });
+    expect(parseChange('{"t":"mandates","i":"authz_1-2"}')).toEqual({ kind: 'mandates', id: 'authz_1-2', v: undefined });
+    expect(parseChange('{"t":"mandates","i":"a","v":12}')).toEqual({ kind: 'mandates', id: 'a', v: 12 });
     expect(parseChange('{"t":"evil","i":"x"}')).toBeNull();
-    expect(parseChange('{"t":"proposal","i":"<script>"}')).toEqual({ kind: 'proposal', id: null });
+    expect(parseChange('{"t":"proposal","i":"<script>"}')).toEqual({ kind: 'proposal', id: null, v: undefined });
     expect(parseChange('not json')).toBeNull();
   });
 });
