@@ -848,7 +848,7 @@ export function AuthorizationsPage() {
    *   signature freezes bounds/scope/intent), so "edit" is always
    *   replace-then-revoke — never mutation.
    */
-  const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean; gatewayOnly?: boolean }) => {
+  const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean; gatewayOnly?: boolean; toSign?: boolean }) => {
     if (!groupId) {
       alert('No active group; cannot copy mandate.');
       return;
@@ -923,7 +923,8 @@ export function AuthorizationsPage() {
       } else {
         sessionStorage.removeItem('agentEditReplaces');
       }
-      navigate('/mandates/new/intent');
+      // Give again under new rules (On-hold mockup v2): straight to the give page, the values already filled — one touch.
+      navigate(opts?.toSign ? '/mandates/new/sign' : '/mandates/new/intent');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to copy mandate');
     } finally {
@@ -1255,7 +1256,7 @@ export function AuthorizationsPage() {
             // Rules changed: the mandate itself is the one the person gave (its grant verified), carried to the new rules and given
             // again in its place. Any other reason: only what this gateway verified when it was given (mockup v2, never what the
             // server holds now).
-            void handleCopy(row, m.reason === 'rules_changed' ? { asEdit: true } : { asEdit: true, gatewayOnly: true });
+            void handleCopy(row, m.reason === 'rules_changed' ? { asEdit: true, toSign: true } : { asEdit: true, gatewayOnly: true });
           }}
           onEnd={(m) => void handleRevoke(m.mandateId)}
         />
