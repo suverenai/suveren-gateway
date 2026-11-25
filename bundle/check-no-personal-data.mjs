@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Fails when the published npm package carries personal data: the maintainer's name or
  * mail domain, or a developer machine's home path. Run on the UNPACKED tarball (what a
