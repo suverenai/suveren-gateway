@@ -107,7 +107,7 @@ describe('"ended on <device>" (mockup F2): only a revoke that verifies against t
   });
 });
 
-// On-hold mockup v2 (Andreas 2026-11-24, DEC-109/110/111): what the phone's own check holds back, and a give no computer took in.
+// On-hold mockup v2 (maintainer 2026-11-24, DEC-109/110/111): what the phone's own check holds back, and a give no computer took in.
 describe('on hold on the phone (mockup v2)', () => {
   it('a mandate without any grant is held back as "given without your touch"; one with a grant that does not verify, by its check code', async () => {
     const none = await readOwnMandates((await world({ grant: { none: true } })).deps);

@@ -90,7 +90,7 @@ describe('shipped manifests: every argument of a sealed tool is classified', () 
   // fixing the cause — bind it in the profile, or, if it truly changes nothing
   // sent, declare it `nonContentArgs` in the manifest — and it fails when an
   // entry stops being unclassified, so it cannot go stale.
-  // Explicitly blocked in the gmail manifest (blockedArgs, decided by Andreas 2026-11-06): threadId (the
+  // Explicitly blocked in the gmail manifest (blockedArgs, decided by Maria 2026-11-06): threadId (the
   // connector adds a subject + quote of its own), bcc (hidden recipients), includeBodyHtml (format),
   // send_draft.id (a draft is not bound). Only unclassified-by-version findings remain below.
   const KNOWN_REFUSED = [

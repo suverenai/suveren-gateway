@@ -1,6 +1,6 @@
 /**
  * Mollie's manifest rewritten for charge@0.7 ("Payments" — doc/payments-
- * billing-and-spend.md §11, approved by Andreas 2026-10-17): actionTypes
+ * billing-and-spend.md §11, approved by Maria 2026-10-17): actionTypes
  * `charge` + `manage` only, `read_access` enum switch, `amount_max`
  * per_transaction of `amount` requiredFor `charge`. Invoices/credit notes
  * are Invoicing (ERP); refunds, subscriptions and outgoing money are not

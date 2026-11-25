@@ -3,7 +3,7 @@
  * manifest declares for an action tool via
  * `toolGating.overrides[<tool>].preview` (see tool-gating-types.ts).
  *
- * Decisions (Andreas, 2026-10-10 — temp/briefs/au3-au5-brief.md):
+ * Decisions (maintainer, 2026-10-10 — temp/briefs/au3-au5-brief.md):
  *   1. The preview read is always allowed for the approver, shown ONLY on the
  *      gateway UI — never returned to the AI/any MCP client, not subject to
  *      the mandate's read access, recorded locally with no content.
@@ -719,7 +719,7 @@ export async function buildInternalPreview(
 }
 
 /**
- * Decision 2026-10-21 (Andreas) — the failed `blocking` checks for a call,
+ * Decision 2026-10-21 (maintainer) — the failed `blocking` checks for a call,
  * evaluated exactly as the card would (same reads, same checks), BEFORE any
  * proposal is made. Empty when the tool declares no blocking check (no read
  * is run then) or none fails. A read that cannot answer gives `not_checked`

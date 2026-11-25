@@ -6,7 +6,7 @@ import { DashboardSkeleton } from '../../pages/DashboardPage';
 import { SettingsSkeleton } from '../../pages/SettingsServicesPage';
 
 /**
- * DEC-100 (Andreas, 2026-11-22): no turning mark while loading. Every wait between two pages shows the next page
+ * DEC-100 (maintainer, 2026-11-22): no turning mark while loading. Every wait between two pages shows the next page
  * greyed out: after the touch or the password the dashboard, after turning Touch ID on for approvals Settings. The
  * frame (top bar, sidebar, column, page title) sits where the real one will, so the page fills in without moving.
  * Nothing here reads data: the person is not signed in yet while it shows. The page title is greyed out too: a real

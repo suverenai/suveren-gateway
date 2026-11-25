@@ -1,7 +1,7 @@
 /**
  * The app came to the front: from the background, from the app switcher, or opened again from the home screen (a page restored
  * from the back-forward cache fires `pageshow` with `persisted`, not `visibilitychange`). The caller reads its list at once,
- * not at the next 30-second refresh (Andreas, 2026-11-24).
+ * not at the next 30-second refresh (maintainer, 2026-11-24).
  */
 export interface FrontTargets {
   doc: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & { hidden: boolean };

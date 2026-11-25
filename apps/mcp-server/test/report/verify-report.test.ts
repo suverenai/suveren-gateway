@@ -580,7 +580,7 @@ describe('verifyReport — control check (a broken rule must fail its own test)'
 describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-10-06)', () => {
   const USER = 'c7246947-0f1e-4c2b-9a77-3d1f00a1b2c3';
   const DID = 'did:key:c7246947';
-  const named = [{ did: DID, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Andreas Schadauer' } }];
+  const named = [{ did: DID, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Maria Berger' } }];
 
   it('REFUSAL: an approver with no name anywhere is "a person (name not disclosed)", never the account id nor part of it', async () => {
     const { archive, addTicket } = buildScenario();
@@ -601,7 +601,7 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
       proposal: { status: 'executed', createdAt: 1, committedBy: { [USER]: { userId: USER, at: 2 } } },
     });
     const result = await verifyReport('<sv-approval ticket="a2"></sv-approval>', { archive, runExport: makeRunExport({}) });
-    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Andreas Schadauer');
+    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Maria Berger');
   });
 
   it('personal mode: committedBy keyed by the domain "owner" resolves through the same signed domain map', async () => {
@@ -612,7 +612,7 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
       proposal: { status: 'executed', createdAt: 1, committedBy: { owner: { userId: USER, at: 2 } } },
     });
     const result = await verifyReport('<sv-approval ticket="a3"></sv-approval>', { archive, runExport: makeRunExport({}) });
-    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Andreas Schadauer');
+    expect(el(result.elements, 'sv-approval-0').data!.whoLabel).toBe('Maria Berger');
   });
 
   it('the same owner reads the same on every mandate — a name disclosed on one verified mandate is used on another that did not disclose it', async () => {
@@ -620,8 +620,8 @@ describe('verifyReport — who approved / who owns, as a name (review SR6, 2026-
     addTicket({ id: 'n1', action: 'erp__create_quote', authorizationId: 'authz-named', authorization: { authorizationId: 'authz-named', profileId: 'sales@0.3', owners: [DID], subjects: named } });
     addTicket({ id: 'n2', action: 'report__write_report', authorizationId: 'authz-plain', authorization: { authorizationId: 'authz-plain', profileId: 'reporting@0.1', owners: [DID] } });
     const result = await verifyReport('<sv-mandate ticket="n1"></sv-mandate><sv-mandate ticket="n2"></sv-mandate>', { archive, runExport: makeRunExport({}) });
-    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Andreas Schadauer']);
-    expect(el(result.elements, 'sv-mandate-1').data!.owners).toEqual(['Andreas Schadauer']); // was "Owner (key …246947)", later "Owner (name not disclosed)"
+    expect(el(result.elements, 'sv-mandate-0').data!.owners).toEqual(['Maria Berger']);
+    expect(el(result.elements, 'sv-mandate-1').data!.owners).toEqual(['Maria Berger']); // was "Owner (key …246947)", later "Owner (name not disclosed)"
   });
 
   it('REFUSAL: a name in a LOW-assurance subject is never shown', async () => {

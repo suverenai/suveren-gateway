@@ -62,7 +62,7 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-email@1',
   path: 'email@0.5',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'gmail__send_message',
   toolArgs: { body: 'Hi there', to: 'x@y.com' },

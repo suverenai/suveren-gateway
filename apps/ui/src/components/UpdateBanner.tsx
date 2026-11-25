@@ -45,7 +45,7 @@ export function updateBannerClass(method: InstallMethod): string {
 /** Windows installer, installed by the person themselves (`msi`): there is no
  *  command to run — the update is the next installer, which stops, replaces
  *  and restarts the gateway itself. Red like npm/docker: the person has to act.
- *  (Andreas, 2026-10-05.) */
+ *  (maintainer, 2026-10-05.) */
 export const MSI_UPDATE_HINT = 'Download the new installer and run it. Your settings and mandates stay.';
 
 /** Release page carrying that version's Windows installer; the generic

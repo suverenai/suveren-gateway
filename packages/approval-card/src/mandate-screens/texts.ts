@@ -21,7 +21,7 @@ export const S13 = {
   giveRecorded: 'Recorded',
   giveResultClose: 'Close',
   giveCardButton: 'Give this mandate', // DRAFT: the AI-proposal card's "Sign mandate" only until the gateway knows how this computer gives it
-  /** The card's give button where this computer gives with Touch ID is `giveButton`; where it gives on the phone, this (Andreas 2026-11-22). */
+  /** The card's give button where this computer gives with Touch ID is `giveButton`; where it gives on the phone, this (maintainer 2026-11-22). */
   giveCardPhoneButton: 'Give this mandate on your phone',
   giveCardApprove: 'Approve', // DRAFT: the card's "Approve and sign"
   giveTouchNote: 'Your device asks for your touch. It names only the area ({area}). The details are on this page.', // 212 (device, not Mac)
@@ -51,7 +51,7 @@ export const S13 = {
   giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // 225
   // "Give on your phone" on a computer without Touch ID (DEC-90, mockup phone-d3-live.html v7, Gateway view). All DRAFT.
   givePhoneOffer: 'This computer has no Touch ID. Give this mandate on your phone: it shows you the same, and you give it there with your touch.', // DRAFT
-  givePhoneButton: 'Give this mandate on your phone', // Andreas 2026-11-22 (was "Give on your phone")
+  givePhoneButton: 'Give this mandate on your phone', // maintainer 2026-11-22 (was "Give on your phone")
   givePhoneWaiting: 'Waiting for your phone… Open Suveren on your phone and give it there.', // DRAFT
   givePhoneWaitingNote: 'Nothing is given until you touch on your phone. You can close this page; the request waits 30 minutes.', // DRAFT
   givePhoneStop: 'Stop waiting', // DRAFT
@@ -63,14 +63,14 @@ export const S13 = {
   givePhoneClose: 'Close', // DRAFT
   givePhoneCancel: 'Cancel', // DRAFT
 
-  // Screen 3: a mandate held back (approved On-hold mockup v2, Andreas 2026-11-24; every new text DRAFT)
+  // Screen 3: a mandate held back (approved On-hold mockup v2, maintainer 2026-11-24; every new text DRAFT)
   heldTitle: 'On hold: Your AI cannot use these yet', // 250
   heldTitlePhone: 'On hold', // DRAFT (mockup v2, phone)
   heldName: (profile: string, owner: string): string => `${profile}, from ${owner}`, // 251
   heldOwnerYou: 'you', // 251
   heldNotReceived: 'This device has not received this mandate yet. Your AI cannot use it until it does.', // 252
   heldCheckAgain: 'Check again', // 253
-  heldOnHold: 'This mandate is on hold. Your AI cannot use it until it is given again.', // Andreas 2026-11-24 (B): any reason that is not a known, specific one
+  heldOnHold: 'This mandate is on hold. Your AI cannot use it until it is given again.', // maintainer 2026-11-24 (B): any reason that is not a known, specific one
   heldAlarm: (owner: string): string => `✕ This mandate does not match what ${owner} confirmed.`, // DRAFT (mockup v2, case 3)
   heldAlarmPersonal: 'Your AI cannot use it. If you did not change it yourself, end it.', // DRAFT (mockup v2, case 3, Personal workspace)
   heldAlarmTeam: 'Your AI cannot use it. If you did not change it yourself, end it and tell your admin.', // DRAFT (mockup v2, case 3, team)

@@ -80,7 +80,7 @@ describe('refusalSentence with the facts the server recorded', () => {
 });
 
 describe('sharedLimitLabel (wording B)', () => {
-  // Andreas 2026-11-11: the limit's own name, never "Team limit per day" three
+  // Maria 2026-11-11: the limit's own name, never "Team limit per day" three
   // times; "(team)" when the team shares it; the window said once.
   it('reads "Daily box limit (team) (3 of 5 used)" in a team', () => {
     const l = sharedLimitLabel({ profile: WITH_WORDS, key: 'box_daily_max', team: true, used: 3, usedIsTeamWide: true, limit: 5 })!;

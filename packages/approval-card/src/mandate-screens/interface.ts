@@ -33,7 +33,7 @@ export interface HeldBackMandate {
 
 /**
  * Gateway code (the MCP server's verdict, GET /api/mandate/held-back; the phone's own grant check) -> reason, by the approved
- * mockup's table. An unknown code is neutral, never an alarm (Andreas, 2026-11-24).
+ * mockup's table. An unknown code is neutral, never an alarm (maintainer, 2026-11-24).
  */
 export function heldReason(code: string): HeldReason {
   if (code === 'mandate_body_not_received' || code === 'body_not_received' || code === 'no_grant') return 'not_received';

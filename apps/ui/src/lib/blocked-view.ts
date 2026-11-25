@@ -3,7 +3,7 @@
  * of a gated tool call, not only reads. Purely presentational logic, kept
  * separate from the component so it is unit-testable without React.
  *
- * Decisions this follows (Andreas, 2026-10-09):
+ * Decisions this follows (maintainer, 2026-10-09):
  *  1. Show only what the record carries, plus local data (the mandate's
  *     title/field labels) — never a lookup into another system.
  *  3. No per-action tailored advice: ONE generic "what you can do" sentence
@@ -76,10 +76,10 @@ const TITLE: Record<DenialKind, string> = {
   cumulative: 'Blocked — limit reached',
   simulation: 'Blocked — simulation mode',
   not_authorized: 'Blocked — not authorized',
-  // Wording pending Andreas's sign-off (temp/erp-checks-mockup) — kept minimal
+  // Wording pending the maintainer's sign-off (temp/erp-checks-mockup) — kept minimal
   // so the Blocked page never shows an empty title for the new record kind.
   check: 'Blocked — a check failed',
-  // Wording pending Andreas's sign-off (sealed-args rule, 2026-11-06).
+  // Wording pending the maintainer's sign-off (sealed-args rule, 2026-11-06).
   unsealed_arg: 'Blocked — not shown for approval',
   read: 'Read blocked',
 };

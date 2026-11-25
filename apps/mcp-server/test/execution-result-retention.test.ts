@@ -38,7 +38,7 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-charge@1', // unregistered — no content binding applies
   path: 'charge@0.6',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'mollie__CreatePaymentLink',
   toolArgs: { amount: '0.10', currency: 'EUR', description: 'invoice', reusable: false, testmode: true, profile_id: '' },

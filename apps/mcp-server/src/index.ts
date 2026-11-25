@@ -161,7 +161,7 @@ export function createMcpServer(
   //
   // Many AI apps (ChatGPT Desktop among them) load the tool list once, when the chat starts, and
   // ignore `tools/list_changed`: a connector that starts later, or the Setup tools once Setup is
-  // signed, stay out of reach until the app restarts (Andreas, 2026-11-10). This one tool is
+  // signed, stay out of reach until the app restarts (maintainer, 2026-11-10). This one tool is
   // listed from the start and runs the named tool exactly as a direct `tools/call` would: the
   // same lookup (unknown or internal = not found), the same "disabled" refusal (Setup without a
   // Setup mandate), the same validation against that tool's own input schema, then that tool's

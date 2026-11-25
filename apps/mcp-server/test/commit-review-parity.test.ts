@@ -19,7 +19,7 @@ import { hashToolArgs } from '../src/lib/execution-journal';
 
 const SUBJECT: Subject = {
   did: 'did:key:a', assurance: 'high', method: 'as_vouched', trust_root: 'as',
-  verifier: 'did:web:suveren.ai', disclose: { name: 'Andreas Schadauer' },
+  verifier: 'did:web:suveren.ai', disclose: { name: 'Maria Berger' },
 };
 
 const PROPOSAL: SPProposal = {
@@ -28,7 +28,7 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-email@1', // unregistered on purpose — no content binding applies
   path: 'email@0.5',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'gmail__send_message',
   toolArgs: { body: 'Hi there', to: 'x@y.com' },
@@ -150,7 +150,7 @@ describe('executeCommitted — review path parity with the automatic path', () =
     await executeCommitted(PROPOSAL, state, integrationManager);
 
     const [, , outgoingArgs] = callTool.mock.calls[0];
-    expect((outgoingArgs as { body: string }).body).toContain("Andreas Schadauer's AI agent");
+    expect((outgoingArgs as { body: string }).body).toContain("Maria Berger's AI agent");
   });
 
   it('footers as anonymous (no name) when the cached authorization carries no subject', async () => {

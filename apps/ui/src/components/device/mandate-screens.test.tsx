@@ -14,7 +14,7 @@ const noop = () => {};
 const held = (over: Partial<HeldBackMandate>): HeldBackMandate => ({ mandateId: 'm1', profileName: 'Sales', title: null, ownerName: 'Anna Muster', ownerIsYou: false, reason: 'alarm', adminName: 'Dana Berg', workspace: 'team', ...over });
 const own = (over: Partial<HeldBackMandate>): HeldBackMandate => held({ ownerIsYou: true, ownerName: null, title: 'Records · Meeting notes', profileName: 'Records', ...over });
 
-// Approved On-hold mockup v2 (temp/onhold-mockup/onhold.html, Andreas 2026-11-24, DEC-109/110/111).
+// Approved On-hold mockup v2 (temp/onhold-mockup/onhold.html, maintainer 2026-11-24, DEC-109/110/111).
 describe('screen 3: on hold (mockup v2)', () => {
   const t = (...ms: HeldBackMandate[]) => text(<HeldBackList mandates={ms} onGiveAgain={noop} onEnd={noop} />);
   const html = (...ms: HeldBackMandate[]) => renderToStaticMarkup(<HeldBackList mandates={ms} onGiveAgain={noop} onEnd={noop} />);
@@ -27,7 +27,7 @@ describe('screen 3: on hold (mockup v2)', () => {
     expect(heldReason('profile_hash_mismatch')).toBe('rules_changed');
     for (const c of ['mandate_body_mismatch', 'grant_mismatch', 'grant_invalid', 'grant_other_authorization', 'grant_other_team', 'mandate_body_refused', 'grant_version_refused']) expect(heldReason(c)).toBe('alarm');
     expect(heldReason('mandate_revoked')).toBe('ended');
-    // Andreas 2026-11-24: an unknown code is neutral, never the alarm.
+    // maintainer 2026-11-24: an unknown code is neutral, never the alarm.
     for (const c of ['mandate_unavailable', 'body_unavailable', 'owner_has_no_chain', 'something_new']) expect(heldReason(c)).toBe('unknown');
   });
 

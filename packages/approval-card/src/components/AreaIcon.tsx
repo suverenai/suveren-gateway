@@ -64,7 +64,7 @@ const PATHS: Record<AreaIconName, React.ReactNode> = {
       <path d="M9 8h6M9 12h6M9 16h3" />
     </>
   ),
-  // Master data — an index card with a tab (picked by Andreas 2026-10-21,
+  // Master data — an index card with a tab (picked by maintainer 2026-10-21,
   // temp/master-data-icon-mockup candidate A).
   masterData: (
     <>

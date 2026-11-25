@@ -2,7 +2,7 @@ name: Publish Windows installer
 
 # Windows installer for company laptops (W2/W4-W6/W8 — suveren-as/docs/
 # work-plan.md "Added 2026-10-02 — Windows installer"). Built UNSIGNED by us
-# (decision, Andreas: "we do not sell the software, so we do not sign it") —
+# (decision, maintainer: "we do not sell the software, so we do not sign it") —
 # a company's own IT verifies origin, signs with its own certificate
 # (build-signed.ps1) and distributes via Intune. This workflow only ever
 # produces the UNSIGNED installer + the signing kit that makes re-signing

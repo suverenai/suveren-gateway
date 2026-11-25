@@ -1,5 +1,5 @@
 /**
- * call-tool — one tool, listed from the start, that runs any other tool by name (Andreas,
+ * call-tool — one tool, listed from the start, that runs any other tool by name (maintainer,
  * 2026-11-10): ChatGPT Desktop loads the tool list once and ignores `tools/list_changed`, so a
  * tool added later (a connector that started, Setup signed) was out of reach until the app
  * restarted.

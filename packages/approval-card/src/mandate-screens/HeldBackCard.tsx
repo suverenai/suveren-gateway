@@ -1,5 +1,5 @@
 /**
- * Screen 3: the mandates the person's AI cannot use, as the approved On-hold mockup v2 shows them (Andreas, 2026-11-24, DEC-109/110/111).
+ * Screen 3: the mandates the person's AI cannot use, as the approved On-hold mockup v2 shows them (maintainer, 2026-11-24, DEC-109/110/111).
  * A card appears only when the person can or should act on it, and carries the button for that; "waiting for someone" is its own calm
  * section; a give still on its way is never shown on the gateway (the phone shows a calm note after 10 minutes, see `NotReceivedNote`).
  * Shows only what the host verified itself: the gateway's verdict, the phone's own grant check. The AI never adds text here.

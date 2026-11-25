@@ -92,7 +92,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
     FIRST_LINE,
     REPLY_RULE,
     LEAD_THE_PERSON_RULE,
-    // Refusal rule (Andreas, 2026-11-12): a mandate/limit refusal is final; an
+    // Refusal rule (maintainer, 2026-11-12): a mandate/limit refusal is final; an
     // argument refusal says how to fix it and may be fixed once. Codex read the
     // old "do not retry" literally and stopped on a wrong-type refusal.
     'Tools are listed even where no mandate covers them yet. ' + REFUSAL_RULE,
@@ -116,7 +116,7 @@ export function buildMandateBrief(opts: MandateBriefOptions): string {
   for (const r of AGENT_RULES) lines.push(`- ${r}`);
   lines.push('');
 
-  // The role, right after the rules (Andreas, 2026-11-12): the fixed text every AI needs comes first,
+  // The role, right after the rules (maintainer, 2026-11-12): the fixed text every AI needs comes first,
   // so what Claude Code cuts after 4096 characters is the variable part (mandates, the agent brief,
   // the facts), never the role. Word for word the same in every mode; it must never say which mode.
   const card = setupCardName(integrationManager);

@@ -5,7 +5,7 @@
 
 /* ════════════════════════════════════════════════════════════════════
    Suveren UI — design tokens (v2, 2026-10-15 — colour reduced per
-   Andreas's decision: colour exists ONLY to keep the information
+   the maintainer's decision: colour exists ONLY to keep the information
    levels on a card unmistakable — sealed / from the system / the AI's
    own claim / customer's text. Everything else — status, buttons,
    alerts, badges — is monochrome, told apart by form: fill vs. outline
@@ -58,7 +58,7 @@
   --accent-hover: #555555;
 
   /* ── Status — monochrome, distinguished by FORM not hue ─────────────
-     Decision 2026-10-15 (Andreas): colour is spent ONLY on the
+     Decision 2026-10-15 (maintainer): colour is spent ONLY on the
      provenance scale below (what kind of information a value is).
      Every lifecycle/status state — awaiting decision, active, refused,
      failed, revoked, expired, passed — is monochrome. The former
@@ -78,7 +78,7 @@
   --neutral: #111111;
   --neutral-subtle: #f0f0f0;
 
-  /* ── Failed check — the single colour exception (Andreas, 2026-10-15) ──
+  /* ── Failed check — the single colour exception (maintainer, 2026-10-15) ──
      Red means exactly one thing, everywhere it appears: a FAILED CHECK
      on an approval card (e.g. "✕ Credit limit would be exceeded by
      €2,400"). Always paired with the ✕ icon and bold weight — never

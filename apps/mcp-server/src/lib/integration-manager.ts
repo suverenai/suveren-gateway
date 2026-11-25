@@ -1229,7 +1229,7 @@ export class IntegrationManager {
    */
   /**
    * Why this connector may not run in the gateway's CURRENT mode, or undefined.
-   * Two worlds, never mixed (Andreas, 2026-11-05):
+   * Two worlds, never mixed (maintainer, 2026-11-05):
    * - simulation mode on  → only simulation-safe connectors ('simulation' = a
    *   real system is blocked);
    * - simulation mode off → no connector whose current setting is simulated

@@ -91,7 +91,7 @@ type Phase =
   | { t: 'working'; kind: DecisionKind }
   | { t: 'done'; kind: DecisionKind; result: DecisionResult };
 
-/** The card's give button says how the mandate is given on this computer (Andreas 2026-11-22): with Touch ID, or on the phone. */
+/** The card's give button says how the mandate is given on this computer (maintainer 2026-11-22): with Touch ID, or on the phone. */
 export function giveButtonText(via: 'touch' | 'phone' | null | undefined): string {
   return via === 'touch' ? S13.giveButton : via === 'phone' ? S13.giveCardPhoneButton : S13.giveCardButton;
 }

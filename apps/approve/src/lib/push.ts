@@ -27,7 +27,7 @@ export const SEEN_MAX = 500;
 /**
  * Written by the app after each list read: ids the service worker was told about that no longer wait (decided, ended, run
  * out). The worker leaves them out when a new notice takes over the one still shown, so a notice never counts a request that
- * was already decided (Andreas, 2026-11-24: "2 requests are waiting" with one waiting).
+ * was already decided (maintainer, 2026-11-24: "2 requests are waiting" with one waiting).
  */
 export const DONE_KEY = 'push:done';
 /** The tag of the waiting-requests notice (public/sw.js `TAG`). */

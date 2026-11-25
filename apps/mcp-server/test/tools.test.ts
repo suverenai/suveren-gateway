@@ -544,7 +544,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
   it('TR5 (real-gateway e2e, 2026-10-15): in a CONFIRMED team workspace, the creator is excluded ' +
     'from pendingApprovers even when the team\'s own roster includes them, but stays a content ' +
     'recipient and is recorded as the proposal\'s createdBy', async () => {
-    const approvers = ['tom', 'lisa', 'andreas']; // the team's own roster — includes the proposer
+    const approvers = ['tom', 'lisa', 'maria']; // the team's own roster — includes the proposer
     const postReceipt = vi.fn().mockRejectedValue(
       new SPReceiptError('Approval required', 409, {
         error: 'approval_required',
@@ -582,7 +582,7 @@ describe('createGatedToolHandler — SP receipt integration', () => {
     const submitCall = (submitProposal as ReturnType<typeof vi.fn>).mock.calls[0][0];
     // Never an approver, even though the team's own roster lists him.
     expect(submitCall.pendingApprovers).not.toContain('tom');
-    expect(submitCall.pendingApprovers).toEqual(expect.arrayContaining(['lisa', 'andreas']));
+    expect(submitCall.pendingApprovers).toEqual(expect.arrayContaining(['lisa', 'maria']));
     // Still a content recipient (PE1 decision 3 — the mandate owner always
     // sees what their own authority is being asked to cover).
     expect(submitCall.recipientUserIds).toContain('tom');

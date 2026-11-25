@@ -215,7 +215,7 @@ export async function checkAsKeyBeforeLogin(asUrl: string, dataDir: string): Pro
   };
 }
 
-/** Shown to the person exactly as written (approved by Andreas, 2026-11-12). */
+/** Shown to the person exactly as written (approved by maintainer, 2026-11-12). */
 export const SIGNED_IN_ELSEWHERE = 'This gateway is signed in to another account. Sign out first, then sign in with the new one.';
 
 export function createAuthRouter(

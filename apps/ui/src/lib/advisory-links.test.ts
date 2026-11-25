@@ -7,13 +7,13 @@ import { resolveAdvisoryLinks, type AdvisoryGrant } from './advisory-links';
 
 const G = (scope: string, intent = ''): AdvisoryGrant => ({ scope, intent, bounds: {} });
 
-// Two grants share andreas.schadauer@gmail.com — the collision that broke the
+// Two grants share anna@example.com — the collision that broke the
 // scope link (it used to resolve to the first one only).
 const grants: AdvisoryGrant[] = [
-  G('andreas.schadauer@gmail.com', 'read inbox'),     // [1]
-  G('andreas@sublin.app'),                            // [2]
+  G('anna@example.com', 'read inbox'),     // [1]
+  G('owner@example.com'),                            // [2]
   G('andi@dsafssd.at'),                               // [3]
-  G('andreas.schadauer@gmail.com', 'compose & send'), // [4] — same scope as [1]
+  G('anna@example.com', 'compose & send'), // [4] — same scope as [1]
 ];
 
 const firstLink = (input: string, gs = grants, profile = 'Email') =>
@@ -26,7 +26,7 @@ describe('resolveAdvisoryLinks', () => {
 
   it('[N] renders a readable label, not the bracket number', () => {
     const link = firstLink('see [4]');
-    expect(link?.label).toBe('Email: andreas.schadauer@gmail.com');
+    expect(link?.label).toBe('Email: anna@example.com');
     expect(link?.label).not.toContain('[4]');
   });
 
@@ -35,7 +35,7 @@ describe('resolveAdvisoryLinks', () => {
   });
 
   it('a scope shared by two grants resolves to BOTH (not the first)', () => {
-    const link = firstLink('overlaps andreas.schadauer@gmail.com here');
+    const link = firstLink('overlaps anna@example.com here');
     expect(link?.matched).toEqual([grants[0], grants[3]]);
   });
 
@@ -54,7 +54,7 @@ describe('resolveAdvisoryLinks', () => {
   });
 
   it('preserves the full original text across segments', () => {
-    const input = 'redundant with [4] (scoped to andreas.schadauer@gmail.com).';
+    const input = 'redundant with [4] (scoped to anna@example.com).';
     const segs = resolveAdvisoryLinks(input, grants, 'Email');
     expect(segs.map(s => s.text).join('')).toBe(input);
   });

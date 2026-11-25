@@ -71,7 +71,7 @@ export function createInternalMandateRouter(
     const d: CeremonyDeps = { ...deps(), newAuthorizationId: () => `authz_${randomUUID()}` };
     // A gateway with a device chain: a mandate is GIVEN by the person on the gateway page (Touch ID or the phone), never created
     // here from an approval. The approval card's "Give this mandate" opens that page from the proposal and the page closes the
-    // proposal once the mandate is live, so this path is not reached for it (one mechanism, Andreas 2026-11-20). Read-only
+    // proposal once the mandate is live, so this path is not reached for it (one mechanism, maintainer 2026-11-20). Read-only
     // checks (dry runs) still answer: they tell the AI whether the mandate could be given at all.
     if (dryRun !== true && d.grants?.active()) {
       res.status(403).json({ error: 'give_on_page', code: 'give_on_page', message: 'On this computer the person gives a mandate on the gateway page with Touch ID or the phone; nothing was created here. They give it from the approval card.' });

@@ -1,7 +1,7 @@
 /**
  * The approval card's "Give this mandate" on a gateway with a device chain: the ONE give driver (lib/use-give.ts, the same as the give
  * page) run IN PLACE on the card, from exactly the arguments the card opened and shows. No navigation, no edit step: "Edit before
- * signing" stays the separate, explicit way to change what the AI proposed (Andreas, 2026-11-20).
+ * signing" stays the separate, explicit way to change what the AI proposed (maintainer, 2026-11-20).
  *
  * The request is built from the proposal as the give page builds it from its form: the newest version of the proposed area with the
  * limits and scope carried onto it (the same helpers as Copy/Edit), the active workspace, the proposal's mode, duration and title.

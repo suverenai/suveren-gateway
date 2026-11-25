@@ -480,7 +480,7 @@ export function AuditPage() {
             </button>
           ))}
         </div>
-        {/* Search + Filters — quiet, on the same row (Andreas 2026-10-17) */}
+        {/* Search + Filters — quiet, on the same row (maintainer 2026-10-17) */}
         <div className="search-filter-bar">
           <div className="search-input-wrap">
             <span className="search-icon">&#x2315;</span>

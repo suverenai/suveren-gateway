@@ -150,7 +150,7 @@ export interface BuiltinIntegration {
    * The text the agent gets when a call is refused because NO mandate on this
    * built-in's profile exists — instead of the generic "no mandate covers …".
    * For a group whose missing mandate needs a specific next step from the person
-   * (`setup`: two ways forward, wording signed off by Andreas 2026-11-05).
+   * (`setup`: two ways forward, wording signed off by maintainer 2026-11-05).
    * Fixed text owned by the gateway; never built from agent input.
    */
   noMandateText?: string;

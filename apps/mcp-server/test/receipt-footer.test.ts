@@ -158,12 +158,12 @@ import type { Subject } from '@hap/core';
 describe('appendVerificationFooter — identity (v0.6)', () => {
   const asVouched: Subject = {
     did: 'did:key:a', assurance: 'high', method: 'as_vouched', trust_root: 'as',
-    verifier: 'did:web:suveren.ai', disclose: { name: 'Andreas Schadauer' },
+    verifier: 'did:web:suveren.ai', disclose: { name: 'Maria Berger' },
   };
 
   it('high/as_vouched footer discloses the name + operator (separator owned by hap-core)', () => {
     const out = appendVerificationFooter(tool(BODY, { body: STRING }), { body: 'Hi' }, 'rid', asVouched);
-    expect(out.body).toContain("Andreas Schadauer's AI agent"); // v1.1 wording
+    expect(out.body).toContain("Maria Berger's AI agent"); // v1.1 wording
     expect(out.body).toContain('verified by Suveren');
   });
 

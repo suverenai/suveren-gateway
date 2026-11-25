@@ -625,7 +625,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   }
   const now = rt.now();
   // Notes about mandates are never waiting items: a mandate given on another device is already in "Your mandates"; one ended on another
-  // device is said once, under "Your mandates" (Andreas, 2026-11-23: notes under "Waiting for you" read as things to do).
+  // device is said once, under "Your mandates" (maintainer, 2026-11-23: notes under "Waiting for you" read as things to do).
   const endedNotes = endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by));
   return (
     <RequestsScreen

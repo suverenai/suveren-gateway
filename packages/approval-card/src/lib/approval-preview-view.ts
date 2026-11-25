@@ -235,7 +235,7 @@ export function hasSystemValues(view: CreationView): boolean {
 
 /**
  * The sealed tile's heading. Over a Now → New table the person approves a
- * change, not a finished object: "You approve this change" (Andreas,
+ * change, not a finished object: "You approve this change" (maintainer,
  * 2026-11-11). Every other card keeps its heading.
  */
 export function sealedTileHeading(view: PreviewBoxView | undefined, isMandate: boolean): string {

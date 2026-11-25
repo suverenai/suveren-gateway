@@ -1,5 +1,5 @@
 /**
- * Limits that only test-data tools use (Andreas, 2026-11-11): a Customers
+ * Limits that only test-data tools use (maintainer, 2026-11-11): a Customers
  * mandate on a production gateway showed "Test-data loads per day — 0 of 0
  * used", a limit nothing outside simulation can ever use.
  *

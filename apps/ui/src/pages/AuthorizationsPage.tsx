@@ -623,7 +623,7 @@ export function AuthorizationsPage() {
   // The person's own mandate titles, for the On-hold cards' names (the gateway's verdict list carries none).
   const heldTitles = useMemo(() => new Map(items.filter(i => i.title).map(i => [i.authorization_id, i.title as string] as const)), [items]);
   // What this gateway holds back (its own verdicts). One source for the On-hold cards AND the list: a mandate shown on hold is
-  // never also counted or listed as Active (UI shows what this gateway enforces; Andreas's review of the mockup build, 2026-11-25).
+  // never also counted or listed as Active (UI shows what this gateway enforces; the maintainer's review of the mockup build, 2026-11-25).
   const [heldRaw, setHeldRaw] = useState<HeldRaw[]>([]);
   const fetchHeld = useCallback(() => {
     if (!deviceEnd) { setHeldRaw([]); return; }
