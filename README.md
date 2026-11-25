@@ -2,10 +2,10 @@
 
 > **HAP is the protocol. Suveren is an implementation of it.**
 >
-> The Human Agency Protocol (HAP) is the open standard for bounded AI-agent
-> authority — it defines the roles (**Authority Server**, **Gatekeeper**,
-> **Executor**) and the concepts (profiles, gates, attestations, bounds,
-> context, receipts). **Suveren** implements them: this repo is the **Gateway**,
+> The Human Agency Protocol (HAP) is an open-source protocol for bounded
+> AI-agent authority. It defines the roles (**Authority Server**,
+> **Gatekeeper**, **Executor**) and the concepts (profiles, mandates, bounds,
+> scope, tickets). **Suveren** implements them: this repo is the **Gateway**,
 > and [`suveren-as`](https://www.suveren.ai) is the **Authority Server**. The
 > protocol is open — anyone can build their own compliant gateway.
 
@@ -14,7 +14,7 @@ This repository is the **Suveren Gateway** — Suveren's implementation of the H
 against its authorization before the call reaches an external service. (The
 `@hap/core` library inside this repo keeps its HAP name because it re-exports the
 open protocol library — "HAP-compliant" and spec references describe the open
-standard, not the Suveren brand.)
+protocol, not the Suveren brand.)
 
 Part of [suveren.ai](https://www.suveren.ai).
 
@@ -22,7 +22,7 @@ Let your AI agents act — within bounds you control.
 
 The gateway runs on your machine, between your AI agents and the tools they use — payments, email, CRM, deployments, infrastructure. Your agents go through a local policy layer before reaching external services. Nothing executes without authorization.
 
-Works with any MCP-compatible agent. Define and authorize what they're allowed to do. Every action is bounded, time-limited, and traceable to a human decision — so agents can execute safely at scale.
+Works with any MCP-compatible agent. Define and authorize what they're allowed to do. Every action stays inside limits a person set, for a time they chose, under a mandate with an identifiable person behind it.
 
 ---
 
@@ -30,11 +30,11 @@ Works with any MCP-compatible agent. Define and authorize what they're allowed t
 
 Set the threshold. Routine actions execute automatically within the bounds you defined. High-stakes actions pause for your review before the agent acts.
 
-**Automatic** — You commit to specific bounds upfront: max amounts, allowed actions, time windows. The agent executes autonomously within those bounds. For each tool call the gateway verifies your authorization and requests a receipt from the Authority Server, which issues the signed receipt before the call runs — no receipt, no execution.
+**Automatic** — You commit to specific bounds upfront: max amounts, allowed actions, time windows. The agent executes autonomously within those bounds. For each tool call the gateway checks the call against your mandate and asks the Authority Server for a **ticket**. The Authority Server signs the ticket before the call runs — no ticket, no execution.
 
-**Review each action** — You define bounds but defer full commitment. When the agent proposes an action, you review it in the gateway UI — seeing exactly which tool, which arguments, which context. You approve or reject. Execution only proceeds after your decision.
+**Review each action** — You define bounds but defer full commitment. When the agent proposes an action, you review it in the gateway UI — seeing exactly which tool and which arguments. You approve or reject. Execution only proceeds after your decision.
 
-Both modes are bounded. In both, the Authority Server issues a signed receipt before the action runs — no receipt, no execution — and that signed history is a full audit trail. The difference is whether you trust the bounds enough for autonomous execution, or want to review each action individually.
+Both modes are bounded. In both, the Authority Server signs a ticket before the action runs — no ticket, no execution. The difference is whether you trust the bounds enough for autonomous execution, or want to review each action individually.
 
 ---
 
@@ -48,7 +48,7 @@ Human                                 AI Agent
   |    commit (or defer)                  |
   v                                       |
 Authority Server                          |
-  | 2. Sign attestation (Ed25519)         |
+  | 2. Sign mandate (Ed25519)             |
   v                                       |
 Gateway                                   |
   |              3. Connect via MCP ----->|
@@ -56,13 +56,13 @@ Gateway                                   |
   |                                       |
   | 5. Fully committed:                   |
   |    Gatekeeper checks bounds, asks AS  |
-  |    -> AS issues receipt, execute      |
+  |    -> AS signs ticket, execute        |
   |                                       |
   |    Deferred commitment:               |
   |    -> proposal created                |
   |    -> human reviews in UI             |
   |    -> commit or reject                |
-  |    -> on commit: AS receipt, execute  |
+  |    -> on approval: AS ticket, execute |
 ```
 
 The agent never holds credentials or signing authority. It acts within the bounds you set — high autonomy without losing accountability.
