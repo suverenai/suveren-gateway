@@ -99,7 +99,23 @@ export function AuthorizePicker({ onDismiss, preselectProfileId }: Props) {
       profileName: profileDisplayName(profile.id),
       teamName: group?.name,
       isAdmin: isTeamAdmin(activeTeam, activeMembership, user?.id),
+      olderEnabledVersion: olderEnabledVersion(profile.id),
     });
+  };
+
+  // The newest older version of this profile the team has enabled (a team takes a new version only after an admin copies the
+  // settings, DEC-105), so the card can say exactly that.
+  const olderEnabledVersion = (profileId: string): string | null => {
+    const at = profileId.lastIndexOf('@');
+    if (at < 0) return null;
+    const base = profileId.slice(0, at + 1);
+    const mine = profileId.slice(at + 1);
+    const older = Object.entries(teamProfiles)
+      .filter(([id, c]) => id.startsWith(base) && id !== profileId && (() => { const g = effectiveGrantors(c); return g === 'all' || (g?.length ?? 0) > 0; })())
+      .map(([id]) => id.slice(at + 1))
+      .filter((v) => v.localeCompare(mine, undefined, { numeric: true }) < 0)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    return older[0] ?? null;
   };
 
   const isTeamManaged = (profileId: string): boolean => profileId in teamProfiles;

@@ -9,7 +9,7 @@
  */
 import { profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import {
-  b64uEncode, buildGrant, randomBytes, signedBytes, verifyGrant, type MandateGrant,
+  b64uEncode, buildGrant, randomBytes, signedBytes, verifyGrant, verifyReceipt, type MandateGrant,
 } from '@hap/core/device-keys';
 import { GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import type { MandatePayload } from '@hap/core/browser';
@@ -35,7 +35,23 @@ export interface OwnMandate {
   /** The device of this chain that gave that grant, when it is not this phone (the notice "given on …", mockup F2); else null. */
   givenOn: string | null;
   givenAt: number | null;
+  /**
+   * On-hold mockup v2, case 2: given on THIS phone at least 10 minutes ago (and within the last day), and none of the person's
+   * computers has answered with a receipt that verifies: that computer's name. Null otherwise.
+   */
+  notReceivedBy?: string | null;
+  /** When this phone gave it (seconds), for "Given N minutes ago"; set together with `notReceivedBy`. */
+  givenHereAt?: number | null;
 }
+
+/**
+ * A mandate of this person the phone cannot honour after its own check (On-hold mockup v2): the check's code, mapped by the shared
+ * `heldReason`. Only own mandates whose signed copy verifies under the pinned Authority Server key; anything else says nothing.
+ */
+export interface HeldOwn { authorizationId: string; title: string; profileName: string; code: string }
+
+/** How long after the phone's own give the "not received yet" note may appear (mockup v2, case 2: a proposal). */
+export const NOT_RECEIVED_NOTE_AFTER_S = 600;
 
 /** A mandate of this person that another device of the chain ended (the notice "ended on …", mockup F2): the revoke verified here. */
 export interface EndedElsewhere { title: string; by: string; at: number }
@@ -43,7 +59,7 @@ export interface EndedElsewhere { title: string; by: string; at: number }
 export interface EndDeps { keys: DeviceKeyStore; api: AsApi; accounts: AccountStore; session: DeviceSession; now: () => number }
 
 /** This person's mandates the phone can end: each one checked (the file header). */
-export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: OwnMandate[]; ended: EndedElsewhere[] } | { ok: false; code: string }> {
+export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: OwnMandate[]; ended: EndedElsewhere[]; held: HeldOwn[] } | { ok: false; code: string }> {
   const s = d.session.current();
   const bearer = d.session.bearer();
   const account = await d.accounts.read();
@@ -52,6 +68,7 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
   if (!mine.ok) return { ok: false, code: mine.status === 401 ? 'session_ended' : mine.code };
   const items: OwnMandate[] = [];
   const ended: EndedElsewhere[] = [];
+  const held: HeldOwn[] = [];
   // The gateway's Mandates page title: the mandate's own title, else the area's display name (the shared profileIdentity fallback chain).
   const titleOf = (row: Record<string, unknown>) => typeof row.title === 'string' && row.title.trim() ? row.title.trim() : (typeof row.profileId === 'string' ? profileIdentity(row.profileId).name : 'a mandate');
   for (const row of Array.isArray(mine.data.mandates) ? mine.data.mandates : []) {
@@ -75,8 +92,11 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
     const g = await d.api.grants(full.mandate_id, bearer);
     const rows = g.ok ? grantRowsOf(g.data) : null;
     if (!rows) continue;
+    const heldAs = (code: string) => held.push({ authorizationId, title: titleOf(row), profileName: typeof row.profileId === 'string' ? profileIdentity(row.profileId).name : 'a mandate', code });
+    if (rows.length === 0) { heldAs('mandate_not_granted'); continue; }
     const verdict = await checkGrant({ payload: full, authorizationId, chain: s.chain, rows }).catch(() => null);
-    if (!verdict || !verdict.ok) continue;
+    if (!verdict) continue;
+    if (!verdict.ok) { heldAs(verdict.code); continue; }
     const granted = rows.find((r) => r.mandate_version === verdict.version && (r.op === 'grant' || r.op === 'change') && isObj(r.grant));
     if (!granted) continue;
     const fields: Record<string, unknown> = {};
@@ -84,13 +104,31 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
     const title = titleOf(row);
     const g0 = granted.grant as Record<string, unknown>;
     const by = typeof g0.key_id === 'string' && g0.key_id !== account.key_id ? s.chain.devices[g0.key_id] ?? null : null;
+    // Given here: has a computer taken it in? Asked only between 10 minutes and a day after the give (mockup v2, case 2).
+    let notReceivedBy: string | null = null;
+    let givenHereAt: number | null = null;
+    const at = typeof g0.granted_at === 'number' ? g0.granted_at : null;
+    const age = at === null ? -1 : d.now() - at;
+    if (g0.key_id === account.key_id && age >= NOT_RECEIVED_NOTE_AFTER_S && age < 86400) {
+      const r = await d.api.receipts(full.mandate_id, bearer).catch(() => null);
+      let received = false;
+      for (const e of r && r.ok && Array.isArray(r.data.receipts) ? r.data.receipts : []) {
+        if (!isObj(e)) continue;
+        try { const rec = await verifyReceipt({ receipt: e.receipt, sig: e.sig }, { chain: s.chain, grant: g0 as unknown as MandateGrant }); if (s.chain.devices[rec.key_id]?.kind === 'gateway') { received = true; break; } } catch { /* counts for nothing */ }
+      }
+      if (r && r.ok && !received) {
+        const computer = Object.values(s.chain.devices).find((x) => x.kind === 'gateway' && x.removed_seq == null);
+        if (computer) { notReceivedBy = computer.label; givenHereAt = at; }
+      }
+    }
     items.push({
       authorizationId, mandateId: full.mandate_id, version: verdict.version, title, expiresAt: full.expires_at, fields,
       givenOn: by ? by.label : null, givenAt: by && typeof g0.granted_at === 'number' ? g0.granted_at : null,
+      notReceivedBy, givenHereAt,
     });
   }
   items.sort((a, b) => a.expiresAt - b.expiresAt);
-  return { ok: true, items, ended };
+  return { ok: true, items, ended, held };
 }
 
 /**
