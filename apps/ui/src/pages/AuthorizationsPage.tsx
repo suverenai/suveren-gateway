@@ -619,6 +619,8 @@ export function AuthorizationsPage() {
   const isAdmin = activeTeam?.isAdmin === true;
   const { deviceKeysSwitch, access } = useAuth();
   const [deviceEnd, setDeviceEnd] = useState(false);
+  // The person's own mandate titles, for the On-hold cards' names (the gateway's verdict list carries none).
+  const heldTitles = useMemo(() => new Map(items.filter(i => i.title).map(i => [i.authorization_id, i.title as string] as const)), [items]);
   const [changeTarget, setChangeTarget] = useState<{ id: string; changes: Record<string, unknown> } | null>(null);
   const [endTarget, setEndTarget] = useState<{ id: string; name: string; until: string | null } | null>(null);
   // Only a gateway with the switch on, a password session and a set-up device ends mandates by device key; every other gateway keeps today's Revoke.
@@ -846,7 +848,7 @@ export function AuthorizationsPage() {
    *   signature freezes bounds/scope/intent), so "edit" is always
    *   replace-then-revoke — never mutation.
    */
-  const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean }) => {
+  const handleCopy = async (item: PendingItem, opts?: { asEdit?: boolean; gatewayOnly?: boolean }) => {
     if (!groupId) {
       alert('No active group; cannot copy mandate.');
       return;
@@ -860,19 +862,22 @@ export function AuthorizationsPage() {
         setGateCache(prev => ({ ...prev, [lookupKey]: entry }));
       }
 
-      const bounds = Object.fromEntries(
+      // `gatewayOnly` (On-hold mockup v2, "Give again" on a mandate whose server copy does not match what the person confirmed):
+      // nothing the server holds now is carried over — only the intent and scope this gateway verified when the mandate was given.
+      // The limits are the person's to set again.
+      const bounds = opts?.gatewayOnly ? {} : Object.fromEntries(
         Object.entries(item.frame).filter(([k]) => k !== 'profile' && k !== 'path')
       );
       const context = entry?.context ?? {};
       const intent = entry?.gateContent?.intent ?? '';
       const templateMode: 'automatic' | 'review' =
-        item.deferred_commitment_domains.length > 0 ? 'review' : 'automatic';
+        opts?.gatewayOnly || item.deferred_commitment_domains.length > 0 ? 'review' : 'automatic';
       const domainForAuth = item.attested_domains[0] || activeDomain || 'owner';
       // Original lifetime (expiry − creation) so the review step prefills the
       // duration the human chose last time, not the profile default.
       const createdMs = Date.parse(item.created_at);
       const expiryMs = item.earliest_expiry ? Date.parse(item.earliest_expiry) : NaN;
-      const templateTtl =
+      const templateTtl = opts?.gatewayOnly ? undefined :
         Number.isFinite(createdMs) && Number.isFinite(expiryMs) && expiryMs > createdMs
           ? Math.round((expiryMs - createdMs) / 1000)
           : undefined;
@@ -1241,7 +1246,20 @@ export function AuthorizationsPage() {
       </LoadGate>
 
       {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
-      {deviceEnd && <HeldBackHost />}
+      {deviceEnd && (
+        <HeldBackHost
+          titles={heldTitles}
+          onGiveAgain={(m) => {
+            const row = items.find(i => i.authorization_id === m.mandateId);
+            if (!row) return;
+            // Rules changed: the mandate itself is the one the person gave (its grant verified), carried to the new rules and given
+            // again in its place. Any other reason: only what this gateway verified when it was given (mockup v2, never what the
+            // server holds now).
+            void handleCopy(row, m.reason === 'rules_changed' ? { asEdit: true } : { asEdit: true, gatewayOnly: true });
+          }}
+          onEnd={(m) => void handleRevoke(m.mandateId)}
+        />
+      )}
       {changeTarget && (
         <ChangeMandateHost
           authorizationId={changeTarget.id}

@@ -834,6 +834,24 @@ describe('step 13 screens: held back list, change preview, Touch ID change', () 
       expect.objectContaining({ code: 'owner_unknown', ownerIsYou: false }),
     ]);
     expect((await call(w.gw.port, 'GET', '/api/mandate/held-back')).status).toBe(401);
+
+    // On-hold mockup v2: who gave it and where, from the Authority Server (the creator, the workspace, the team admin's name).
+    const prev = w.as.extraRoutes;
+    w.as.extraRoutes = async (c) => {
+      if (c.method === 'GET' && c.path === '/api/authorizations/authz_22222222-2222-2222-2222-222222222222') { c.json(200, { authorization_id: 'x', created_by: 'u_anna', group_id: 'g_team' }); return true; }
+      if (c.method === 'GET' && c.path === '/api/authorizations/authz_11111111-1111-1111-1111-111111111111') { c.json(200, { authorization_id: 'x', created_by: 'u_other', group_id: 'g_me' }); return true; }
+      if (c.method === 'GET' && c.path === '/api/groups/g_team') { c.json(200, { group: { id: 'g_team', name: 'Muster GmbH', createdBy: 'u_dana' }, members: [{ userId: 'u_anna', name: 'Anna Berger' }, { userId: 'u_dana', name: 'Dana Berg' }] }); return true; }
+      if (c.method === 'GET' && c.path === '/api/groups/g_me') { c.json(200, { group: { id: 'g_me', name: 'Personal', isPersonal: true, createdBy: 'u_other' }, members: [] }); return true; }
+      return prev ? prev(c) : false;
+    };
+    const r2 = await call(w.gw.port, 'GET', '/api/mandate/held-back', { headers: w.h });
+    expect(r2.status, r2.text).toBe(200);
+    expect(r2.body.held).toEqual([
+      expect.objectContaining({ ownerIsYou: true, ownerName: null, workspace: 'personal' }),
+      expect.objectContaining({ ownerIsYou: false, ownerName: 'Anna Berger', adminName: 'Dana Berg', workspace: 'team' }),
+    ]);
+    w.as.extraRoutes = prev;
+
     const as = await new StubAs().listen();
     open.push(as);
     const bare = await bootGateway({ as, platform: fakeHost(), mandate: {} });

@@ -11,41 +11,92 @@ import { spClient } from '../../lib/sp-client';
 const text = (el: React.ReactElement): string => renderToStaticMarkup(el).replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 const noop = () => {};
 
-const held = (over: Partial<HeldBackMandate>): HeldBackMandate => ({ mandateId: 'm1', profileName: 'Sales', ownerName: 'Anna Muster', ownerIsYou: false, reason: 'not_received', adminName: 'Dana Berg', ...over });
+const held = (over: Partial<HeldBackMandate>): HeldBackMandate => ({ mandateId: 'm1', profileName: 'Sales', title: null, ownerName: 'Anna Muster', ownerIsYou: false, reason: 'alarm', adminName: 'Dana Berg', workspace: 'team', ...over });
+const own = (over: Partial<HeldBackMandate>): HeldBackMandate => held({ ownerIsYou: true, ownerName: null, title: 'Records · Meeting notes', profileName: 'Records', ...over });
 
-describe('screen 3: held back', () => {
-  const t = (m: Partial<HeldBackMandate>) => text(<HeldBackList mandates={[held(m)]} />);
+// Approved On-hold mockup v2 (temp/onhold-mockup/onhold.html, Andreas 2026-11-24, DEC-109/110/111).
+describe('screen 3: on hold (mockup v2)', () => {
+  const t = (...ms: HeldBackMandate[]) => text(<HeldBackList mandates={ms} onGiveAgain={noop} onEnd={noop} />);
+  const html = (...ms: HeldBackMandate[]) => renderToStaticMarkup(<HeldBackList mandates={ms} onGiveAgain={noop} onEnd={noop} />);
   it('shows nothing when nothing is held', () => expect(renderToStaticMarkup(<HeldBackList mandates={[]} />)).toBe(''));
-  it('not received: reason and Check again', () => {
-    const s = t({});
-    for (const x of [S13.heldTitle, 'Sales, from Anna Muster', S13.heldNotReceived, S13.heldCheckAgain]) expect(s).toContain(x);
+
+  it('every gateway code goes to its place (the mockup table)', () => {
+    for (const c of ['mandate_body_not_received', 'body_not_received', 'no_grant']) expect(heldReason(c)).toBe('not_received');
+    for (const c of ['grant_check_required', 'mandate_not_granted', 'CHECK_REQUIRED', 'check_required']) expect(heldReason(c)).toBe('touch_missing');
+    for (const c of ['owner_unknown', 'owner_not_this_person']) expect(heldReason(c)).toBe('waiting_confirm');
+    expect(heldReason('profile_hash_mismatch')).toBe('rules_changed');
+    for (const c of ['mandate_body_mismatch', 'grant_mismatch', 'grant_invalid', 'grant_other_authorization', 'grant_other_team', 'mandate_body_refused', 'grant_version_refused']) expect(heldReason(c)).toBe('alarm');
+    expect(heldReason('mandate_revoked')).toBe('ended');
+    // Andreas 2026-11-24: an unknown code is neutral, never the alarm.
+    for (const c of ['mandate_unavailable', 'body_unavailable', 'owner_has_no_chain', 'something_new']) expect(heldReason(c)).toBe('unknown');
   });
-  it('no check from another person: one next step, no button', () => {
-    const html = renderToStaticMarkup(<HeldBackList mandates={[held({ reason: 'check_required' })]} />);
-    expect(text(<HeldBackList mandates={[held({ reason: 'check_required' })]} />)).toContain(S13.heldNoCheckStep);
-    expect(html).not.toContain('<button');
+
+  it('case 2: a give on its way is never shown on the gateway; an ended mandate is not on hold', () => {
+    expect(html(own({ reason: 'not_received' }))).toBe('');
+    expect(html(held({ reason: 'ended' }))).toBe('');
   });
-  it('owner not on the admin list names the admin', () => expect(t({ reason: 'owner_unknown' })).toContain('Ask Dana Berg, your admin, to confirm them.'));
-  it('changed and ended', () => {
-    expect(t({ reason: 'changed' })).toContain(S13.heldChangedStep);
-    // Andreas 2026-11-24: an unknown code reads as a neutral "on hold", never as a mismatch; no "ask them" for the person's own mandate.
-    expect(heldReason('mandate_unavailable')).toBe('on_hold'); expect(heldReason('body_unavailable')).toBe('on_hold'); expect(heldReason('something_new')).toBe('on_hold');
-    const oh = t({ reason: 'on_hold' });
-    expect(oh).toContain('This mandate is on hold. Your AI cannot use it until it is given again.'); expect(oh).not.toContain(S13.heldChangedStep);
-    const own = t({ reason: 'changed', ownerIsYou: true });
-    expect(own).toContain('does not match what you confirmed'); expect(own).not.toContain(S13.heldChangedStep);
-    const e = t({ reason: 'revoked' });
-    expect(e).toContain('Anna Muster ended this mandate. This is final.'); expect(e).toContain(S13.heldEndedStep);
+
+  it('case 3: the alarm, own mandate, Personal workspace: no admin line, Give again and End', () => {
+    const m = own({ reason: 'alarm', workspace: 'personal' });
+    const s = t(m);
+    expect(s).toContain(S13.heldTitle);
+    expect(s).toContain('Records · Meeting notes');
+    expect(s).toContain('✕ This mandate does not match what you confirmed.');
+    expect(s).toContain('Your AI cannot use it. If you did not change it yourself, end it.');
+    expect(s).not.toContain('tell your admin');
+    expect(s).toContain('Give again'); expect(s).toContain('End');
+    expect(html(m)).toContain('font-weight:700');
   });
-  it('own mandate without Touch ID: Give it again', () => {
-    const s = t({ reason: 'check_required', ownerIsYou: true, ownerName: null });
-    expect(s).toContain('Sales, from you'); expect(s).toContain(S13.heldOwnNoCheck); expect(s).toContain(S13.heldGiveAgain);
+
+  it('case 3: the alarm in a team says "tell your admin"; a colleague\'s: no button, only they can give it again', () => {
+    expect(t(own({ reason: 'alarm', workspace: 'team' }))).toContain('end it and tell your admin.');
+    const c = held({ reason: 'alarm' });
+    const s = t(c);
+    expect(s).toContain('Sales, from Anna Muster');
+    expect(s).toContain('✕ This mandate does not match what Anna Muster confirmed.');
+    expect(s).toContain('Only Anna Muster can give it again. Tell them, and tell your admin.');
+    expect(html(c)).not.toContain('<button');
   });
-  it('gateway codes map to reasons', () => {
-    expect(heldReason('no_grant')).toBe('not_received'); expect(heldReason('CHECK_REQUIRED')).toBe('check_required');
-    // the gateway's own codes (apps/mcp-server mandate-grants.ts)
-    expect(heldReason('mandate_body_not_received')).toBe('not_received'); expect(heldReason('mandate_not_granted')).toBe('check_required'); expect(heldReason('grant_check_required')).toBe('check_required'); expect(heldReason('owner_not_this_person')).toBe('owner_unknown'); expect(heldReason('mandate_body_mismatch')).toBe('changed'); expect(heldReason('grant_mismatch')).toBe('changed');
-    expect(heldReason('owner_unknown')).toBe('owner_unknown'); expect(heldReason('mandate_revoked')).toBe('revoked'); expect(heldReason('grant_member_differs')).toBe('on_hold');
+
+  it('case 4: rules changed and touch missing: one button for one\'s own, none for a colleague\'s', () => {
+    const r = t(own({ title: 'Email · Replies to customers', profileName: 'Email', reason: 'rules_changed' }));
+    expect(r).toContain('The rules for Email changed after you gave this. Give it again under the new rules so your AI can use it.');
+    expect(r).toContain('Give again'); expect(r).not.toMatch(/\bEnd\b/);
+    expect(t(own({ reason: 'touch_missing' }))).toContain('This was given without your touch. Give it again so your AI can use it.');
+    const c = held({ reason: 'touch_missing' });
+    expect(t(c)).toContain('Anna Muster gave this without their touch.'); expect(t(c)).toContain('Only Anna Muster can give it again.');
+    expect(html(c)).not.toContain('<button');
+    expect(html(held({ reason: 'rules_changed' }))).not.toContain('<button');
+  });
+
+  it('case 5: unknown reason: the neutral sentence, Give again and End; never "does not match"', () => {
+    const s = t(own({ reason: 'unknown' }));
+    expect(s).toContain('This mandate is on hold. Your AI cannot use it until it is given again.');
+    expect(s).toContain('Give again'); expect(s).toContain('End');
+    expect(s).not.toContain('does not match');
+  });
+
+  it('case 1: waiting for the admin to confirm a colleague is its own calm section, no button', () => {
+    const w = held({ reason: 'waiting_confirm' });
+    const s = t(w);
+    expect(s).toContain(S13.heldWaitTitle); expect(s).toContain('Waiting');
+    expect(s).toContain('Waiting for Dana Berg to confirm Anna Muster. Your AI cannot use this mandate until then.');
+    expect(s).not.toContain(S13.heldTitle);
+    expect(html(w)).not.toContain('<button');
+  });
+
+  it('the phone says "Give again with your touch" and its own title', () => {
+    const s = text(<HeldBackList mandates={[own({ reason: 'unknown' })]} host="phone" onGiveAgain={noop} />);
+    expect(s).toContain('Give again with your touch'); expect(s).toContain(S13.heldTitlePhone);
+  });
+
+  it('a host that cannot act shows the words without a dead button', () => {
+    const h = renderToStaticMarkup(<HeldBackList mandates={[own({ reason: 'alarm', workspace: 'personal' })]} host="phone" />);
+    expect(h).not.toContain('<button'); expect(text(<HeldBackList mandates={[own({ reason: 'alarm', workspace: 'personal' })]} host="phone" />)).toContain('end it.');
+  });
+
+  it('a colleague with no known name is never shown as "you"', () => {
+    expect(t(held({ reason: 'alarm', ownerName: null }))).toContain('Sales, from someone in your team');
   });
 });
 
