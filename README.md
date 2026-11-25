@@ -76,7 +76,7 @@ When an agent connects, it receives a compact authority brief — active authori
 ```
 === ACTIVE AUTHORITIES ===
 
-[spend-routine] charge@0.4 (45 min remaining)
+[spend-routine] charge@0.7 (45 min remaining)
   Bounds: amount_max: 100, currency: USD, action_type: charge
   Usage: $234/$500 daily, $1280/$5000 monthly, 8/20 tx
   Intent: Enable automated purchasing for business operations.

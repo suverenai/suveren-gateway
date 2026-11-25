@@ -166,10 +166,15 @@ pnpm --filter @suveren/mcp-server test
 pnpm --filter @suveren/mcp-server test:watch
 ```
 
-| Package | Tests | What |
-|---------|-------|------|
-| `hap-core` | 84 | Bounds/context hashing, gatekeeper verification, attestation encoding, hash determinism, profile loading |
-| `mcp-server` | 78 | Tool handlers, mandate brief, consumption tracking, gate store encryption, session restore, SP receipt integration |
+| Package | Tests (v0.46.0) |
+|---------|-------|
+| `apps/mcp-server` | 2905 |
+| `apps/control-plane` | 1346 |
+| `apps/ui` | 949 |
+| `apps/approve` | 400 |
+| `packages/approval-card` | 629 |
+| `packages/pairing` | 23 |
+| `packages/unlock-helper` | 30 |
 
 ### Cross-service E2E tests
 
@@ -177,7 +182,8 @@ Run from the [suveren-e2e](https://github.com/suverenai/suveren-e2e) repo:
 
 ```bash
 cd ../suveren-e2e
-MOLLIE_TEST_KEY=test_xxx pnpm test
+npm ci
+npm test
 ```
 
 ## Docker
@@ -228,7 +234,7 @@ After restarting services, a single login in the UI restores the full state:
 | Repo | Purpose |
 |------|---------|
 | [hap-core](https://github.com/humanagencyprotocol/hap-core) | Shared protocol types, hashing, verification |
-| [hap-sp](https://github.com/humanagencyprotocol/hap-sp) | Suveren Authority Server (attestation signing, receipts, groups) — local dir: `suveren-as/`, GitHub repo not yet renamed |
-| [hap-profiles](https://github.com/humanagencyprotocol/hap-profiles) | Profile definitions (spend, ship, data, publish, provision) |
+| suveren-as (private: `suverenai/suveren-as`) | Suveren Authority Server — local dir: `suveren-as/` |
+| [hap-profiles](https://github.com/humanagencyprotocol/hap-profiles) | Profile definitions (calendar, charge, customers, delegation, deploy, email, files, invoicing, master-data, publish, purchase, records, reporting, sales) |
 | [suveren-e2e](https://github.com/suverenai/suveren-e2e) | Cross-service E2E test suite |
 | [hap-protocol](https://github.com/humanagencyprotocol/hap-protocol) | Protocol specification + website |
