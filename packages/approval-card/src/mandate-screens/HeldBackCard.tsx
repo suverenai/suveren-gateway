@@ -106,13 +106,13 @@ export function HeldBackList({ mandates, host = 'gateway', onGiveAgain, onEnd }:
   return (
     <>
       {waiting.length > 0 && (
-        <section data-testid="held-waiting-list" style={{ maxWidth: 560 }}>
+        <section data-testid="held-waiting-list" style={{ maxWidth: 560, marginTop: '1.5rem' }}>
           <h3 className="card-title">{S13.heldWaitTitle}</h3>
           {waiting.map((m) => <HeldWaitingCard key={m.mandateId} mandate={m} />)}
         </section>
       )}
       {held.length > 0 && (
-        <section data-testid="held-list" style={{ maxWidth: 560 }}>
+        <section data-testid="held-list" style={{ maxWidth: 560, marginTop: '1.5rem' }}>
           <h3 className="card-title">{host === 'phone' ? S13.heldTitlePhone : S13.heldTitle}</h3>
           {held.map((m) => <HeldBackCard key={m.mandateId} mandate={m} host={host} onGiveAgain={onGiveAgain ? () => onGiveAgain(m) : undefined} onEnd={onEnd ? () => onEnd(m) : undefined} />)}
         </section>
