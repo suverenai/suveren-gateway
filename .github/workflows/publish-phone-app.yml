@@ -9,7 +9,6 @@ name: Publish phone app bundle
 on:
   push:
     tags: ['v*']
-    branches: ['feat/phone-app-release']  # TEMPORARY: proves the workflow before it is on main (workflow_dispatch needs it there); removed in the next commit
   workflow_dispatch:
     inputs:
       as_url:
