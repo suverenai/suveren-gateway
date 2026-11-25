@@ -245,7 +245,7 @@ describe('RR7 — a consistent forgery (page AND bundle data edited) still fails
 
   it('an owner name no signed attestation in the file discloses', async () => {
     const { bundle, kp } = await buildRich();
-    const doc = forgeConsistently(bundle, b => { el(b, 'sv-mandate-0').data.owners = ['Andreas Schadauer']; });
+    const doc = forgeConsistently(bundle, b => { el(b, 'sv-mandate-0').data.owners = ['Maria Berger']; });
     const { code, out } = await cli(doc, kp.publicKeyHex);
     expect(code).toBe(1);
     expect(out).toMatch(/not a name this owner disclosed/);
@@ -253,11 +253,11 @@ describe('RR7 — a consistent forgery (page AND bundle data edited) still fails
 
   it('an owner name disclosed in ANOTHER mandate\'s attestation travels with its signed blob and checks out', async () => {
     const { archive, addTicket, kp } = buildScenario();
-    const named = [{ did: OWNER, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Andreas Schadauer' } }];
+    const named = [{ did: OWNER, assurance: 'high' as const, method: 'as_vouched' as const, trust_root: 'as' as const, verifier: 'did:web:as.example', disclose: { name: 'Maria Berger' } }];
     addTicket({ id: 'n1', action: 'erp__create_quote', authorizationId: 'authz-named', timestamp: 1_800_000_000, authorization: { authorizationId: 'authz-named', profileId: 'sales@0.3', owners: [OWNER], subjects: named } });
     addTicket({ id: 't1', action: 'erp__create_quote', authorizationId: 'authz-plain', timestamp: 1_800_000_100, authorization: { authorizationId: 'authz-plain', profileId: 'sales@0.3', owners: [OWNER], bounds: { value_max: 100 } } });
     const result = await verifyReport('<sv-mandate ticket="t1"></sv-mandate>', { archive, runExport: async () => ({}) });
-    expect(result.elements[0].data!.owners).toEqual(['Andreas Schadauer']);
+    expect(result.elements[0].data!.owners).toEqual(['Maria Berger']);
     const now = Math.floor(Date.now() / 1000);
     const bundle = buildExportBundle({ stored: { html: result.html, savedAt: now, checkedAt: now, result }, archive, gatewayVersion: 't', authorityServer: { url: AS_URL, publicKeyHex: kp.publicKeyHex } });
     expect(Object.keys(bundle.authorizations)).toEqual(['authz-plain']);

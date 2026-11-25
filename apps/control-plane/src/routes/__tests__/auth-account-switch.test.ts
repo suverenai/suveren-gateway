@@ -1,5 +1,5 @@
 /**
- * Security review 2026-11, finding A3 (the part Andreas approved 2026-11-12):
+ * Security review 2026-11, finding A3 (the part Maria approved 2026-11-12):
  *
  *  a. /auth/login leaves the running session alone until the new key is
  *     accepted — a foreign key no longer signs the current person out;

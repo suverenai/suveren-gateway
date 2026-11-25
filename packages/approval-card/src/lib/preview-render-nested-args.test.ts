@@ -2,13 +2,13 @@
  * The approval card's and the ticket's summary rows for an argument that is
  * not a plain string or number — an invoice's `service_period` (one record)
  * and `lines` (a list of records). They were shown as "—" although the value
- * is there and sealed (Andreas, 2026-10-18, ticket of TEST-2026-0002).
+ * is there and sealed (Maria, 2026-10-18, ticket of TEST-2026-0002).
  */
 import { describe, it, expect } from 'vitest';
 import { buildCreationView } from './preview-render';
 
 const ARGS = {
-  customer_id: 'test-andreas',
+  customer_id: 'test-maria',
   number: 'TEST-2026-0002',
   document_date: '2026-10-18',
   service_period: { from: '2026-10-18', to: '2026-10-18' },

@@ -1,4 +1,4 @@
-/** The card's give button says how this computer gives the mandate (Andreas 2026-11-22). */
+/** The card's give button says how this computer gives the mandate (Maria 2026-11-22). */
 import { describe, it, expect } from 'vitest';
 import { giveButtonText } from './ApprovalCard';
 import { S13 } from '../mandate-screens/texts';

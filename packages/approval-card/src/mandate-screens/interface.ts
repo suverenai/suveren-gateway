@@ -23,7 +23,7 @@ export interface HeldBackMandate {
  * `mandate_body_not_received` and `mandate_not_granted` (nothing, or no grant, has reached this computer yet), `grant_check_required`
  * (the grant has no check), `owner_unknown` / `owner_not_this_person` (the owner is not someone this person confirmed), `mandate_revoked`.
  * `mandate_body_mismatch` / `grant_mismatch`: what arrived does not match what the owner granted. Every other code is a neutral
- * "on hold" (Andreas, 2026-11-24: an unknown reason must never claim a mismatch). (`no_grant`, `CHECK_REQUIRED`, `check_required`
+ * "on hold" (maintainer, 2026-11-24: an unknown reason must never claim a mismatch). (`no_grant`, `CHECK_REQUIRED`, `check_required`
  * are older spellings, kept.)
  */
 export function heldReason(code: string): HeldReason {

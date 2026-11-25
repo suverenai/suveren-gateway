@@ -12,7 +12,7 @@
  */
 /**
  * The golden rule: an AI acting under a mandate never presents itself as the
- * Mandate Owner or as any person (Andreas, 2026-11-04). It cannot be enforced —
+ * Mandate Owner or as any person (maintainer, 2026-11-04). It cannot be enforced —
  * the gateway cannot judge prose — so it is told first and in full. The
  * wording was chosen in a test with injected and owner-requested impersonation
  * (suveren-as/docs/work-plan.md, golden rule GR1–GR4): a prohibition alone made

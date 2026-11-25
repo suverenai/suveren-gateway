@@ -95,9 +95,9 @@ describe('scopeSummary — scope only, because receipts carry no content', () =>
       executionContext: {
         action_type: 'send',
         recipient_count: 2,
-        allowed_recipients: 'andreas@sublin.app,second@x.com',
+        allowed_recipients: 'owner@example.com,second@x.com',
       },
-    }), emailProfile)).toBe('andreas@sublin.app, second@x.com');
+    }), emailProfile)).toBe('owner@example.com, second@x.com');
   });
 
   it('works the same for a different profile with different fields', () => {

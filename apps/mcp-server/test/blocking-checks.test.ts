@@ -1,5 +1,5 @@
 /**
- * Decision 2026-10-21 (Andreas): a manifest check declared `blocking` that
+ * Decision 2026-10-21 (Maria): a manifest check declared `blocking` that
  * FAILS refuses the call in tool-proxy.ts — before any proposal or card —
  * through the existing refusal path (Blocked record, isError text to the AI).
  * `not_checked` (a read that cannot answer) never blocks.

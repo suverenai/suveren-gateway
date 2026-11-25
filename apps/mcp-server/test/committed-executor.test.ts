@@ -118,7 +118,7 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-deploy@1', // unregistered on purpose — no content binding applies
   path: 'deploy@0.9',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'deploy-github__release',
   toolArgs: { repo: 'o/r', commit: 'abc' },

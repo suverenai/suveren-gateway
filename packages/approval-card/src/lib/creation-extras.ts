@@ -1,6 +1,6 @@
 /**
  * Two generic additions to the "What will be created" view (ERP Local
- * checks, signed off by Andreas 2026-10-21 — temp/erp-checks-mockup):
+ * checks, signed off by maintainer 2026-10-21 — temp/erp-checks-mockup):
  *
  *  - a DISPLAY-ONLY read (manifest `displayOnly`, e.g. a live register
  *    lookup) is shown as its own "From <label> — checked <time>" system box,

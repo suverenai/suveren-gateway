@@ -1,5 +1,5 @@
 /**
- * The approved title rule (Andreas, 2026-11-11), end to end through the real
+ * The approved title rule (Maria, 2026-11-11), end to end through the real
  * bundled manifests and the card's own preview read: "Change price of
  * Beratungsstunde: 130.00 EUR, VAT 20 %" — the name alone, the currency from
  * the manifest's display.currencyField, read from the card's read.

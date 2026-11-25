@@ -1,5 +1,5 @@
 /**
- * Limits only test-data tools use are hidden outside simulation (Andreas,
+ * Limits only test-data tools use are hidden outside simulation (Maria,
  * 2026-11-11). Invented manifests and profiles: nothing in the code under test
  * knows these names.
  */

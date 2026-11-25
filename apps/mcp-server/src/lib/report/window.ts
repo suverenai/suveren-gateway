@@ -25,7 +25,7 @@
  *    the email connector's today, systems.ts `caseSystem`).
  *  - A mandate whose profile declares no such bound (reporting@0.1) is refused,
  *    in simulation mode too, with a message that says to create a new one
- *    (decision Andreas, 2026-10-06: old reporting mandates need not work).
+ *    (decision maintainer, 2026-10-06: old reporting mandates need not work).
  *
  * Several reporting mandates: the most permissive window wins (the earliest
  * start) — the same rule the connector read gate applies to read_max_age_days

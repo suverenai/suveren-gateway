@@ -101,7 +101,7 @@ describe('capUnitLabel', () => {
 
 describe('approverListLabel', () => {
   it('prefers resolved display names when given', () => {
-    expect(approverListLabel({ approvers: ['u1', 'u2'] }, ['Andreas', 'Lisa'])).toBe('Andreas or Lisa');
+    expect(approverListLabel({ approvers: ['u1', 'u2'] }, ['Maria', 'Lisa'])).toBe('Maria or Lisa');
   });
 
   it('falls back to raw userIds when no names were resolved', () => {

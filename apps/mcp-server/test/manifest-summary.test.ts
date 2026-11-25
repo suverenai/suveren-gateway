@@ -47,7 +47,7 @@ describe('bundled manifests', () => {
     expect(templates).toBeGreaterThan(30);
   });
 
-  // The approved title rule (Andreas, 2026-11-11): something new is "New …",
+  // The approved title rule (Maria, 2026-11-11): something new is "New …",
   // a change is "Change …", removing is "Archive …" / "Delete …"; a few
   // action verbs and document nouns that already read right stay. Never
   // "Create …" / "Update …", and never an id next to a record's name.

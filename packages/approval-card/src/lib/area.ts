@@ -14,7 +14,7 @@
  *    gateway's built-ins, an area served only by a per-tool override) falls
  *    back to the fixed map by short id below. Never a profile field.
  *    `areaIcon` is the one helper for this; the actual paths live in
- *    `components/AreaIcon.tsx`. (Andreas, 2026-11-11: icon from the
+ *    `components/AreaIcon.tsx`. (maintainer, 2026-11-11: icon from the
  *    connector, generic for new connectors.)
  *
  * Pure, dependency-free logic only — no fetching (see lib/area-catalog.ts

@@ -37,10 +37,10 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-deploy@1', // unregistered on purpose — no content binding applies
   path: 'deploy@0.9',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'deploy-github__release',
-  content: { v: 1, alg: 'HPKE-X25519-HKDF-SHA256-AES256GCM', ciphertext: 'ct', keys: { andreas: { ct: 'a', enc: 'b' } }, hash: CONTENT_HASH },
+  content: { v: 1, alg: 'HPKE-X25519-HKDF-SHA256-AES256GCM', ciphertext: 'ct', keys: { maria: { ct: 'a', enc: 'b' } }, hash: CONTENT_HASH },
   contentHash: CONTENT_HASH,
   executionContext: { action_type: 'release' },
   status: 'committed',

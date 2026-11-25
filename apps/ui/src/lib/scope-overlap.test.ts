@@ -17,7 +17,7 @@ describe('tokenSet', () => {
 describe('scopesOverlap', () => {
   it('disjoint recipients → no overlap (the reported false-positive case)', () => {
     const a = { allowed_recipients: 'asdf@asdfasdfads.at' };
-    const b = { allowed_recipients: 'andreas.schadauer@gmail.com' };
+    const b = { allowed_recipients: 'anna@example.com' };
     expect(scopesOverlap(EMAIL_KEYS, a, b)).toBe(false);
   });
 
@@ -29,7 +29,7 @@ describe('scopesOverlap', () => {
 
   it('a wildcard (empty) field on one side → overlap', () => {
     const a = { allowed_recipients: '' };
-    const b = { allowed_recipients: 'andreas@x.com' };
+    const b = { allowed_recipients: 'maria@x.com' };
     expect(scopesOverlap(EMAIL_KEYS, a, b)).toBe(true);
   });
 
@@ -40,8 +40,8 @@ describe('scopesOverlap', () => {
   });
 
   it('case-insensitive token match', () => {
-    const a = { allowed_recipients: 'Andreas@X.com' };
-    const b = { allowed_recipients: 'andreas@x.com' };
+    const a = { allowed_recipients: 'Maria@X.com' };
+    const b = { allowed_recipients: 'maria@x.com' };
     expect(scopesOverlap(EMAIL_KEYS, a, b)).toBe(true);
   });
 

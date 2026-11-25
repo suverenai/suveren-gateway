@@ -591,7 +591,7 @@ export const CALL_THROUGH_RULE =
   `If a tool named here is not in your tool list, call it through ${CALL_TOOL}(tool: "<exact name>", arguments: {...}).`;
 
 /**
- * What a refusal means for the AI (Andreas, 2026-11-12): a mandate or limit refusal is final; wrong
+ * What a refusal means for the AI (maintainer, 2026-11-12): a mandate or limit refusal is final; wrong
  * arguments are fixed once. Codex read the old "do not retry" literally and stopped on a wrong-type
  * refusal. Short form (approved) because Claude Code keeps only the first 4096 characters.
  */
@@ -603,7 +603,7 @@ export const LEAD_THE_PERSON_RULE =
   'When you receive a task, call list-authorizations(domain: "<area>"): it gives the details, what is missing and the exact steps the person takes. Name the buttons as it does.';
 
 /**
- * How long a reply is, said concretely and at the top of the instructions (Andreas, 2026-11-11):
+ * How long a reply is, said concretely and at the top of the instructions (maintainer, 2026-11-11):
  * "a few sentences" was read as 250–320 words. Claude Code cuts a server's instructions after
  * 4096 characters, so this must sit near the start, not inside the role further down.
  */
@@ -621,7 +621,7 @@ export const FIRST_LINE =
 // ─── 3. Who the AI is for the person, and the facts it draws on ─────────────
 
 /**
- * The AI's role, sent in every mode (Andreas, 2026-11-10): nobody should need to learn
+ * The AI's role, sent in every mode (maintainer, 2026-11-10): nobody should need to learn
  * Suveren to get their work done. Their AI leads them, with Suveren's help, in the fewest
  * steps and the plainest words. It gives the AI a role and leaves the words to it, so it
  * holds whatever the person opens with. No sentence here may differ by mode: the working

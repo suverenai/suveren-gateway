@@ -1,7 +1,7 @@
 /**
  * check-pending-commitments(proposal_id, wait_seconds) — the AI may stay "on
  * the line" until the person decides instead of ending its turn and needing a
- * "carry on" (Andreas, 2026-10-19). getProposalWaiting only waits; it never
+ * "carry on" (Maria, 2026-10-19). getProposalWaiting only waits; it never
  * decides anything.
  */
 import { describe, it, expect } from 'vitest';

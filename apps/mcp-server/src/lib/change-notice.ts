@@ -246,7 +246,7 @@ const MAX_TOOLS_NAMED = 10;
 /**
  * A tool's compact call form from its own input schema: `name(to, subject, attachments?)`.
  * Required arguments first, then the optional ones with `?`, each in the schema's order. No
- * types and no descriptions (more text makes the AI less precise, Andreas 2026-11-11), except one
+ * types and no descriptions (more text makes the AI less precise, maintainer 2026-11-11), except one
  * mark: an argument that takes a list is `to[]` — the one type real AIs got wrong without it. A
  * nested object is named by its top-level name only.
  */

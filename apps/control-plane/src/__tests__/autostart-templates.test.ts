@@ -34,7 +34,7 @@ describe('escapeXml', () => {
   });
 
   it('leaves ordinary paths untouched', () => {
-    expect(escapeXml('/Users/andreas/.suveren')).toBe('/Users/andreas/.suveren');
+    expect(escapeXml('/Users/owner/.suveren')).toBe('/Users/owner/.suveren');
   });
 });
 

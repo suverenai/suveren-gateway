@@ -734,7 +734,7 @@ describe('through the gateway\'s own entry points', () => {
     expect(reg.files__save_file.description).not.toContain('May attach');
   });
 
-  // ── The role, the facts and the short answer (Andreas, 2026-11-10) ──────
+  // ── The role, the facts and the short answer (Maria, 2026-11-10) ──────
 
   const sectionOf = (brief: string, heading: string) => {
     const at = brief.indexOf(`=== ${heading} ===`);

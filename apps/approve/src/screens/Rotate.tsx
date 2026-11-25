@@ -1,7 +1,7 @@
 /**
  * Replace the recovery code on this phone (DEC-85, mockup D1–D5). The logic is lib/rotate-driver.ts; this file draws its states
  * with the gateway's components (frames, alerts, code box, form fields). The touch step is only "Waiting for your touch…" with
- * the gateway's spinner (Andreas, 2026-11-20).
+ * the gateway's spinner (maintainer, 2026-11-20).
  */
 import { useState } from 'react';
 import { CodeBlock } from '@suveren/approval-card/components/DeviceFrame';

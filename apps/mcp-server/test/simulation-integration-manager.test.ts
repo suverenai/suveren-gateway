@@ -179,7 +179,7 @@ describe('simulation mode — IntegrationManager', () => {
 
   // Production (simulation mode OFF) is the mirror image: a connector whose
   // CURRENT mode is simulated must not run next to real systems — a gateway
-  // is either simulation or production, never both (Andreas, 2026-11-05).
+  // is either simulation or production, never both (Maria, 2026-11-05).
   it('OFF: a connector currently simulated (credential unset → declared default) is refused to start, named', async () => {
     delete process.env.SUVEREN_SIMULATION;
     im = new IntegrationManager(new Map());

@@ -163,6 +163,8 @@ jobs:
           TARBALL=$(npm pack --silent)
           tar -xzf "$TARBALL" -C ../../.packed --strip-components=1
           rm -f "$TARBALL"
+          # No personal data in what a user installs (0.46.0 shipped two mockups with addresses).
+          node ../check-no-personal-data.mjs ../../.packed
           cd ../../.packed
           npm install --omit=dev --no-audit --no-fund
           echo "::group::CLI loads from the packed tarball"

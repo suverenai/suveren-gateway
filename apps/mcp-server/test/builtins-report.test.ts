@@ -495,7 +495,7 @@ describe('control check — breaking a gate must break its test', () => {
 });
 
 /**
- * Andreas's rule: in simulation mode the WORKING agent must never be able to
+ * Maria's rule: in simulation mode the WORKING agent must never be able to
  * tell it is a simulation. report__* tool names/descriptions/output use
  * neutral wording ("connected systems", "test data") instead — this is an
  * executable spec for that rule, not a one-off check: a future edit that

@@ -2,7 +2,7 @@
  * Who is who in a report — one place that turns an owner DID or an approver's
  * account id into the best name the LOCAL archive can vouch for (review of a
  * real export, 2026-10-06: an approval read "approved … by c7246947-…", and
- * one ticket's mandate showed "Andreas Schadauer" while another showed
+ * one ticket's mandate showed "Maria Berger" while another showed
  * "Owner (key …246947)" for the same person; since RR3 an undisclosed owner
  * reads "Owner (name not disclosed)").
  *

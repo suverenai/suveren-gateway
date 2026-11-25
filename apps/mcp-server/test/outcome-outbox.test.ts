@@ -17,7 +17,7 @@ function tmp(): string { const d = mkdtempSync(join(tmpdir(), 'outcome-outbox-')
 afterEach(() => { for (const d of dirs.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch { /* */ } } });
 
 const entry = (over: Partial<OutcomeOutboxEntry> = {}): Omit<OutcomeOutboxEntry, 'deliveredAt'> => ({
-  proposalId: 'p1', outcome: 'rejected', who: 'andreas', decidedAt: Date.now(), ...over,
+  proposalId: 'p1', outcome: 'rejected', who: 'maria', decidedAt: Date.now(), ...over,
 });
 
 describe('OutcomeOutbox — record / deliver once', () => {
@@ -87,7 +87,7 @@ describe('OutcomeOutbox — persistence survives a restart', () => {
 describe('OutcomeOutbox — encryption at rest', () => {
   it('persists plaintext without a key and reloads', () => {
     const dir = tmp();
-    new OutcomeOutbox(dir).recordIfNew(entry({ who: 'andreas@sublin.app' }));
+    new OutcomeOutbox(dir).recordIfNew(entry({ who: 'owner@example.com' }));
     expect(existsSync(join(dir, 'outcome-outbox.json'))).toBe(true);
     expect(new OutcomeOutbox(dir).size).toBe(1);
   });
@@ -96,11 +96,11 @@ describe('OutcomeOutbox — encryption at rest', () => {
     const dir = tmp();
     const box = new OutcomeOutbox(dir);
     box.setVaultKey(randomBytes(32));
-    box.recordIfNew(entry({ note: 'SECRET-SENTINEL-NOTE', who: 'andreas@sublin.app' }));
+    box.recordIfNew(entry({ note: 'SECRET-SENTINEL-NOTE', who: 'owner@example.com' }));
     expect(existsSync(join(dir, 'outcome-outbox.enc.json'))).toBe(true);
     const onDisk = readFileSync(join(dir, 'outcome-outbox.enc.json'), 'utf-8');
     expect(onDisk).not.toContain('SECRET-SENTINEL-NOTE');
-    expect(onDisk).not.toContain('andreas@sublin.app');
+    expect(onDisk).not.toContain('owner@example.com');
   });
 
   it('round-trips through encryption', () => {

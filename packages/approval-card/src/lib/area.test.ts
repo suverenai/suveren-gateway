@@ -95,7 +95,7 @@ describe('area filter param — UI spec §13.3', () => {
   });
 });
 
-describe('areaIcon — from the serving connector\'s manifest (Andreas, 2026-11-11)', () => {
+describe('areaIcon — from the serving connector\'s manifest (Maria, 2026-11-11)', () => {
   // The gateway's shipped manifests, as the UI receives them from /mcp/integrations/manifests.
   const dir = join(import.meta.dirname, '..', '..', '..', '..', 'content', 'integrations');
   const index = JSON.parse(readFileSync(join(dir, 'index.json'), 'utf8')) as { integrations: Record<string, string> };

@@ -258,22 +258,22 @@ describe('a refused read', () => {
 });
 
 // Walkthrough 2026-11-11: an update's card listed the contact as it is ("Name:
-// Andreas", revision 1, every field) under "Runs exactly as shown" — the change
-// to "Andreas Schadauer" was nowhere to be seen.
+// Maria", revision 1, every field) under "Runs exactly as shown" — the change
+// to "Maria Berger" was nowhere to be seen.
 describe('an update shows its change, old → new', () => {
   const contact: PreviewResponse = {
     status: 'ok', integration: 'crm', tool: 'get_contact', readAt: 1, target: true,
-    body: { structured: { id: 'c-1', name: 'Andreas', company: 'Sublin', email: 'a@x.at', revision: 1 } },
+    body: { structured: { id: 'c-1', name: 'Maria', company: 'Example', email: 'a@x.at', revision: 1 } },
     fields: ['name', 'company', 'email', 'revision'],
     version: { field: 'revision', approved: 1, current: 1, stale: false },
   };
-  const args = { id: 'c-1', revision: 1, name: 'Andreas Schadauer', contact_type: 'customer', ticket_id: 't' };
+  const args = { id: 'c-1', revision: 1, name: 'Maria Berger', contact_type: 'customer', ticket_id: 't' };
 
   it('the changed field is now → new; unchanged fields are folded apart; the record itself is not shown as what runs', () => {
     const v = previewBoxView(contact, 'CRM', args);
     expect(v.heading).toBe('What will be changed in CRM');
     expect(v.rendered).toBeUndefined();
-    expect(v.change?.lines).toEqual([{ key: 'name', label: 'Name', now: 'Andreas', next: 'Andreas Schadauer' }]);
+    expect(v.change?.lines).toEqual([{ key: 'name', label: 'Name', now: 'Maria', next: 'Maria Berger' }]);
     expect(v.change?.unchanged.fields.map((f) => f.key)).toEqual(['company', 'email', 'revision']);
     // Bound, but not a field of the record: sent as it is. The gateway's own ticket_id never shows.
     expect(v.change?.also).toEqual([{ key: 'contact_type', label: 'Contact type', value: 'customer' }]);
@@ -310,7 +310,7 @@ describe('the gateway\'s own description of a proposal stays what is signed', ()
   });
 });
 
-// Andreas 2026-11-11: "You approve this change" over a Now → New table, and ERP
+// Maria 2026-11-11: "You approve this change" over a Now → New table, and ERP
 // updates (previews that are lists of reads) get the same table.
 describe('the change heading and changes in a list of reads', () => {
   const item = (target: boolean): PreviewResponse => ({
@@ -342,7 +342,7 @@ describe('the change heading and changes in a list of reads', () => {
     expect(compare.lines.find((l) => l.key === 'vat_rate')).toEqual({ key: 'vat_rate', label: 'VAT rate', now: '20 %', next: '10 %' });
   });
 
-  // Round 4 (Andreas 2026-11-11): as calm as the CRM card.
+  // Round 4 (Maria 2026-11-11): as calm as the CRM card.
   it('the record by its name only, then Now → New; equal values and the version are not rows', () => {
     const withVersion = { ...item(true) } as Extract<PreviewResponse, { reads: unknown }>;
     withVersion.reads = [{ ...withVersion.reads[0], versionArg: 'revision', version: { field: 'revision', approved: 3, current: 3, stale: false } }];
@@ -381,9 +381,9 @@ describe('the change heading and changes in a list of reads', () => {
   it('a single read shown as a change gets the change heading; a record or a mandate keeps its own', () => {
     const crm: PreviewResponse = {
       status: 'ok', integration: 'crm', tool: 'get_contact', readAt: 1, target: true,
-      body: { structured: { id: 'c-1', name: 'Andreas', revision: 1 } },
+      body: { structured: { id: 'c-1', name: 'Maria', revision: 1 } },
     };
-    expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1, name: 'Andreas Schadauer' }), false)).toBe('You approve this change');
+    expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1, name: 'Maria Berger' }), false)).toBe('You approve this change');
     expect(sealedTileHeading(previewBoxView(crm, 'CRM', { id: 'c-1', revision: 1 }), false)).toBe('Runs exactly as shown');
     expect(sealedTileHeading(undefined, true)).toBe('You sign this');
   });

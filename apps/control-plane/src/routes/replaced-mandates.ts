@@ -3,7 +3,7 @@
  * Authority Server has not gone through yet. They are no longer honoured on
  * this gateway; the Mandates list shows a quiet line on each until the retry
  * loop (lib/replaced-revoke-retry.ts) has ended it there. There is deliberately
- * no "revoke now" action (Andreas, 2026-11-20): the gateway ends it by itself.
+ * no "revoke now" action (maintainer, 2026-11-20): the gateway ends it by itself.
  */
 import { Router } from 'express';
 import type { ReplacedMandateEntry } from '../lib/mcp-bridge';

@@ -1,5 +1,5 @@
 /**
- * The ONE give driver on a gateway with a device chain (Andreas, 2026-11-20): the give page and the approval card both use it, so a
+ * The ONE give driver on a gateway with a device chain (maintainer, 2026-11-20): the give page and the approval card both use it, so a
  * mandate the person gives and one the AI proposed are given the same way — prepare (what the gateway checked), then Touch ID on this
  * computer or, where it has no check key, the phone (DEC-90); the progress the gateway reports; the result. Only the screens around it
  * differ (the page's form, the card's sealed view of the proposal).

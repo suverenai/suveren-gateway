@@ -118,7 +118,7 @@ describe('crm.json — approval preview', () => {
   });
 });
 
-// Andreas 2026-11-11: ERP updates must get the same old → new card. Their
+// Maria 2026-11-11: ERP updates must get the same old → new card. Their
 // previews are lists of reads; the read that declares `version` is the record
 // changed — marked the same way, never by tool name.
 describe('erp.json — a versioned read inside a preview list is the target', () => {

@@ -75,7 +75,7 @@ describe('computeContentBinding — v2 field binding', () => {
   });
 
   it('THE FIX: redirecting an approved message moves the hash', () => {
-    const approved = send({ to: ['andreas@sublin.app'], body: 'See attached.' });
+    const approved = send({ to: ['owner@example.com'], body: 'See attached.' });
     const redirected = send({ to: ['attacker@evil.com'], body: 'See attached.' });
     expect(redirected?.contentHash).not.toBe(approved?.contentHash);
   });

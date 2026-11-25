@@ -241,7 +241,7 @@ export function SettingsServicesPage() {
       <h2 className="su-sec">{SETTINGS_SECTIONS[3]}</h2>
       <VersionCard />
 
-      {/* 5. AI Assistant — last (Andreas, 2026-10-24): optional; until it is set up it shows as a
+      {/* 5. AI Assistant — last (maintainer, 2026-10-24): optional; until it is set up it shows as a
           missing setup step (Get started, dashboard, Settings nav count). */}
       <h2 className="su-sec" id="ai-assistant" style={{ scrollMarginTop: 'calc(var(--nav-height) + 1rem)' }}>{SETTINGS_SECTIONS[4]}</h2>
       <article className="ob-card su-card">

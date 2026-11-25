@@ -815,7 +815,7 @@ function localOutcomeOfExecuted(proposal: SPProposal, state: SharedState): { tex
           `Do not call the tool again with the same values; a new attempt needs a new request and approval.${reasonSuffix}`
         // 'changed' covers a changed record AND a changed attachment/inserted
         // value (AU4 + documents by reference); the Reason line says which.
-        // Wording A, signed off by Andreas 2026-11-05 (A14 found the old line
+        // Wording A, signed off by maintainer 2026-11-05 (A14 found the old line
         // blaming the email connector for a changed ERP PDF).
         : entry.outcome === 'changed'
         ? `Proposal ${proposal.id} was approved, but running it was refused — nothing was done. ` +
@@ -838,7 +838,7 @@ const WAIT_POLL_MS = 2000;
 /**
  * Look a proposal up and, when asked to, WAIT (at most MAX_WAIT_SECONDS) while
  * it is still pending — so an AI can stay "on the line" until the person
- * decides instead of ending its turn and needing a "carry on" (Andreas,
+ * decides instead of ending its turn and needing a "carry on" (maintainer,
  * 2026-10-19). Returns as soon as the status is anything but pending; never
  * decides anything itself.
  */
