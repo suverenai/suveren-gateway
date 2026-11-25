@@ -32,6 +32,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The app's tests read real profiles (e.g. sales/0.4) from the catalog, as the gateway's test workflow does.
+      - name: Check out profile catalog (tests only)
+        uses: actions/checkout@v6
+        with:
+          repository: humanagencyprotocol/hap-profiles
+          path: .hap-profiles
+
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -49,6 +56,8 @@ jobs:
 
       - name: Unit tests (app + hosting headers)
         run: pnpm --filter @suveren/approve test
+        env:
+          SUVEREN_PROFILES_DIR: ${{ github.workspace }}/.hap-profiles
 
       - name: Typecheck
         run: pnpm --filter @suveren/approve typecheck
