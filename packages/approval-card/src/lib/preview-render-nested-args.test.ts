@@ -2,7 +2,7 @@
  * The approval card's and the ticket's summary rows for an argument that is
  * not a plain string or number — an invoice's `service_period` (one record)
  * and `lines` (a list of records). They were shown as "—" although the value
- * is there and sealed (Maria, 2026-10-18, ticket of TEST-2026-0002).
+ * is there and sealed (maintainer, 2026-10-18, ticket of TEST-2026-0002).
  */
 import { describe, it, expect } from 'vitest';
 import { buildCreationView } from './preview-render';

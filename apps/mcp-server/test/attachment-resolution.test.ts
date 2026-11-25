@@ -258,7 +258,7 @@ describe('finalizeAttachmentsForExecution', () => {
   it('mime-raw transport: rebuildTransport puts text added after finalize (the ticket link) into "raw"', async () => {
     // The ticket link is appended to `body` after finalize (tool-proxy.ts). A
     // MIME message carries the text inside `raw`, so without a rebuild the
-    // sent email silently lost the link (Maria, 2026-10-18, TEST-2026-0002).
+    // sent email silently lost the link (maintainer, 2026-10-18, TEST-2026-0002).
     const responses = { get_document: { filename: 'invoice.pdf', contentType: 'application/pdf', contentBase64: PDF_BASE64, sha256: PDF_SHA256 } };
     const im = buildIntegrationManager(responses);
     const resolved = await resolveAttachmentsAndInserts(

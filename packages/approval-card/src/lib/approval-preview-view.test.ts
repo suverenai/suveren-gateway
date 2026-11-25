@@ -342,7 +342,7 @@ describe('the change heading and changes in a list of reads', () => {
     expect(compare.lines.find((l) => l.key === 'vat_rate')).toEqual({ key: 'vat_rate', label: 'VAT rate', now: '20 %', next: '10 %' });
   });
 
-  // Round 4 (Maria 2026-11-11): as calm as the CRM card.
+  // Round 4 (maintainer 2026-11-11): as calm as the CRM card.
   it('the record by its name only, then Now → New; equal values and the version are not rows', () => {
     const withVersion = { ...item(true) } as Extract<PreviewResponse, { reads: unknown }>;
     withVersion.reads = [{ ...withVersion.reads[0], versionArg: 'revision', version: { field: 'revision', approved: 3, current: 3, stale: false } }];

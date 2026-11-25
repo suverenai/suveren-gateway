@@ -37,7 +37,7 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
   });
 });
 
-describe('the result stamp (Maria 2026-11-22)', () => {
+describe('the result stamp (maintainer 2026-11-22)', () => {
   it('its small line uses the body font, not the mono font', () => {
     const rule = /\.av3-stamp-t\s*\{([^}]*)\}/.exec(design)?.[1] ?? '';
     expect(rule).not.toBe('');

@@ -540,7 +540,7 @@ describe('what the MCP server asks of the control plane: the highest version, a 
     expect(await known(w.rootDid)).toBe(true);
   });
 
-  it('one mechanism (Maria 2026-11-20): with a chain, the AI path never creates a mandate; the person gives it on the page. A dry run still answers, with no touch', async () => {
+  it('one mechanism (maintainer 2026-11-20): with a chain, the AI path never creates a mandate; the person gives it on the page. A dry run still answers, with no touch', async () => {
     const w = await world();
     const request = { profile: 'sales', limits: LIMITS, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.', mode: 'review', durationHours: 1, title: 'Quotes', team: 'personal' };
     const dry = await w.internal('/internal/mandate', { dryRun: true, request });

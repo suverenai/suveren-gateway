@@ -1,6 +1,6 @@
 /**
  * Simulation mode must not leak the existence of a mandate for a profile
- * whose only connector is paused (Maria, 2026-10-02): the agent must not
+ * whose only connector is paused (maintainer, 2026-10-02): the agent must not
  * be able to tell simulation from live.
  *
  * Scenario exercised throughout: two authorizations —
