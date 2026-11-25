@@ -1454,6 +1454,14 @@ class SPClient {
     return ((await res.json()) as { archived: string[] }).archived;
   }
 
+  // ─── Live events (0.46.1): is the live connection to the AS up? (control plane, never the AS) ───
+
+  async getLiveStatus(): Promise<boolean> {
+    const res = await this.fetch('/api/live-status');
+    if (!res.ok) return false;
+    return ((await res.json()) as { up?: unknown }).up === true;
+  }
+
   // ─── Blocked actions: local "last seen" flag (deletes nothing) ───
 
   async getLastSeenBlockedAt(): Promise<number> {

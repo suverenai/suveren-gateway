@@ -217,6 +217,18 @@ export async function clearReplacedMandate(authorizationId: string): Promise<voi
  * so a human approval turns into a send without waiting for the poll loop.
  * Fire-and-forget: the poll remains the fallback, so failures are non-fatal.
  */
+/**
+ * Tell the MCP server whether the live connection to the AS is up (0.46.1, DEC-107): up, its proposal poll drops to
+ * a 5-minute backup and changes arrive as {@link runCommittedProposals} nudges; down, it polls every 5 s as before.
+ */
+export async function setLiveStatus(up: boolean): Promise<void> {
+  await fetch(`${MCP_BASE}/internal/live-status`, {
+    method: 'POST',
+    headers: { ...internalHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ up }),
+  });
+}
+
 export async function runCommittedProposals(): Promise<void> {
   await fetch(`${MCP_BASE}/internal/run-committed`, {
     method: 'POST',
