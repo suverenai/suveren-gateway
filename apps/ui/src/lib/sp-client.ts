@@ -1173,7 +1173,7 @@ class SPClient {
   };
 
   /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
-  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null; workspace?: 'personal' | 'team' }> | null> {
+  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null; workspace?: 'personal' | 'team'; title?: string | null }> | null> {
     try {
       const res = await this.fetch('/api/mandate/held-back');
       if (!res.ok) return null;

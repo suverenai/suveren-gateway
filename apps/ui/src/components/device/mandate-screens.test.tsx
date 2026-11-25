@@ -411,3 +411,11 @@ describe('prepare (the gateway\'s checked plan) and the bound give', () => {
     expect(lines(new Set(['b']))).toEqual(['confirmed', 'unconfirmed']);
   });
 });
+
+describe('on hold is never also Active (one source for the list and the cards)', () => {
+  it('only a give on its way and an ended mandate stay out of the held set', async () => {
+    const { isHeldShown } = await import('./HeldBackHost');
+    for (const r of ['alarm', 'rules_changed', 'touch_missing', 'unknown', 'waiting_confirm'] as const) expect(isHeldShown(r)).toBe(true);
+    expect(isHeldShown('not_received')).toBe(false); expect(isHeldShown('ended')).toBe(false);
+  });
+});

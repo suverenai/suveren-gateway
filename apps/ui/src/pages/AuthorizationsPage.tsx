@@ -11,7 +11,8 @@ import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { EndMandateHost } from '../components/device/EndMandateHost';
 import { ChangeMandateHost } from '../components/device/ChangeMandateHost';
-import { HeldBackHost } from '../components/device/HeldBackHost';
+import { HeldBackHost, isHeldShown, type HeldRaw } from '../components/device/HeldBackHost';
+import { heldReason } from '@suveren/approval-card/mandate-screens';
 import { endIsDeviceSigned } from '../lib/end-mandate';
 import { deviceClient } from '../lib/device-client';
 import { DomainBadge } from '../components/DomainBadge';
@@ -621,6 +622,15 @@ export function AuthorizationsPage() {
   const [deviceEnd, setDeviceEnd] = useState(false);
   // The person's own mandate titles, for the On-hold cards' names (the gateway's verdict list carries none).
   const heldTitles = useMemo(() => new Map(items.filter(i => i.title).map(i => [i.authorization_id, i.title as string] as const)), [items]);
+  // What this gateway holds back (its own verdicts). One source for the On-hold cards AND the list: a mandate shown on hold is
+  // never also counted or listed as Active (UI shows what this gateway enforces; Andreas's review of the mockup build, 2026-11-25).
+  const [heldRaw, setHeldRaw] = useState<HeldRaw[]>([]);
+  const fetchHeld = useCallback(() => {
+    if (!deviceEnd) { setHeldRaw([]); return; }
+    void spClient.getHeldBack().then(r => setHeldRaw(r ?? []));
+  }, [deviceEnd]);
+  useEffect(() => { fetchHeld(); }, [fetchHeld, items]);
+  const heldIds = useMemo(() => new Set(heldRaw.filter(h => isHeldShown(heldReason(h.code))).map(h => h.authorizationId)), [heldRaw]);
   const [changeTarget, setChangeTarget] = useState<{ id: string; changes: Record<string, unknown> } | null>(null);
   const [endTarget, setEndTarget] = useState<{ id: string; name: string; until: string | null } | null>(null);
   // Only a gateway with the switch on, a password session and a set-up device ends mandates by device key; every other gateway keeps today's Revoke.
@@ -962,7 +972,7 @@ export function AuthorizationsPage() {
   };
 
   // Compute counts and filtered list for the active view
-  const activeItems = viewTab === 'mine' ? items : teamItems;
+  const activeItems = viewTab === 'mine' ? items.filter(i => !heldIds.has(i.authorization_id)) : teamItems;
   const loading = viewTab === 'mine' ? mineLoading : teamLoading;
 
   // Archive is a Mine-tab concept (it's this owner's local view); the Team
@@ -1249,6 +1259,7 @@ export function AuthorizationsPage() {
       {/* Step 13, same chain check as End: what this gateway holds back, and the Change screen (Touch ID). */}
       {deviceEnd && (
         <HeldBackHost
+          held={heldRaw}
           titles={heldTitles}
           onGiveAgain={(m) => {
             const row = items.find(i => i.authorization_id === m.mandateId);
