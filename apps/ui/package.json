@@ -13,10 +13,10 @@
   "dependencies": {
     "@hap/core": "workspace:*",
     "@suveren/approval-card": "workspace:*",
-    "parse-diff": "^0.12.0",
+    "parse-diff": "^0.14.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.6"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
