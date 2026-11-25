@@ -27,6 +27,8 @@ export type EventType =
   | 'identity-reset-pending'  // device keys: a request for a new root DID is open — doorbell; the page reads /auth/device/status
   | 'identity-reset-cleared'  // device keys: that request ended (cancelled or gone)
   | 'give-progress'           // device keys: where a give with Touch ID on this computer is — payload { stage: 'touched' | 'requesting' | 'delivering' }; no content
+  | 'as-changed'              // live events (0.46.1): the AS announced a change — payload { kind: 'proposal'|'mandates'|'devices'|'team'|'resync' }; the page re-reads; never content
+  | 'live-events'             // live events: the live connection to the AS came up or went away — payload { up: boolean }; the page polls slowly while up
   | 'reader-chain-alarm';     // device keys, step 8: a reader's device chain did not verify, so they get no wrap — payload { did, code }; doorbell, the proposal's own answer carries the codes
 
 export interface BusEvent {

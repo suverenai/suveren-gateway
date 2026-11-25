@@ -10,6 +10,7 @@ import { useApprovalQueue } from '../contexts/ApprovalQueueContext';
 import { profileDisplayName } from '@suveren/approval-card/lib/profile-display';
 import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
 import { useSSEEvent } from '../contexts/EventSourceContext';
+import { useLiveEventsUp, LIVE_BACKUP_MS } from '../hooks/useLiveEvents';
 import { ApprovalRow } from '../components/ApprovalRow';
 import { isTestSetupAction, profileIdentity } from '@suveren/approval-card/lib/profile-identity';
 import { contentHashForDecision } from '@suveren/approval-card/lib/use-proposal-content';
@@ -69,7 +70,9 @@ export function ProposalReviewPage() {
 
   useSSEEvent('proposal-approved', fetchApprovedByMe);
   useSSEEvent('proposal-rejected', fetchApprovedByMe);
-  useVisiblePolling(fetchApprovedByMe, 30_000, `${userId}:${domain}`);
+  const live = useLiveEventsUp();
+  useSSEEvent('as-changed', fetchApprovedByMe);
+  useVisiblePolling(fetchApprovedByMe, live ? LIVE_BACKUP_MS : 30_000, `${userId}:${domain}`);
 
   // Above-cap proposals I CREATED, still pending (2026-10-15, real-gateway
   // e2e). Primary source: the AS's own creator-scoped query (suveren-as#89,
@@ -99,7 +102,8 @@ export function ProposalReviewPage() {
   useSSEEvent('proposal-added', fetchMyPendingProposals);
   useSSEEvent('proposal-approved', fetchMyPendingProposals);
   useSSEEvent('proposal-rejected', fetchMyPendingProposals);
-  useVisiblePolling(fetchMyPendingProposals, 30_000);
+  useSSEEvent('as-changed', fetchMyPendingProposals);
+  useVisiblePolling(fetchMyPendingProposals, live ? LIVE_BACKUP_MS : 30_000);
 
   // The tool is namespaced `<integrationId>__<tool>`, which is the only link
   // back from a proposal to the connector that produced it.
@@ -136,7 +140,8 @@ export function ProposalReviewPage() {
     }
   }, [domain, statusFilter]);
 
-  useVisiblePolling(fetchThread, 30_000, `${domain}:${statusFilter}`);
+  useSSEEvent('as-changed', fetchThread);
+  useVisiblePolling(fetchThread, live ? LIVE_BACKUP_MS : 30_000, `${domain}:${statusFilter}`);
   // A refusal after approval arrives later, from the Authority Server: read the list again when the gateway says so.
   useSSEEvent('denial-recorded', fetchThread);
   useSSEEvent('execution-failed', fetchThread);

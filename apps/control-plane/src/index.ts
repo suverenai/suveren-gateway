@@ -61,7 +61,7 @@ import { requireAllowedHost } from './middleware/host-guard';
 import { refuseAmbiguousPath, isApiPath } from './middleware/request-path';
 import { OAuthStateStore } from './lib/oauth-state';
 import { mcpPublicPort } from './lib/mcp-public-port';
-import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts, getHeldBack, getSignedMandate, recordReplacedMandate, listReplacedMandates, noteReplacedRevokeAttempt, clearReplacedMandate } from './lib/mcp-bridge';
+import { getToolDisplay, mcpRekeyClient, pushGateContent, pushServiceCredentials, setInternalSecret, getManifests, getGateContent, getEnrichedAuthorizations, getSkippedCommitments, getMyPendingProposals, MCP_BASE, runCommittedProposals, setLiveStatus, resyncGates, setReadPolicy, configure as configureMcp, unconfigureSession, replaceIntegration, startPendingIntegrations, getProposalFacts, getHeldBack, getSignedMandate, recordReplacedMandate, listReplacedMandates, noteReplacedRevokeAttempt, clearReplacedMandate } from './lib/mcp-bridge';
 import { createEstablish } from './lib/device-session-establish';
 import { createSignInSweep } from './lib/device-signin-sweep';
 import { createAsKeyCheck, asPinning } from './lib/device-as-trust';
@@ -95,6 +95,7 @@ import { createTeamJoinRouter } from './routes/team-join';
 import { createTeamChangesRouter } from './routes/team-changes';
 import { completeWaitingGives, anyGiveWaiting, pageIsWaiting, type CeremonyDeps } from './lib/mandate-ceremony';
 import { encryptIntentForRecipients } from './lib/intent-encryption';
+import { LiveEventsClient, type LiveKind } from './lib/live-events-client';
 import { fetchAs as fetchAsForMandate, AsTlsMismatchError as MandateTlsMismatch } from './lib/as-tls-pin';
 import { startNotificationDispatcher } from './lib/notification-dispatcher';
 import { eventBus } from './lib/event-bus';
@@ -652,6 +653,57 @@ async function closeGivenProposal(proposalId: string, since: number): Promise<vo
   } else throw new Error(`the Authority Server answered ${r.status}`);
 }
 
+// ─── Live events (0.46.1, DEC-107) ───────────────────────────────────────────
+// One outbound stream to the Authority Server (GET /api/events) instead of the page and the MCP server asking every
+// few seconds. The AS names what changed (a kind and an id); this process then re-reads it the ordinary way and tells
+// its page (SSE `as-changed`) and the MCP server (the committed/outcome nudge). While the stream is up the page and the
+// MCP server keep only a 5-minute backup poll; an AS that does not offer it (404) leaves everything as before.
+const LIVE_STREAM_BOUND_MS = 15 * 60_000; // longer than any server's maxStreamS; the server ends a stream well before
+const liveEvents = new LiveEventsClient({
+  ready: () => vault.isUnlocked() && !!vault.getSpCookie(),
+  open: async (signal, since) => {
+    const cookie = vault.getSpCookie();
+    if (!cookie) throw new Error('not signed in');
+    const pin = readPairing(DATA_DIR);
+    try {
+      const { res } = await fetchAsForMandate(
+        `${SP_URL}/api/events${since !== undefined ? `?since=${since}` : ''}`,
+        { method: 'GET', headers: { ...asAuthHeaders(cookie), Accept: 'text/event-stream' }, signal },
+        { enforce: resolvePinTls(DATA_DIR), pinnedSpkiHex: pin && pin.asUrl === SP_URL ? pin.tlsSpkiPinHex : undefined, boundMs: LIVE_STREAM_BOUND_MS },
+      );
+      if (res.status === 401 && vault.isUnlocked()) lockExpiredSession();
+      return res;
+    } catch (err) {
+      if (err instanceof MandateTlsMismatch) lockAsTlsMismatch();
+      throw err;
+    }
+  },
+  onChange: (kind: LiveKind) => {
+    if (!vault.isUnlocked()) return;
+    eventBus.emit('as-changed', { kind });
+    if (kind === 'proposal' || kind === 'resync') {
+      // The MCP server reads committed and decided proposals now (its own poll is a backup while the stream is up).
+      void runCommittedProposals().catch(() => {});
+      lastGiveCheck = 0;
+    }
+    if (kind === 'mandates' || kind === 'resync') {
+      lastGiveCheck = 0; // a give from the phone may be in force: the background completion looks at once
+      eventBus.emit('attestation-changed');
+      void resyncGates().catch(() => {});
+    }
+    if (kind === 'team' || kind === 'resync') eventBus.emit('team-membership-changed');
+  },
+  onStatus: (up) => {
+    console.log(`[Control Plane] live events: ${up ? 'connected — polling drops to a 5-minute backup' : 'not connected — polling as before'}`);
+    eventBus.emit('live-events', { up });
+    void setLiveStatus(up).catch(() => {});
+  },
+  log: (line) => console.log(line),
+});
+liveEvents.start();
+// The MCP server forgets the status when it restarts (it then polls every 5 s, the safe default): repeat it.
+setInterval(() => { if (liveEvents.isUp) void setLiveStatus(true).catch(() => {}); }, 60_000).unref?.();
+
 // PE1 — the MCP server sealing/opening proposal content (toolArgs, change-
 // needed notes) for recipients it does not itself have key material for.
 // See routes/internal-content-crypto.ts.
@@ -684,6 +736,8 @@ if (deviceTeamJoin) app.use('/api/team-join', jsonParser, authGuard, createTeamJ
 if (deviceTeamChanges) app.use('/api/team-changes', jsonParser, authGuard, createTeamChangesRouter(deviceTeamChanges));
 app.use('/api/replaced-mandates', jsonParser, authGuard, createReplacedMandatesRouter(listReplacedMandates));
 app.use('/api/gateway-settings', jsonParser, authGuard, createGatewaySettingsRouter(DATA_DIR));
+// Live events (0.46.1): whether the live connection to the AS is up — the page polls slowly while it is.
+app.get('/api/live-status', authGuard, (_req, res) => { res.json({ up: liveEvents.isUp }); });
 
 // Archived mandates: a local display flag (hides expired/revoked mandates; deletes nothing)
 app.use('/api/archived-mandates', jsonParser, authGuard, createArchivedMandatesRouter());
