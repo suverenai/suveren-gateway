@@ -1,0 +1,113 @@
+name: Publish phone app bundle
+
+# The phone approval app (apps/approve) as plain static files for its own address (DEC-112;
+# docs/phone-app-hosting.md). Builds with the production Authority Server address, runs the app's unit
+# tests, packs one tarball + its SHA-256, and attaches both to the GitHub Release of a `v*` tag.
+# workflow_dispatch builds the same bundle as a workflow artifact only — never a release, never a deploy.
+# Nothing here deploys: putting the bundle on the host is a separate, deliberate step.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      as_url:
+        description: 'Authority Server address the app is built for'
+        default: 'https://www.suveren.ai'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + test + pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      name: ${{ steps.pack.outputs.name }}
+    env:
+      VITE_AS_URL: ${{ inputs.as_url || 'https://www.suveren.ai' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the app's workspace dependencies
+        run: pnpm --filter "@suveren/approve^..." build
+
+      - name: Unit tests (app + hosting headers)
+        run: pnpm --filter @suveren/approve test
+
+      - name: Typecheck
+        run: pnpm --filter @suveren/approve typecheck
+
+      - name: Build the bundle
+        run: VITE_BUILD_COMMIT="$(git rev-parse --short HEAD)" pnpm --filter @suveren/approve build
+
+      - name: Check the bundle (no inline script, the AS address baked in, every file present)
+        working-directory: apps/approve/dist
+        run: |
+          set -euo pipefail
+          test -f index.html && test -f sw.js && test -f manifest.webmanifest
+          if grep -Eq '<script>|<script [^>]*>[^<]' index.html; then echo "inline script in index.html"; exit 1; fi
+          grep -q "$VITE_AS_URL" assets/index-*.js || { echo "AS address $VITE_AS_URL not in the bundle"; exit 1; }
+
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          V=$(jq -r .version package.json)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then NAME="suveren-approve-${V}"; else NAME="suveren-approve-${V}-$(git rev-parse --short HEAD)"; fi
+          mkdir -p out
+          ( cd apps/approve/dist && find . -type f ! -name FILES.sha256 | LC_ALL=C sort | sed 's#^\./##' | xargs sha256sum > FILES.sha256 )
+          tar -C apps/approve/dist -czf "out/${NAME}.tar.gz" .
+          ( cd out && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256" && sha256sum -c "${NAME}.tar.gz.sha256" )
+          cat apps/approve/dist/FILES.sha256
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.name }}
+          path: out/
+          if-no-files-found: error
+
+  release:
+    name: attach to the GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.name }}
+          path: out
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: out/*.tar.gz
+
+      - name: Create/update the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            out/*.tar.gz
+            out/*.tar.gz.sha256
