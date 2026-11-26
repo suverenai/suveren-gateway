@@ -49,3 +49,4 @@ export declare function resolveAsUrl(dataDir: string): string;
 export declare function resolveCaFile(dataDir: string): string | undefined;
 export declare function resolveProxyUrl(dataDir: string): string | undefined;
 export declare function resolveSimulation(dataDir: string): boolean;
+export declare function resolveDeviceKeys(dataDir: string, env?: Record<string, string | undefined>): 'on' | 'off' | undefined;

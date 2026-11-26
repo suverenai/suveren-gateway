@@ -273,3 +273,27 @@ export function resolveSimulation(dataDir) {
   if (policySimulation !== undefined) return policySimulation;
   return readConfig(dataDir).simulation === true;
 }
+
+/**
+ * The value of SUVEREN_DEVICE_KEYS ('on' | 'off' | undefined) that bundle/server.js hands to the control plane and
+ * the MCP server. Both read only that one variable, and an autostart launcher carries no environment, so a switch set
+ * only by hand ("export SUVEREN_DEVICE_KEYS=on" in the launcher) is lost the next time the launcher is rewritten.
+ *   - the variable says 'on' or 'off': that stands (a deliberate setting);
+ *   - otherwise: 'on' when the vault file already has an unlock-password header. The password routes exist only
+ *     with the switch on, so a header in the data dir means this gateway was set up with device keys;
+ *   - otherwise undefined: nothing is set and the gateway behaves as before. A gateway that was never set up
+ *     with device keys is never switched on by this.
+ * Reads the vault file only to look for the header key; nothing in it is used or logged.
+ */
+export function resolveDeviceKeys(dataDir, env = process.env) {
+  const v = env.SUVEREN_DEVICE_KEYS;
+  if (v === 'on' || v === 'off') return v;
+  try {
+    const path = join(dataDir, 'vault.enc.json');
+    if (!existsSync(path)) return undefined;
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    return parsed && typeof parsed === 'object' && 'password' in parsed ? 'on' : undefined;
+  } catch {
+    return undefined;
+  }
+}

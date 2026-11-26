@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir, constants as osConstants } from 'node:os';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { resolveCaFile, resolveProxyUrl, resolveSimulation } from './lib/config.mjs';
+import { resolveCaFile, resolveProxyUrl, resolveSimulation, resolveDeviceKeys } from './lib/config.mjs';
 import { readPolicy, isPolicyLocked } from './lib/policy.mjs';
 import { unsupportedNodeReason } from './lib/node-version.mjs';
 import { resolveInstallSettings } from './lib/install-settings.mjs';
@@ -216,6 +216,10 @@ const env = {
     readPolicy().policy.simulation !== undefined
       ? (readPolicy().policy.simulation ? '1' : '0')
       : (process.env.SUVEREN_SIMULATION ?? (resolveSimulation(DATA_DIR) ? '1' : '0')),
+  // Device keys: an explicit SUVEREN_DEVICE_KEYS stands; otherwise ON when the data dir was already set up
+  // with them (vault has an unlock-password header), so a dropped env var cannot lock the owner out.
+  // Never turned on for a gateway without that header. See resolveDeviceKeys in lib/config.mjs.
+  ...(resolveDeviceKeys(DATA_DIR) ? { SUVEREN_DEVICE_KEYS: resolveDeviceKeys(DATA_DIR) } : {}),
   // Passed by the login service (see bundle/lib/autostart-templates.mjs) so the
   // control-plane knows a human is NOT sitting in front of a terminal watching
   // it start — that is when a locked gateway needs to announce itself.

@@ -20,6 +20,7 @@ import {
   resolveCaFile,
   resolveProxyUrl,
   resolveSimulation,
+  resolveDeviceKeys,
 } from '../../../../bundle/lib/config.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'cli-config-'));
@@ -144,5 +145,31 @@ describe('bundle/lib/config.mjs — resolveSimulation', () => {
     writeConfig(dir, {});
     writeFileSync(join(dir, 'config.json'), '{ not json', 'utf-8');
     expect(resolveSimulation(dir)).toBe(false);
+  });
+});
+
+describe('bundle/lib/config.mjs — resolveDeviceKeys (the switch survives a dropped env var)', () => {
+  const withVault = (body: unknown) => { const dir = tmp(); dirs.push(dir); writeFileSync(join(dir, 'vault.enc.json'), typeof body === 'string' ? body : JSON.stringify(body)); return dir; };
+
+  it('a vault with an unlock-password header means ON, with no env var at all', () => {
+    expect(resolveDeviceKeys(withVault({ v: 1, password: { salt: 'x' } }), {})).toBe('on');
+  });
+  it('a gateway never set up with device keys is never switched on: no vault, or a vault without the header', () => {
+    const empty = tmp(); dirs.push(empty);
+    expect(resolveDeviceKeys(empty, {})).toBeUndefined();
+    expect(resolveDeviceKeys(withVault({ v: 1, entries: {} }), {})).toBeUndefined();
+  });
+  it('an unreadable vault file switches nothing on', () => {
+    expect(resolveDeviceKeys(withVault('{ not json'), {})).toBeUndefined();
+  });
+  it('an explicit on or off in the environment stands, even against the vault', () => {
+    const dir = withVault({ password: {} });
+    expect(resolveDeviceKeys(dir, { SUVEREN_DEVICE_KEYS: 'off' })).toBe('off');
+    expect(resolveDeviceKeys(dir, { SUVEREN_DEVICE_KEYS: 'on' })).toBe('on');
+    const empty = tmp(); dirs.push(empty);
+    expect(resolveDeviceKeys(empty, { SUVEREN_DEVICE_KEYS: 'on' })).toBe('on');
+  });
+  it('any other value is ignored, as the apps ignore it', () => {
+    expect(resolveDeviceKeys(withVault({ password: {} }), { SUVEREN_DEVICE_KEYS: '1' })).toBe('on');
   });
 });
