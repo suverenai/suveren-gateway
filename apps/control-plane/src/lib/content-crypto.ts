@@ -433,7 +433,8 @@ export interface ContentWire {
 
 /**
  * This reader's wrap: the device entry first (this computer's own key id; failing that the single entry a device
- * session is served), then the wrap by DID, then by account id (the legacy path, which every released gateway reads).
+ * session is served), then the wrap by DID, then by account id (the legacy path, which every released gateway reads), then by this
+ * computer's key id inside `keys` (a note the phone sealed for the computers of the chain).
  */
 function pickWrap(wire: ContentWire, myUserId: string, myDid?: string, myKeyId?: string): Wrap | undefined {
   const dev = wire.device_keys;
@@ -442,7 +443,8 @@ function pickWrap(wire: ContentWire, myUserId: string, myDid?: string, myKeyId?:
     if (own) return own;
   }
   const keys = { ...(wire.keys ?? {}), ...(wire.encrypted_keys ?? {}) };
-  return (myDid ? keys[myDid] : undefined) ?? keys[myUserId];
+  // A change note sealed on the person's phone is labelled with each reading computer's device key id (apps/approve lib/change-note.ts).
+  return (myDid ? keys[myDid] : undefined) ?? keys[myUserId] ?? (myKeyId ? keys[myKeyId] : undefined);
 }
 
 /** The card context of this proposal, opened (null: the proposal carries none), or the code that says why it could not be. */

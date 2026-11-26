@@ -268,6 +268,7 @@ export const P = {
   giveFromRules: (area: string) => `From the rules of ${area}.`, // DRAFT new (UI review, DEC-88)
   giveAnyDevice: 'You can do this on any of your devices. The mandate then holds for all of them.', // = S13
   giveReject: 'Reject', // = the gateway card's word
+  giveAskChanges: 'Ask for changes', // = the gateway card's word
   giveButton: 'Give this mandate with your touch', // DRAFT new (DEC-85)
   changeButton: 'Change with your touch', // DRAFT new (mockup B1, DEC-85)
   changeRowKind: 'Change to give', // DRAFT new

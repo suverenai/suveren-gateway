@@ -59,7 +59,7 @@ describe('a mandate to give on the phone', () => {
   });
 
   it('Reject only for the AI\'s proposal, Request and History from what the computer sent, else the one approved line', () => {
-    const rejectable = renderToStaticMarkup(<GiveCard state={{ step: 'review', item: { ...item, proposalId: 'prop-12345678' } }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={noop} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />);
+    const rejectable = renderToStaticMarkup(<GiveCard state={{ step: 'review', item: { ...item, proposalId: 'prop-12345678' } }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={async () => ({})} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />);
     expect(rejectable).toContain('data-testid="btn-reject"');
     expect(card({ step: 'review', item })).not.toContain('data-testid="btn-reject"');
     expect(rejectable).toContain('Your computer did not send this. You can see it there.');

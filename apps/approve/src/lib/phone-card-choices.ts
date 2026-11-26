@@ -11,8 +11,8 @@ export const PHONE_CARD = {
   /** "Reject" under the give button for a mandate an AI proposed; the same decision the gateway's Reject makes, signed by this phone. */
   offersReject: true,
   /**
-   * "Ask for changes". OFF: the note must be sealed for the AI's side (the proposal's submitter and the mandate owner) with their
-   * end-to-end public keys, and the phone is neither given those keys nor allowed to look them up. See the report of 2026-11-26.
+   * "Ask for changes" (the gateway's own words): the person's note is sealed on the phone for the computers of their own chain that read it to
+   * the AI (lib/change-note.ts), never sent in the clear.
    */
-  offersAskForChanges: false,
+  offersAskForChanges: true,
 } as const;

@@ -103,3 +103,37 @@ for (const [id, line] of Object.entries(LIST_LINES)) {
     await expect(page.locator('[data-testid=own-mandate] [data-testid=mode-badge]')).toHaveCount(1);
   });
 }
+
+// A decision reads the same on both devices: the buttons, the note box, the working line and the stamp.
+async function decide(page: Page, card: 'gateway' | 'phone', kind: 'reject' | 'change') {
+  await page.setViewportSize({ width: 390, height: 1400 });
+  await page.goto(`/fixture/index.html?case=crm&card=${card}`);
+  await page.waitForSelector('[data-testid=mandate-facts]');
+  const labels = (await page.locator('.av3-foot button').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
+  const seen: Record<string, unknown> = { labels: labels.filter((l) => /Reject|changes|Changes/i.test(l)).map((l) => (/hang/i.test(l) ? 'Ask for changes' : l)) };
+  if (kind === 'change') {
+    await page.locator('[data-testid=btn-change-needed]').click();
+    seen.noteLabel = (await page.locator('.av3-chg-l').textContent())?.trim();
+    seen.noteButtons = (await page.locator('.av3-chg button').allTextContents()).map((t) => t.trim());
+    await page.locator('[data-testid=change-note]').fill('Use the reply address instead.');
+    await page.locator('[data-testid=btn-send-back]').click();
+  } else {
+    await page.locator('[data-testid=btn-reject]').click();
+  }
+  await page.waitForSelector('[data-testid=decision-stamp]');
+  seen.stamp = (await page.locator('[data-testid=decision-stamp]').textContent())?.replace(/\s+/g, ' ').trim();
+  // the buttons are gone once the stamp is up (nothing to press twice)
+  seen.buttonsAfter = await page.locator('.av3-foot button').count();
+  if (SHOTS) await page.waitForTimeout(700);
+  if (SHOTS) await page.screenshot({ path: join(SHOTS, `stamp-${kind}-${card}-390.png`), fullPage: true });
+  return seen;
+}
+for (const kind of ['reject', 'change'] as const) {
+  test(`${kind}: the phone says and shows exactly what the gateway says`, async ({ page }) => {
+    const gateway = await decide(page, 'gateway', kind);
+    const phone = await decide(page, 'phone', kind);
+    expect(phone).toEqual(gateway);
+    expect(gateway.stamp).toBe(kind === 'reject' ? 'RejectedRecorded' : 'Sent back to the AIRecorded');
+    expect(gateway.buttonsAfter).toBe(0);
+  });
+}

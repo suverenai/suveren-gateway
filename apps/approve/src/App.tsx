@@ -16,7 +16,9 @@ import { deviceRows, type DeviceRow } from './lib/chain-view';
 import { identityCodeOf } from './lib/identity-code';
 import { bindPhoneHost } from './lib/app-host';
 import { checkCard, type CardCheck } from './lib/card-checks';
-import { DecideError } from './lib/decide';
+import { DecideError, type DecisionExtras } from './lib/decide';
+import { noteReaders, sealChangeNote } from './lib/change-note';
+import type { DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
@@ -482,26 +484,24 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     })();
   }, [giving, rt, load]);
 
-  // Reject the AI's proposal a give carries out: the same signed decision the gateway's Reject makes. Closed only once the Authority Server
-  // accepted it (never optimistic); a refusal is told in the panel's own error line and the give stays.
-  const rejectGive = useCallback(async (item: GiveItem) => {
-    if (!item.proposalId) return;
-    setBusy(true);
-    try {
-      const r = await rt.reader.get(item.proposalId, true);
-      if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
-      const check = await checkCard(rt.checks, r.data);
-      if (!check.ok) { if (check.reason === 'session_ended') onEnded(); else setError(blockedText(check.reason)); return; }
-      await rt.decider.decide(r.data, check.ready, 'reject');
-      giver.close();
-      finishSettling(item.key);
-      void loadMandates();
-      void load(false);
-    } catch (e) {
-      setError(e instanceof DecideError ? e.message : errorText('generic'));
-    } finally { setBusy(false); }
-  }, [rt, giver, onEnded, load, loadMandates]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Reject, or send back with words, the AI's proposal a give carries out: the same signed decision the gateway's card makes. The request is read
+  // again and every check runs again first. Nothing is closed here: the card shows its stamp only once the Authority Server answered, then
+  // `giveDecided` lets the panel move on. A refusal throws the phone's own text and the give stays.
+  const decideGive = useCallback(async (item: GiveItem, extras: DecisionExtras): Promise<DecisionResult> => {
+    if (!item.proposalId) throw new DecideError('generic');
+    const r = await rt.reader.get(item.proposalId, true);
+    if (!r.ok) { if (r.code === 'session_ended') onEnded(); throw new DecideError(r.code === 'as_unreachable' ? 'as_unreachable' : 'generic'); }
+    const check = await checkCard(rt.checks, r.data);
+    if (!check.ok) { if (check.reason === 'session_ended') onEnded(); throw new DecideError(check.reason, blockedText(check.reason)); }
+    return rt.decider.decide(r.data, check.ready, 'reject', extras);
+  }, [rt, onEnded]);
+  const rejectGive = useCallback((item: GiveItem) => decideGive(item, {}), [decideGive]);
+  const askChangesGive = useCallback(async (item: GiveItem, note: string) => {
+    const chain = rt.session.current()?.chain;
+    const readers = chain ? noteReaders(chain) : [];
+    if (readers.length === 0) throw new DecideError('generic');
+    return decideGive(item, { outcome: 'change_needed', noteEncrypted: await sealChangeNote(note, readers) });
+  }, [rt, decideGive]);
   // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
   useEffect(() => {
     if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
@@ -548,6 +548,12 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     if (outcome === 'done') timers.current.push(window.setTimeout(() => finishSettling(id), RESULT_SHOW_MS));
     else if (outcome === 'refused' || outcome === 'unknown') setSettling((s) => (s && s.id === id ? { ...s, stay: true } : s));
   }, [finishSettling]);
+
+  const giveDecided = useCallback((item: GiveItem) => {
+    handleDecided(item.key);
+    handleOutcome(item.key, 'done');
+    timers.current.push(window.setTimeout(() => { giver.close(); void loadMandates(); void load(false); }, RESULT_SHOW_MS));
+  }, [handleDecided, handleOutcome, giver, loadMandates, load]);
 
   const toggleAuto = useCallback(() => {
     const value = autoOpen !== true;
@@ -598,7 +604,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
           node: (
             <GiveCard
               state={giving} nowSeconds={rt.now()}
-              onGive={() => void giver.give()} onLater={later} onReject={giving.item?.proposalId ? () => void rejectGive(giving.item!) : undefined} onCancelTouch={() => giver.cancelTouch()}
+              onGive={() => void giver.give()} onLater={later} onReject={giving.item?.proposalId ? () => rejectGive(giving.item!) : undefined} onAskChanges={giving.item?.proposalId ? (n) => askChangesGive(giving.item!, n) : undefined} onDecided={() => giveDecided(giving.item!)} onCancelTouch={() => giver.cancelTouch()}
               onCheckAgain={() => void giver.checkAgain()}
               onDone={() => { const k = shownId; giver.close(); finishSettling(k); void loadMandates(); }}
               dismissLabel={resultDismissLabel(afterDecision(settling ? settling.before : ids, shownId).next !== null)}

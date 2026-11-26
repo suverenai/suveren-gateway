@@ -94,7 +94,7 @@ async function boot() {
         ) : card === 'phone-list' ? (
           <OwnMandates items={[{ authorizationId: 'a', mandateId: 'm', version: 1, title: c.title, expiresAt: NOW + 30 * 86400, mode: c.mode, fields: {}, givenOn: null, givenAt: null }]} nowSeconds={NOW} onEnd={noop2} />
         ) : card === 'phone'
-          ? <GiveCard state={{ step: 'review', item }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={noop} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />
+          ? <GiveCard state={{ step: 'review', item }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={async () => ({})} onAskChanges={async () => ({})} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />
           : <ApprovalCard proposal={proposal} currentUserId="fixture-owner" decide={async () => ({})} />}
       </main>
     </StrictMode>,

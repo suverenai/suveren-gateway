@@ -22,6 +22,7 @@ import { approvalHost, hostData } from '../host';
 import type { ToolDisplay } from '../lib/approval-view';
 import { ApprovalBody } from './ApprovalBody';
 import { CommitmentBand } from './MandateProposalCard';
+import { ChangeNoteFooter, WorkingStamp, DecisionStamp } from './DecisionParts';
 import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
@@ -365,31 +366,10 @@ export function ApprovalCard({
       </LoadGate>
 
       {!alreadyDecided && !busy && phase.t === 'change' && (
-        <footer className="av3-foot av3-chg">
-          <label className="av3-chg-l" htmlFor={`chg-${proposal.id}`}>What should the AI change?</label>
-          <textarea
-            id={`chg-${proposal.id}`}
-            data-testid="change-note"
-            value={note}
-            maxLength={CHANGE_NOTE_MAX}
-            rows={3}
-            onChange={(e) => setNote(e.target.value)}
-            autoFocus
-          />
-          {error && <p className="msg-error av3-error" role="alert">{error}</p>}
-          <div className="av3-btns av3-btns-two">
-            <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-send-back" onClick={sendChange}>Send to the AI</button>
-            <button type="button" className="av3-btn" onClick={() => { setPhase({ t: 'idle' }); setError(''); }}>Back</button>
-          </div>
-        </footer>
+        <ChangeNoteFooter id={proposal.id} note={note} onNote={setNote} error={error} onSend={sendChange} onBack={() => { setPhase({ t: 'idle' }); setError(''); }} />
       )}
 
-      {phase.t === 'working' && (
-        <div className="av3-stamp av3-stamp-wait" role="status" data-testid="decision-working">
-          <span className="av3-spin" aria-hidden="true" />
-          {workingWord(phase.kind, isMandate)}…
-        </div>
-      )}
+      {phase.t === 'working' && <WorkingStamp kind={phase.kind} isMandate={isMandate} />}
       {phase.t === 'done' && refusedAfter && <ResultFoot dismiss={dismiss} />}
       {outcome === 'waiting' && phase.t === 'done' && (
         <div className="av3-stamp" role="status" data-testid="decision-waiting">
@@ -400,12 +380,9 @@ export function ApprovalCard({
       )}
       {outcome === 'unknown' && phase.t === 'done' && <ResultFoot check={{ busy: checking, checkedOnce, onCheck: checkAgain }} dismiss={dismiss} />}
       {outcome === 'done' && phase.t === 'done' && (
-        <div className="av3-stamp" role="status" data-testid="decision-stamp">
-          <svg className="av3-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
-          <div className="av3-stamp-w">{stampWord(phase.kind, isMandate)}</div>
-          <div className="av3-stamp-t">{stampLine(phase.kind, phase.result)}</div>
+        <DecisionStamp kind={phase.kind} isMandate={isMandate} result={phase.result}>
           {nextProposal && <StampNext><ApprovalSummary proposal={nextProposal} manifests={manifests} /></StampNext>}
-        </div>
+        </DecisionStamp>
       )}
     </div>
   );

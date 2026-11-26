@@ -16,6 +16,9 @@ import { ageLabel } from '@suveren/approval-card/lib/core-objects';
 import { shortProfileId } from '@suveren/approval-card/lib/profile-identity';
 import { AreaIcon } from '@suveren/approval-card/components/AreaIcon';
 import { areaIcon } from '@suveren/approval-card/lib/area';
+import { ChangeNoteFooter, WorkingStamp, DecisionStamp } from '@suveren/approval-card/components/DecisionParts';
+import { validateChangeNote } from '@suveren/approval-card/lib/reject-outcome';
+import type { DecisionKind, DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import { PHONE_CARD } from '../lib/phone-card-choices';
 import type { GiveItem, GiveState } from '../lib/mandate-give';
 import type { OwnMandate, EndState, HeldOwn } from '../lib/mandate-end';
@@ -111,16 +114,43 @@ function GiveBody({ item, nowSeconds }: { item: GiveItem; nowSeconds: number }) 
  * The give, full screen in the panel (mockup A2): the body scrolls with the "More below" cue; the footer is pinned. After the touch the
  * gateway's own result ("Signed"), or the one not-received state with Check again (UI review, DEC-88).
  */
-export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onCancelTouch, onCheckAgain, onDone, dismissLabel }: {
+export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onAskChanges, onDecided, onCancelTouch, onCheckAgain, onDone, dismissLabel }: {
   state: Exclude<GiveState, { step: 'idle' }>; nowSeconds: number;
-  /** Reject the AI's proposal this give carries out (signed by this phone). Absent: no Reject (a give the person prepared themselves). */
-  onReject?: () => void;
+  /** Reject the AI's proposal this give carries out (signed by this phone); resolves once the Authority Server answered. Absent: no Reject (a give the person prepared themselves). */
+  onReject?: () => Promise<DecisionResult>;
+  /** Send the AI's proposal back with the person's words (sealed for the computer that reads them to the AI). Absent: no "Ask for changes". */
+  onAskChanges?: (note: string) => Promise<DecisionResult>;
+  /** The Authority Server answered a Reject or a change: the stamp is on screen; the host moves on after it has been seen. */
+  onDecided?: (kind: DecisionKind) => void;
   onGive: () => void; onLater: () => void; onCancelTouch: () => void; onCheckAgain: () => void; onDone: () => void; dismissLabel: string;
 }) {
   const item = state.item;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [moreBelow, setMoreBelow] = useState(false);
-  const busy = state.step === 'sending' || state.step === 'signed';
+  // Reject and "Ask for changes" run as on the gateway's card: working line, then the stamp only once the Authority Server answered.
+  const [phase, setPhase] = useState<{ t: 'idle' } | { t: 'change' } | { t: 'working'; kind: DecisionKind } | { t: 'done'; kind: DecisionKind; result: DecisionResult }>({ t: 'idle' });
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const decided = phase.t === 'working' || phase.t === 'done';
+  const run = async (kind: 'reject' | 'change', changeNote?: string) => {
+    if (decided) return;
+    setError('');
+    setPhase({ t: 'working', kind });
+    try {
+      const result = await (kind === 'reject' ? onReject!() : onAskChanges!(changeNote!));
+      setPhase({ t: 'done', kind, result });
+      onDecided?.(kind);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed');
+      setPhase(kind === 'change' ? { t: 'change' } : { t: 'idle' });
+    }
+  };
+  const sendChange = () => {
+    const v = validateChangeNote(note);
+    if (!v.valid) { setError(v.error); return; }
+    void run('change', v.trimmed);
+  };
+  const busy = state.step === 'sending' || state.step === 'signed' || decided;
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || busy) { setMoreBelow(false); return undefined; }
@@ -142,19 +172,26 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onCance
         </article>
         {moreBelow && <div className="more-cue" aria-hidden="true" data-testid="more-cue">More below ↓</div>}
       </div>
-      {state.step === 'review' && (
+      {state.step === 'review' && phase.t !== 'change' && !decided && (
         <>
           {/* The commitment, right above the give button, as on the gateway's card (a change has its own card and no band). */}
           {!(item.op === 'change' && item.diff) && <CommitmentBand mode={item.payload.commitment_mode} />}
           <footer className="av3-foot">
+            {error && <p className="msg-error av3-error" role="alert">{error}</p>}
             <div className="av3-btns-stack">
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-give" onClick={onGive}>{item.op === 'change' ? P.changeButton : P.giveButton}</button>
               <button type="button" className="av3-btn" onClick={onLater}>{P.cancel}</button>
-              {PHONE_CARD.offersReject && onReject && <button type="button" className="av3-btn" data-testid="btn-reject" onClick={onReject}>{P.giveReject}</button>}
+              {PHONE_CARD.offersAskForChanges && onAskChanges && <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>{P.giveAskChanges}</button>}
+              {PHONE_CARD.offersReject && onReject && <button type="button" className="av3-btn" data-testid="btn-reject" onClick={() => void run('reject')}>{P.giveReject}</button>}
             </div>
           </footer>
         </>
       )}
+      {state.step === 'review' && phase.t === 'change' && (
+        <ChangeNoteFooter id={item.key} note={note} onNote={setNote} error={error} onSend={sendChange} onBack={() => { setPhase({ t: 'idle' }); setError(''); }} />
+      )}
+      {phase.t === 'working' && <WorkingStamp kind={phase.kind} isMandate />}
+      {phase.t === 'done' && <DecisionStamp kind={phase.kind} isMandate result={phase.result} />}
       {state.step === 'checking' && (
         <footer className="av3-foot">
           <TouchWait text={P.openBusy} error={state.error} onRetry={onGive} onCancel={onCancelTouch} retryLabel={item.op === 'change' ? P.changeButton : P.giveButton} cancelLabel={P.cancel} />
