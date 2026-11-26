@@ -18,6 +18,7 @@
  */
 import { Router } from 'express';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { getToolRequestContext } from '../lib/mcp-bridge';
 import { planMandate, createMandate, checkMandateRight, planMandateChange, changeMandate, giveOnPhone, changeOnPhone, proposalGiveState, MandateRefused, type CeremonyDeps, type MandateChangeRequest, type MandateRequest } from '../lib/mandate-ceremony';
 import { eventBus } from '../lib/event-bus';
 
@@ -48,6 +49,14 @@ function secretMatches(provided: string | undefined, expected: string): boolean 
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * The Request and History the card on this computer would show for an AI-proposed mandate, read now so the phone can show them too
+ * (the same read the card's Request and History rows make). A failed read is no data, never an invented one: the phone then says so.
+ */
+async function requestContextOf(args: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+  try { return (await getToolRequestContext({ tool: 'setup__create_mandate', toolArgs: args })) as unknown as Record<string, unknown>; } catch { return undefined; }
 }
 
 export function createInternalMandateRouter(
@@ -138,7 +147,7 @@ export function createInternalMandateRouter(
     try {
       const r = b.tool === 'change'
         ? await changeOnPhone(changeRequestFrom(args, b.old).change, d, { proposalId: b.proposalId })
-        : await giveOnPhone(createRequestFrom(args), d, { proposalId: b.proposalId });
+        : await giveOnPhone(createRequestFrom(args), d, { proposalId: b.proposalId, requestContext: await requestContextOf(args) });
       res.json({ ok: true, ...r });
     } catch (err) {
       // Not offered (no phone that can give, the plan refused): the card on the computer still gives it; the phone shows the request.

@@ -27,6 +27,8 @@ import {
 } from '@hap/core/device-keys';
 import { createGrantMembers, GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import { computeMandateDiff, type MandateDiff } from '@hap/core/mandate-change';
+import type { RequestContextResponse } from '@suveren/approval-card/types';
+import { isRequestContext } from '@suveren/approval-card/lib/request-context-view';
 import { Driver } from './driver';
 import { giveHashes } from './give-hashes';
 import { openSealedObject } from './content';
@@ -75,6 +77,12 @@ export interface GiveItem {
   /** The AI proposal this give carries out (setup__create_mandate / setup__change_mandate), as the computer named it: the give is shown
    *  in that request's place, and the request is closed once it is given. Never part of what is signed. */
   proposalId?: string;
+  /**
+   * What the computer adds to show beside the mandate, sealed in the same give (never part of what is signed, never hashed): the
+   * workspace it applies to and the Request and History it read for the AI's proposal. Absent from an older computer.
+   */
+  workspace?: string;
+  requestContext?: RequestContextResponse;
 }
 
 export type GiveCode =
@@ -188,6 +196,9 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
   try {
     members = grantMembersOf(payload, { authorizationId: place.authorization_id, groupId: place.group_id, replaces: place.replaces as string | null, chainDids: [...(dids as string[])].sort() });
   } catch { return bad('give_place_invalid'); }
+  const shown = isObj(g.shown) ? g.shown : {};
+  const workspace = typeof shown.workspace === 'string' && shown.workspace.trim() && shown.workspace.length <= 200 ? shown.workspace.trim() : undefined;
+  const requestContext = isRequestContext(shown.request_context) && JSON.stringify(shown.request_context).length <= 200_000 ? shown.request_context : undefined;
   return {
     ok: true,
     item: {
@@ -197,6 +208,7 @@ export async function checkGive(content: Record<string, unknown>, row: PreparedR
       expiresAt: payload.expires_at, lastsSeconds: Math.max(0, payload.expires_at - ctx.now),
       ...(previous ? { previous } : {}), ...(diff ? { diff } : {}), ...(g.op === 'change' && g.renewal === true ? { renewal: true } : {}),
       ...(typeof g.proposal_id === 'string' && PROPOSAL_ID.test(g.proposal_id) ? { proposalId: g.proposal_id } : {}),
+      ...(workspace ? { workspace } : {}), ...(requestContext ? { requestContext } : {}),
     },
   };
 }

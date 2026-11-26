@@ -290,14 +290,14 @@ describe('limitChecks — "Within your limits" on a pending proposal (AU5)', () 
       salesProfile,
     );
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ key: 'value_max', label: 'Value', ok: true, valueText: '480 EUR', limitText: '1,000 EUR' });
+    expect(out[0]).toMatchObject({ key: 'value_max', label: 'Value', ok: true, valueText: '€480', limitText: '€1,000' });
     expect(out[1]).toMatchObject({ key: 'discount_pct_max', label: 'Discount', ok: true, valueText: '0 %', limitText: '5 %' });
   });
 
   it('marks a check failed when the value exceeds the mandate bound', () => {
     const out = limitChecks({ value: 1440 }, { value_max: 1000 }, salesProfile);
     expect(out).toEqual([
-      expect.objectContaining({ key: 'value_max', ok: false, valueText: '1,440 EUR', limitText: '1,000 EUR' }),
+      expect.objectContaining({ key: 'value_max', ok: false, valueText: '€1,440', limitText: '€1,000' }),
     ]);
   });
 

@@ -7,6 +7,7 @@
  */
 import { CardSkeleton } from '@suveren/approval-card/components/ApprovalCard';
 import type { ReactNode } from 'react';
+import { BrandRow } from '@suveren/approval-card/components/BrandMark';
 import { ApprovalPanelHead } from '@suveren/approval-card/components/ApprovalPanelHead';
 import type { Proposal } from '@suveren/approval-card/types';
 import { RequestCard, type RequestCardProps } from './Requests';
@@ -46,6 +47,7 @@ export function RequestPanel(p: RequestPanelProps) {
         autoOpen={p.autoOpen}
         onToggleAuto={p.onToggleAuto}
         locked={p.locked}
+        brand={<BrandRow badge="Approvals" />}
       />
       <div className="apr-body">
         {p.error && <Notice kind="error">{p.error}</Notice>}

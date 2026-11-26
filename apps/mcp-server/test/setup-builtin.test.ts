@@ -500,7 +500,7 @@ describe('setup__describe_mandate_proposal (AU3 internal preview — DL1 Interfa
       workspace: 'Sales Vienna',
       mode: 'review',
       valid: '30 days',
-      limits: { 'Max value per quote or order': 'EUR 1000', 'Max discount': '5%' },
+      limits: { 'Max value per quote or order': '€1,000', 'Max discount': '5%' },
       scope: { Currency: 'EUR' },
       title: 'Innendienst',
       intent: 'Why — test.',

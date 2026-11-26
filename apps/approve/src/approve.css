@@ -2,11 +2,15 @@
    approval card) is the gateway page's design system, loaded first by main.tsx. Tokens only (approve-css.test.ts). */
 
 /* Full-height layout and the notch / home-bar safe areas of an installed app. */
-.ap-shell { width: 100%; max-width: 40rem; min-height: 100dvh; margin: 0 auto; padding: env(safe-area-inset-top) env(safe-area-inset-right) calc(env(safe-area-inset-bottom) + var(--space-8)) env(safe-area-inset-left); box-sizing: border-box; }
+.ap-shell { width: 100%; max-width: 40rem; min-height: 100dvh; margin: 0 auto; padding: 0 env(safe-area-inset-right) calc(env(safe-area-inset-bottom) + var(--space-8)) env(safe-area-inset-left); box-sizing: border-box; }
 .ap-shell .ftabs { margin: var(--space-3) var(--space-4) 0; }
 
 /* The theme switch sits top right, inside the safe area. */
-.ap-top { display: flex; justify-content: flex-end; padding: calc(env(safe-area-inset-top) + var(--space-2)) calc(env(safe-area-inset-right) + var(--space-3)) 0 var(--space-3); }
+/* The status bar's height. In the installed app (standalone) the bar floats over the page, so the first row never starts closer to the
+   top than a status bar is high, even where the system reports a smaller inset. Both the top bar and the full-screen panel use it. */
+:root { --ap-inset-top: env(safe-area-inset-top); }
+@media (display-mode: standalone) { :root { --ap-inset-top: max(env(safe-area-inset-top), 2.75rem); } }
+.ap-top { display: flex; justify-content: space-between; align-items: center; padding: calc(var(--ap-inset-top) + var(--space-2)) calc(env(safe-area-inset-right) + var(--space-3)) 0 var(--space-3); }
 
 /* Scanning. On an iPhone the preview can stay black: the frame and the line under it carry the screen. */
 .ap-scan { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 22rem; margin: var(--space-4) auto; border: 2px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-sunken); overflow: hidden; }
@@ -19,8 +23,11 @@ body.ap-blank #root { visibility: hidden; }
 
 /* The approval panel (DEC-86): the gateway's own panel, full screen on a phone. The gateway's leaves room for its icon rail and nav bar;
    the phone has neither, only the notch and the home bar. The card's buttons stay above the home bar. */
-.ap-panel.apr-panel { left: 0; top: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.ap-panel.apr-panel { left: 0; top: var(--ap-vv-top, 0px); height: var(--ap-vv-h); padding: var(--ap-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .ap-panel .av3-foot { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
+
+/* While the keyboard is open the panel is exactly the visible part of the screen (--ap-vv-*, set from the visual viewport in App.tsx),
+   so the note box sits right above the keyboard. */
 
 /* Touch targets (UI review, DEC-88): every control a thumb taps is at least 44 px (tabs, Remove, small buttons, the panel head). */
 .ap-shell .ftab, .ap-shell .btn-sm, .ap-panel .apr-btn, .ap-panel .apr-ico { min-height: 44px; min-width: 44px; }

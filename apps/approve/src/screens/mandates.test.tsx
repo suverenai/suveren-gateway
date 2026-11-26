@@ -18,7 +18,7 @@ const NOW = 1_800_000_000;
 const item: GiveItem = {
   key: 'give:mandate-1:1', mandateId: 'mandate-1', version: 1, op: 'grant', preparedBy: 'Office Mac', preparedAt: NOW - 120, title: 'Quotes',
   profile: SALES, bounds: { profile: SALES.id, value_max: 1000 }, scope: { currency: 'EUR' }, intent: 'Why: quotes wait two days.',
-  payload: { above_cap_approvers: ['did:key:z6MkApprover'], above_cap_approvals: 1 } as unknown as MandatePayload, members: {},
+  payload: { above_cap_approvers: ['did:key:z6MkApprover'], above_cap_approvals: 1, commitment_mode: 'review' } as unknown as MandatePayload, members: {},
   expiresAt: NOW + 14 * 86400, lastsSeconds: 14 * 86400,
 };
 const noop = () => {};
@@ -38,14 +38,31 @@ describe('a mandate to give on the phone', () => {
     expect(html).toContain('data-testid="give-title"');
     expect(html).toContain('data-testid="mandate-summary"');
     expect(html).toContain('Prepared on Office Mac');
-    expect(html).toContain('data-testid="give-limits"');
+    expect(html).toContain('data-testid="mandate-limits"');
     expect(html).not.toContain('>profile<'); // the profile id is not a limit
-    expect(html).toContain('data-testid="give-scope"');
-    expect(html).toContain('14 days');
+    expect(html).toContain('data-testid="mandate-scope"');
+    expect(html).toContain('€1,000'); // money the one way (the gateway's card reads the same)
+    expect(html).toContain('14 days (until '); // the granted duration, with the date it gives
     expect(html).toContain(P.giveCheckCode); // the identity code folded (DEC-88)
     expect(html).toContain('Why: quotes wait two days.');
     expect(html).toMatch(/<footer class="av3-foot">[\s\S]*data-testid="btn-give"[\s\S]*<\/footer>/);
     expect(html).toContain(P.giveButton);
+  });
+
+  it('the commitment: a badge in the top line and a band right above the give button; Automatic in the amber', () => {
+    const html = card({ step: 'review', item });
+    expect(html).toContain('data-testid="mode-badge"');
+    expect(html).toMatch(/data-testid="commitment-band"[\s\S]*Review Each Action[\s\S]*<footer class="av3-foot">/);
+    const auto = card({ step: 'review', item: { ...item, payload: { ...item.payload, commitment_mode: 'automatic' } as MandatePayload } });
+    expect(auto).toContain('mode-pill mode-automatic');
+    expect(auto).toContain('mode-band mode-automatic');
+  });
+
+  it('Reject only for the AI\'s proposal, Request and History from what the computer sent, else the one approved line', () => {
+    const rejectable = renderToStaticMarkup(<GiveCard state={{ step: 'review', item: { ...item, proposalId: 'prop-12345678' } }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={async () => ({})} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />);
+    expect(rejectable).toContain('data-testid="btn-reject"');
+    expect(card({ step: 'review', item })).not.toContain('data-testid="btn-reject"');
+    expect(rejectable).toContain('Your computer did not send this. You can see it there.');
   });
 
   it('while the touch is asked: only the waiting line and Cancel, no give button (DEC-88)', () => {
@@ -81,7 +98,7 @@ describe('a mandate to give on the phone', () => {
 });
 
 describe('ending a mandate on the phone', () => {
-  const m: OwnMandate = { authorizationId: 'authz_x', mandateId: 'mandate-1', version: 1, title: 'Quotes', expiresAt: NOW + 86400, fields: {}, givenOn: null, givenAt: null };
+  const m: OwnMandate = { authorizationId: 'authz_x', mandateId: 'mandate-1', version: 1, title: 'Quotes', expiresAt: NOW + 86400, mode: 'review', fields: {}, givenOn: null, givenAt: null };
 
   it('the list offers End on each of the person\'s mandates (44 px)', () => {
     const html = renderToStaticMarkup(<OwnMandates items={[m]} onEnd={noop} />);

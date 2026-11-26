@@ -11,6 +11,7 @@ import { Notice } from './Frame';
 import { ageLabel } from '@suveren/approval-card/lib/core-objects';
 import type { ChangeItem } from '../lib/change-requests';
 import { changeTitle } from './ChangeCard';
+import { PHONE_CARD } from '../lib/phone-card-choices';
 
 const NO_MANIFESTS: never[] = [];
 const NO_TITLES: Record<string, string> = {};
@@ -116,8 +117,8 @@ export interface RequestCardProps {
  * The shared approval card with its buttons (stage D2), as the gateway draws it: the middle scrolls, the buttons stay at the bottom,
  * and after a decision the card's own result (the gateway's stamp and outcome lines) is what shows. The buttons exist only when every
  * check before a decision passed (card-checks.ts); otherwise the card is drawn without them and says why, in words, above the card:
- * `alreadyDecided` is the card's own way to hide them. "Ask for changes" is left out: the phone has no key of anyone else's to seal the
- * note for.
+ * `alreadyDecided` is the card's own way to hide them. "Ask for changes" is the gateway's own: the note is sealed on the phone for the
+ * computers of the person's chain (App.tsx `decideFor`).
  */
 /** An AI-proposed mandate or change: given with the person's touch (a give prepared by the computer), never approved here. */
 export function isMandateProposal(tool: string): boolean {
@@ -140,7 +141,7 @@ export function RequestCard({ proposal, userId, check, decide, onDecided, onBusy
       currentUserId={userId}
       // Until the checks are done, and when one failed, no buttons.
       alreadyDecided={check === null || blocked}
-      canAskChanges={false}
+      canAskChanges={PHONE_CARD.offersAskForChanges}
       canApprove={!giveOnly}
       toolDisplay={check && check.ok ? check.ready.display : undefined}
       decide={check && check.ok ? decide : refuse}
@@ -163,7 +164,6 @@ export function RequestCard({ proposal, userId, check, decide, onDecided, onBusy
             </div>
           )}
           {check !== null && check.ok && giveOnly && <Notice kind="info"><span data-testid="give-not-here-yet">{P.mandateGivenNotApproved}</span></Notice>}
-          {check !== null && check.ok && <p className="av3-quiet" data-testid="changes-elsewhere">{P.decideChangesElsewhere}</p>}
         </>
       )}
     />

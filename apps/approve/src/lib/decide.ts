@@ -49,6 +49,16 @@ export interface DeciderDeps {
 
 export type PhoneDecision = 'approve' | 'reject';
 
+/**
+ * What a decision adds besides the signed object. `outcome` closes a request that was not refused (`replaced`: the person gave their mandate
+ * instead) or sends it back (`change_needed`, with `noteEncrypted`: the person's words, sealed for the gateway that reads them to the AI).
+ */
+export interface DecisionExtras {
+  shownHash?: string;
+  outcome?: 'replaced' | 'change_needed';
+  noteEncrypted?: { ciphertext: string; keys: Record<string, { ct: string; enc: string }> };
+}
+
 export class PhoneDecider {
   constructor(private readonly d: DeciderDeps) {}
 
@@ -56,7 +66,7 @@ export class PhoneDecider {
    * Decide one card. Resolves only after the Authority Server accepted the decision. Rejects with a {@link DecideError}.
    * A session that ended (here or at the server) is opened again with the person's check, once; the card is read again after it.
    */
-  async decide(proposal: Proposal, ready: ReadyCard, what: PhoneDecision, extras: { shownHash?: string; outcome?: 'replaced' } = {}): Promise<DecisionResult> {
+  async decide(proposal: Proposal, ready: ReadyCard, what: PhoneDecision, extras: DecisionExtras = {}): Promise<DecisionResult> {
     let reopened = false;
     for (;;) {
       if (!this.d.session.bearer()) {
@@ -73,7 +83,7 @@ export class PhoneDecider {
     }
   }
 
-  private async attempt(proposal: Proposal, shown: ReadyCard, what: PhoneDecision, extras: { shownHash?: string; outcome?: 'replaced' }): Promise<DecisionResult | 'session_ended'> {
+  private async attempt(proposal: Proposal, shown: ReadyCard, what: PhoneDecision, extras: DecisionExtras): Promise<DecisionResult | 'session_ended'> {
     const d = this.d;
     let ready = shown;
     const bearer = d.session.bearer();
@@ -122,6 +132,7 @@ export class PhoneDecider {
     if (route.kind === 'domain') { extra.domain = route.domain; extra.action = kind === 'commit' ? 'commit' : 'reject'; }
     // A request carried out by a give on this phone is closed as `replaced` (the person gave their mandate; nothing was rejected).
     if (what === 'reject') extra.outcome = extras.outcome ?? 'rejected';
+    if (what === 'reject' && extras.outcome === 'change_needed' && extras.noteEncrypted) extra.note_encrypted = extras.noteEncrypted;
     const path = route.kind === 'approver' ? what : 'resolve';
     const reply = await d.api.decide(head.head.id, path, decisionBody({ extras: extra, contentHash: ready.contentHash, decision, sig }), bearer);
     if (!reply.ok) {

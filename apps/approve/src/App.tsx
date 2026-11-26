@@ -16,11 +16,13 @@ import { deviceRows, type DeviceRow } from './lib/chain-view';
 import { identityCodeOf } from './lib/identity-code';
 import { bindPhoneHost } from './lib/app-host';
 import { checkCard, type CardCheck } from './lib/card-checks';
-import { DecideError } from './lib/decide';
+import { DecideError, type DecisionExtras } from './lib/decide';
+import { noteReaders, sealChangeNote } from './lib/change-note';
+import type { DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
-import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
+import { PhoneTop } from './screens/PhoneTop';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
-import { P, errorText } from './texts';
+import { P, errorText, blockedText } from './texts';
 import { NeedsScreen, WelcomeScreen } from './screens/Start';
 import { RegisterScreen } from './screens/Register';
 import { JoinScreen } from './screens/Join';
@@ -73,13 +75,31 @@ type View =
 export default function App() {
   return (
     <>
-      <div className="ap-top"><ThemeToggle /></div>
+      <PhoneTop />
       <Screens />
     </>
   );
 }
 
+/** While the keyboard is open the visible part of the screen is smaller than the page: the panel follows it (CSS --ap-vv-top / --ap-vv-h). */
+function useVisibleScreen() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const root = document.documentElement.style;
+    const update = () => {
+      if (window.innerHeight - vv.height > 120) { root.setProperty('--ap-vv-top', `${vv.offsetTop}px`); root.setProperty('--ap-vv-h', `${vv.height}px`); }
+      else { root.removeProperty('--ap-vv-top'); root.removeProperty('--ap-vv-h'); }
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update); root.removeProperty('--ap-vv-top'); root.removeProperty('--ap-vv-h'); };
+  }, []);
+}
+
 function Screens() {
+  useVisibleScreen();
   const rt = useMemo(() => createRuntime(), []);
   const [view, setView] = useState<View>({ t: 'boot' });
   const [persistent, setPersistent] = useState<boolean | null>(null);
@@ -482,6 +502,24 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     })();
   }, [giving, rt, load]);
 
+  // Reject, or send back with words, the AI's proposal a give carries out: the same signed decision the gateway's card makes. The request is read
+  // again and every check runs again first. Nothing is closed here: the card shows its stamp only once the Authority Server answered, then
+  // `giveDecided` lets the panel move on. A refusal throws the phone's own text and the give stays.
+  const decideGive = useCallback(async (item: GiveItem, extras: DecisionExtras): Promise<DecisionResult> => {
+    if (!item.proposalId) throw new DecideError('generic');
+    const r = await rt.reader.get(item.proposalId, true);
+    if (!r.ok) { if (r.code === 'session_ended') onEnded(); throw new DecideError(r.code === 'as_unreachable' ? 'as_unreachable' : 'generic'); }
+    const check = await checkCard(rt.checks, r.data);
+    if (!check.ok) { if (check.reason === 'session_ended') onEnded(); throw new DecideError(check.reason, blockedText(check.reason)); }
+    return rt.decider.decide(r.data, check.ready, 'reject', extras);
+  }, [rt, onEnded]);
+  const rejectGive = useCallback((item: GiveItem) => decideGive(item, {}), [decideGive]);
+  const askChangesGive = useCallback(async (item: GiveItem, note: string) => {
+    const chain = rt.session.current()?.chain;
+    const readers = chain ? noteReaders(chain) : [];
+    if (readers.length === 0) throw new DecideError('generic');
+    return decideGive(item, { outcome: 'change_needed', noteEncrypted: await sealChangeNote(note, readers) });
+  }, [rt, decideGive]);
   // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
   useEffect(() => {
     if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
@@ -529,6 +567,12 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     else if (outcome === 'refused' || outcome === 'unknown') setSettling((s) => (s && s.id === id ? { ...s, stay: true } : s));
   }, [finishSettling]);
 
+  const giveDecided = useCallback((item: GiveItem) => {
+    handleDecided(item.key);
+    handleOutcome(item.key, 'done');
+    timers.current.push(window.setTimeout(() => { giver.close(); void loadMandates(); void load(false); }, RESULT_SHOW_MS));
+  }, [handleDecided, handleOutcome, giver, loadMandates, load]);
+
   const toggleAuto = useCallback(() => {
     const value = autoOpen !== true;
     if (!value) later();
@@ -539,7 +583,13 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   const decideFor = useCallback((id: string) => async (args: DecideArgs) => {
     const cur = cards[id];
     if (!cur || !cur.check || !cur.check.ok) throw new DecideError('generic');
-    if (args.kind === 'change') throw new DecideError('generic');
+    if (args.kind === 'change') {
+      // Sent back with words: sealed for the computers of this chain that read it to the AI, signed as the decision "reject" (outcome change_needed).
+      const chain = rt.session.current()?.chain;
+      const readers = chain ? noteReaders(chain) : [];
+      if (readers.length === 0 || !args.note) throw new DecideError('generic');
+      return rt.decider.decide(cur.proposal, cur.check.ready, 'reject', { shownHash: args.shownHash, outcome: 'change_needed', noteEncrypted: await sealChangeNote(args.note, readers) });
+    }
     return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
   }, [rt, cards]);
 
@@ -578,7 +628,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
           node: (
             <GiveCard
               state={giving} nowSeconds={rt.now()}
-              onGive={() => void giver.give()} onLater={later} onCancelTouch={() => giver.cancelTouch()}
+              onGive={() => void giver.give()} onLater={later} onReject={giving.item?.proposalId ? () => rejectGive(giving.item!) : undefined} onAskChanges={giving.item?.proposalId ? (n) => askChangesGive(giving.item!, n) : undefined} onDecided={() => giveDecided(giving.item!)} onCancelTouch={() => giver.cancelTouch()}
               onCheckAgain={() => void giver.checkAgain()}
               onDone={() => { const k = shownId; giver.close(); finishSettling(k); void loadMandates(); }}
               dismissLabel={resultDismissLabel(afterDecision(settling ? settling.before : ids, shownId).next !== null)}

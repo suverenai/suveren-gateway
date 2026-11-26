@@ -216,13 +216,12 @@ describe('the phone screens (both widths use the same markup and the same tokens
       const readyCard: ReadyCard = { facts: { mandateId: 'm1', actionType: 'send' }, contentHash: 'sha256:' + '0'.repeat(64), args: {}, executionContext: {}, display: {}, route: { kind: 'domain', domain: 'owner' } };
       const open = (check: CardCheck | null) => html(<RequestDetail proposal={proposal} userId="u1" check={check} decide={async () => ({})} onBack={noop} />);
 
-      it('with every check passed: the gateway page\'s own approve and reject buttons, and no "ask for changes" (a note cannot be sealed from here)', () => {
+      it('with every check passed: the gateway page\'s own approve, ask-for-changes and reject buttons', () => {
         const m = open({ ok: true, ready: readyCard });
         expect(m).toContain('data-testid="btn-approve"');
         expect(m).toContain('data-testid="btn-reject"');
-        expect(m).not.toContain('data-testid="btn-change-needed"');
-        expect(m).toContain('av3-btns-two');
-        expect(text(m)).toContain(P.decideChangesElsewhere);
+        expect(m).toContain('data-testid="btn-change-needed"');
+        expect(m).not.toContain('changes-elsewhere');
         expect(m).not.toContain('data-testid="card-blocked"');
       });
 
