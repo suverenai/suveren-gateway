@@ -17,8 +17,8 @@ describe('the phone app\'s own CSS uses tokens only (the gateway page\'s rule, u
   it('every var(--x) it uses is defined in tokens.css or design-system.css', () => {
     for (const m of code.matchAll(/var\((--[a-z0-9-]+)/g)) {
       const name = m[1];
-      // --ap-inset-top is the phone's own (the status bar's height), defined in approve.css itself
-      expect(tokens.includes(`${name}:`) || design.includes(`${name}:`) || name === '--ap-inset-top', name).toBe(true);
+      // the phone's own variables: the status bar's height, and the visible screen while the keyboard is open (set in App.tsx)
+      expect(tokens.includes(`${name}:`) || design.includes(`${name}:`) || ['--ap-inset-top', '--ap-vv-top', '--ap-vv-h'].includes(name), name).toBe(true);
     }
   });
 

@@ -81,7 +81,25 @@ export default function App() {
   );
 }
 
+/** While the keyboard is open the visible part of the screen is smaller than the page: the panel follows it (CSS --ap-vv-top / --ap-vv-h). */
+function useVisibleScreen() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const root = document.documentElement.style;
+    const update = () => {
+      if (window.innerHeight - vv.height > 120) { root.setProperty('--ap-vv-top', `${vv.offsetTop}px`); root.setProperty('--ap-vv-h', `${vv.height}px`); }
+      else { root.removeProperty('--ap-vv-top'); root.removeProperty('--ap-vv-h'); }
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update); root.removeProperty('--ap-vv-top'); root.removeProperty('--ap-vv-h'); };
+  }, []);
+}
+
 function Screens() {
+  useVisibleScreen();
   const rt = useMemo(() => createRuntime(), []);
   const [view, setView] = useState<View>({ t: 'boot' });
   const [persistent, setPersistent] = useState<boolean | null>(null);

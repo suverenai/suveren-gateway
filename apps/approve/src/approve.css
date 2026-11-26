@@ -23,8 +23,11 @@ body.ap-blank #root { visibility: hidden; }
 
 /* The approval panel (DEC-86): the gateway's own panel, full screen on a phone. The gateway's leaves room for its icon rail and nav bar;
    the phone has neither, only the notch and the home bar. The card's buttons stay above the home bar. */
-.ap-panel.apr-panel { left: 0; top: 0; padding: var(--ap-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.ap-panel.apr-panel { left: 0; top: var(--ap-vv-top, 0px); height: var(--ap-vv-h); padding: var(--ap-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 .ap-panel .av3-foot { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
+
+/* While the keyboard is open the panel is exactly the visible part of the screen (--ap-vv-*, set from the visual viewport in App.tsx),
+   so the note box sits right above the keyboard. */
 
 /* Touch targets (UI review, DEC-88): every control a thumb taps is at least 44 px (tabs, Remove, small buttons, the panel head). */
 .ap-shell .ftab, .ap-shell .btn-sm, .ap-panel .apr-btn, .ap-panel .apr-ico { min-height: 44px; min-width: 44px; }

@@ -352,3 +352,40 @@ for (const theme of ['light', 'dark'] as const) {
     });
   }
 }
+
+// "Ask for changes" opens the note box where the buttons were: the textarea is on screen at once, nothing to scroll to, and the dock
+// stays small enough to leave the card visible above it.
+const NOTE_VIEWS: Array<{ name: string; url: string; open: string }> = [
+  { name: 'phone panel (give)', url: 'card=phone-panel', open: 'btn-change-needed' },
+  { name: 'phone give card, page-high', url: 'card=phone&h=700', open: 'btn-change-needed' },
+  { name: 'phone action card', url: 'card=action-phone&h=700', open: 'btn-change-needed' },
+  { name: 'gateway mandate card', url: 'card=gateway&h=700', open: 'btn-change-needed' },
+  { name: 'gateway action card', url: 'card=action-gateway&h=700', open: 'btn-change-needed' },
+  { name: 'phone give card, grows with the page', url: 'card=phone', open: 'btn-change-needed' },
+  { name: 'gateway card, grows with the page', url: 'card=gateway', open: 'btn-change-needed' },
+];
+for (const width of [320, 375, 390]) {
+  for (const v of NOTE_VIEWS) {
+    test(`${v.name} at ${width}px: the open note box is on screen without scrolling`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/fixture/index.html?case=crm&${v.url}`);
+      await page.waitForSelector(`[data-testid=${v.open}]`);
+      await page.locator(`[data-testid=${v.open}]`).click();
+      await page.waitForSelector('[data-testid=change-note]');
+      // allow the page's own move to the box (cards that grow with the page); the person scrolls nothing
+      await expect.poll(async () => {
+        const b = (await page.locator('.av3-chg').boundingBox())!;
+        return b.y >= 0 && b.y + b.height <= 845;
+      }, { message: 'the whole note footer is inside the screen' }).toBe(true);
+      const ta = (await page.locator('[data-testid=change-note]').boundingBox())!;
+      expect(ta.y).toBeGreaterThanOrEqual(0);
+      expect(ta.y + ta.height).toBeLessThanOrEqual(845);
+      expect(ta.x + ta.width).toBeLessThanOrEqual(width);
+      const foot = (await page.locator('.av3-chg').boundingBox())!;
+      expect(foot.height, 'the note footer is at most 45% of the screen').toBeLessThanOrEqual(844 * 0.45);
+      expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('change-note');
+      expect(await page.locator('[data-testid=commitment-band]').count(), 'the commitment line gives way to the note').toBe(0);
+      if (SHOTS && width === 390) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `noteopen-${v.name.replace(/[^a-z]+/gi, '-')}-390.png`) }); }
+    });
+  }
+}

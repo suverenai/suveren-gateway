@@ -4527,6 +4527,8 @@ video.document-preview-media { width: 100%; }
 .card.av3-other { border: 0; border-radius: var(--radius-xl); box-shadow: var(--elevation-1); }
 .av3-inline .card.av3-card { flex: none; overflow: visible; }
 .av3-inline .av3-scroll { overflow: visible; }
+/* On a page where the card grows with its content, the open note box stays at the bottom edge of the screen. */
+.av3-inline .av3-chg { position: sticky; bottom: 0; z-index: 1; }
 
 @media (min-width: 480px) and (max-width: 1099px) {
   /* Icon rail: hovering or focusing it shows the labels (UI spec §17.1). */

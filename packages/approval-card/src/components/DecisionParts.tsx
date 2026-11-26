@@ -3,7 +3,7 @@
  * stamp ("Rejected", "Sent back to the AI") once the Authority Server has answered. The gateway's ApprovalCard and the phone's give
  * both use these, so the words and the shapes cannot differ (maintainer, 2026-11-26: phone and gateway always the same).
  */
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResult } from '../lib/approval-flow';
 
@@ -11,8 +11,11 @@ import { workingWord, stampWord, stampLine, type DecisionKind, type DecisionResu
 export function ChangeNoteFooter({ id, note, onNote, error, onSend, onBack }: {
   id: string; note: string; onNote: (v: string) => void; error: string; onSend: () => void; onBack: () => void;
 }) {
+  // Opened, it is on screen at once: in a card that scrolls with the page, the page moves to it (the card's own footer is already in view).
+  const foot = useRef<HTMLElement>(null);
+  useEffect(() => { foot.current?.scrollIntoView?.({ block: 'nearest' }); }, []);
   return (
-    <footer className="av3-foot av3-chg">
+    <footer className="av3-foot av3-chg" ref={foot}>
       <label className="av3-chg-l" htmlFor={`chg-${id}`}>What should the AI change?</label>
       <textarea id={`chg-${id}`} data-testid="change-note" value={note} maxLength={CHANGE_NOTE_MAX} rows={3} onChange={(e) => onNote(e.target.value)} autoFocus />
       {error && <p className="msg-error av3-error" role="alert">{error}</p>}
