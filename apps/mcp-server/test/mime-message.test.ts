@@ -65,7 +65,7 @@ describe('buildMimeMessage / toBase64Url', () => {
   it('produces a multipart/mixed message whose parts round-trip exactly', () => {
     const mime = buildMimeMessage({
       to: ['buchhaltung@drautal.at'],
-      cc: ['andreas@sublin.app'],
+      cc: ['owner@example.com'],
       subject: 'Rechnung 2026-0003',
       bodyText: 'Sehr geehrte Damen und Herren,\n\nanbei die Rechnung.',
       attachments: [attachment],
@@ -73,7 +73,7 @@ describe('buildMimeMessage / toBase64Url', () => {
 
     expect(mime).toContain('MIME-Version: 1.0');
     expect(mime).toContain('To: buchhaltung@drautal.at');
-    expect(mime).toContain('Cc: andreas@sublin.app');
+    expect(mime).toContain('Cc: owner@example.com');
 
     const parsed = parseMime(mime);
     expect(parsed.parts).toHaveLength(2);

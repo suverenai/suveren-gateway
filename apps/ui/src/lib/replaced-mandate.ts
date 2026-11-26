@@ -3,7 +3,7 @@
  * revoke there has not gone through yet). The gateway no longer uses it and
  * ends it on suveren.ai by itself (control-plane replaced-revoke-retry.ts);
  * the Mandates list shows one quiet line on it until then, and no action
- * (Andreas, 2026-11-20). Wording approved by Andreas, 2026-11-20.
+ * (maintainer, 2026-11-20). Wording approved by maintainer, 2026-11-20.
  */
 export const REPLACED_LINE = 'Replaced by your change. Your AI no longer uses it.';
 

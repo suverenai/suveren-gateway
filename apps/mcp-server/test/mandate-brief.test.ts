@@ -55,7 +55,7 @@ describe('buildMandateBrief', () => {
     delete process.env.SUVEREN_SIMULATION;
   });
 
-  // Real ChatGPT added its own "Sent by Andreas's AI assistant." line: the gateway's footer is the only mark.
+  // Real ChatGPT added its own "Sent by Maria's AI assistant." line: the gateway's footer is the only mark.
   it('the golden rule ends: the gateway adds the AI mark, the AI adds no sign-off of its own', async () => {
     const { NO_IMPERSONATION_RULE, AGENT_RULES } = await import('../src/lib/agent-rules');
     expect(AGENT_RULES[0]).toBe(NO_IMPERSONATION_RULE);

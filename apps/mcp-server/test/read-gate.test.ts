@@ -410,7 +410,7 @@ describe('getByDottedPath', () => {
 
 describe('extractEmails / emailDomain', () => {
   it('pulls addresses out of a display-name header value', () => {
-    expect(extractEmails('Oliver Kartak <hello@oliverkartak.com>')).toEqual(['hello@oliverkartak.com']);
+    expect(extractEmails('Sam Seller <hello@seller.example>')).toEqual(['hello@seller.example']);
   });
   it('handles multiple addresses', () => {
     expect(extractEmails('a@x.com, "B" <b@y.com>')).toEqual(['a@x.com', 'b@y.com']);
@@ -420,7 +420,7 @@ describe('extractEmails / emailDomain', () => {
     expect(extractEmails('no address here')).toEqual([]);
   });
   it('emailDomain extracts the domain', () => {
-    expect(emailDomain('Hello@OliverKartak.com')).toBe('oliverkartak.com');
+    expect(emailDomain('Hello@Seller.Example')).toBe('seller.example');
   });
 });
 
@@ -428,8 +428,8 @@ describe('extractParticipants', () => {
   const gmailResp = {
     payload: {
       headers: [
-        { name: 'From', value: 'Oliver Kartak <hello@oliverkartak.com>' },
-        { name: 'To', value: 'andreas.schadauer@gmail.com' },
+        { name: 'From', value: 'Sam Seller <hello@seller.example>' },
+        { name: 'To', value: 'anna@example.com' },
         { name: 'Subject', value: 'ignore me' },
         { name: 'Date', value: 'ignore me too' },
       ],
@@ -437,7 +437,7 @@ describe('extractParticipants', () => {
   };
   it('extracts From/To emails, ignoring other headers', () => {
     expect(extractParticipants(gmailResp, 'payload.headers', ['From', 'To']).sort()).toEqual(
-      ['andreas.schadauer@gmail.com', 'hello@oliverkartak.com'],
+      ['anna@example.com', 'hello@seller.example'],
     );
   });
   it('returns [] when the headers path is missing (caller fails closed)', () => {

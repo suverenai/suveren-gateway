@@ -77,7 +77,7 @@ const PROPOSAL: SPProposal = {
   profileId: PROFILE_ID,
   path: 'crm-routine',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'crm__create_contact',
   toolArgs: { ...ARGS },

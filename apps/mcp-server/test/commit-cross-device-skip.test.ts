@@ -32,7 +32,7 @@ const PROPOSAL: SPProposal = {
   profileId: 'test-records@1',
   path: 'records@0.4',
   pendingDomains: [],
-  committedBy: { owner: { userId: 'andreas', at: 0 } },
+  committedBy: { owner: { userId: 'maria', at: 0 } },
   rejectedBy: null,
   tool: 'records__create_record',
   toolArgs: { type: 'note', title: 'from gateway A', content: 'x' },

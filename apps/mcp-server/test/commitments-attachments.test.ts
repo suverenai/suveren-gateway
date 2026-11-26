@@ -147,7 +147,7 @@ function buildProposal(sealedSha256: string, tool: DiscoveredTool = MAIL_TOOL): 
     profileId: PROFILE,
     path: `${PROFILE}@0.9`,
     pendingDomains: [],
-    committedBy: { owner: { userId: 'andreas', at: 0 } },
+    committedBy: { owner: { userId: 'maria', at: 0 } },
     rejectedBy: null,
     tool: tool.namespacedName,
     toolArgs,

@@ -17,6 +17,7 @@ import { useAuth } from './AuthContext';
 import { useSSEEvent } from './EventSourceContext';
 import { spClient, type Proposal, type IntegrationManifest } from '../lib/sp-client';
 import { useVisiblePolling } from '@suveren/approval-card/hooks/useVisiblePolling';
+import { useLiveEventsUp, LIVE_BACKUP_MS } from '../hooks/useLiveEvents';
 import { APPROVALS_CHANGED_EVENT } from '@suveren/approval-card/lib/approval-flow';
 import { buildMyQueue, pruneDecided, type QueueEntry } from '../lib/approval-queue';
 import { loadAutoOpen, saveAutoOpen } from '../lib/approval-panel';
@@ -87,8 +88,11 @@ export function ApprovalQueueProvider({ children }: { children: ReactNode }) {
   useSSEEvent(REFRESH_EVENTS[5], refresh);
   useSSEEvent(REFRESH_EVENTS[6], refresh);
   useSSEEvent(REFRESH_EVENTS[7], refresh); // a mandate was revoked: waiting cards must say so
-  useVisiblePolling(fetchApprover, 30_000);
-  useVisiblePolling(fetchMine, 30_000, domain);
+  useSSEEvent('as-changed', refresh); // live events (0.46.1): the AS announced a change — read now, not at the next tick
+  // While the live connection is up the AS announces every change, so the polls are only a 5-minute backup.
+  const live = useLiveEventsUp();
+  useVisiblePolling(fetchApprover, live ? LIVE_BACKUP_MS : 30_000);
+  useVisiblePolling(fetchMine, live ? LIVE_BACKUP_MS : 30_000, domain);
 
   // A decision the gateway answered somewhere else in the UI: re-read.
   useEffect(() => {

@@ -57,13 +57,36 @@ export function createMandateRouter(deps: () => Omit<CeremonyDeps, 'newAuthoriza
         const n = r.status === 200 && typeof r.body?.name === 'string' && r.body.name ? r.body.name : id.replace(/@.*$/, '').split('/').pop() ?? id;
         names.set(id, n);
       }
-      res.json({ held: held.map(h => ({
-        authorizationId: h.authorizationId, mandateId: h.mandateId ?? h.authorizationId, code: h.code,
-        profileName: h.profileId ? names.get(h.profileId) ?? h.profileId : 'a mandate',
-        ownerIsYou: !!h.ownerDid && h.ownerDid === d.user?.did,
-        // the member list does not name an owner by DID: not known here (the screen then says so)
-        ownerName: null, adminName: null,
-      })) });
+      // Who gave it and where (On-hold mockup v2): the mandate's creator and its workspace, read from the Authority Server.
+      // Names only label the card; nothing here decides anything. Unreadable: no name, counted as a team (the safe wording).
+      const groups = new Map<string, { personal: boolean; adminName: string | null; names: Map<string, string> } | null>();
+      const groupOf = async (gid: string) => {
+        if (groups.has(gid)) return groups.get(gid)!;
+        const g = await d.as('GET', `/api/groups/${encodeURIComponent(gid)}`).catch(() => null);
+        const ok = g && g.status === 200 && g.body?.group;
+        const members = (ok ? g!.body.members ?? [] : []) as Array<{ userId?: string; id?: string; name?: string; email?: string }>;
+        const names = new Map(members.map(m => [String(m.userId ?? m.id ?? ''), (m.name || m.email || '').trim()] as const).filter(([k, v]) => k && v));
+        const v = ok ? { personal: !!g!.body.group.isPersonal, adminName: names.get(String(g!.body.group.createdBy ?? '')) ?? null, names } : null;
+        groups.set(gid, v);
+        return v;
+      };
+      const out = [];
+      for (const h of held) {
+        const a = await d.as('GET', `/api/authorizations/${encodeURIComponent(h.authorizationId)}`).catch(() => null);
+        const createdBy = a && a.status === 200 && typeof a.body?.created_by === 'string' ? a.body.created_by as string : null;
+        const gid = a && a.status === 200 && typeof a.body?.group_id === 'string' ? a.body.group_id as string : null;
+        const g = gid ? await groupOf(gid) : null;
+        const ownerIsYou = (!!h.ownerDid && h.ownerDid === d.user?.did) || (!!createdBy && createdBy === d.user?.id);
+        out.push({
+          authorizationId: h.authorizationId, mandateId: h.mandateId ?? h.authorizationId, code: h.code,
+          profileName: h.profileId ? names.get(h.profileId) ?? h.profileId : 'a mandate',
+          ownerIsYou,
+          ownerName: !ownerIsYou && createdBy && g ? g.names.get(createdBy) ?? null : null,
+          adminName: g?.adminName ?? null,
+          workspace: g?.personal ? 'personal' : 'team',
+        });
+      }
+      res.json({ held: out });
     } catch (err) { answerRefusal(res, err); }
   });
 

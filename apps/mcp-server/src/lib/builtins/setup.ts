@@ -486,7 +486,7 @@ export function setupBuiltin(deps: BuiltinDeps): BuiltinIntegration {
     // set_agent_brief now work outside simulation too (decision 1); only
     // get_guide keeps the per-tool flag below (decision 2).
     mandateRefusal: delegationMandateRefusal,
-    // Wording A, signed off by Andreas 2026-11-05. The agent passes it on to the person.
+    // Wording A, signed off by maintainer 2026-11-05. The agent passes it on to the person.
     noMandateText:
       'Not done: I may only prepare mandates once you have given me a **Setup** mandate. Two ways: ' +
       '(1) In the gateway, open **Mandates → New mandate → Setup** and sign it. Then I prepare mandates and you approve each one. ' +
@@ -785,7 +785,7 @@ function mandateRequest(args: Record<string, unknown>): Record<string, unknown> 
 /**
  * The change went through, but the old mandate's revoke at the Authority Server
  * did not yet: the old one is no longer used on this gateway and the gateway
- * ends it there by itself (approved wording, Andreas 2026-11-20). The id pair
+ * ends it there by itself (approved wording, maintainer 2026-11-20). The id pair
  * and the reason follow for the AI's own record. Exported for its test.
  */
 export function changeRevokePendingText(newId: string, oldId: string, revokeError: string): string {

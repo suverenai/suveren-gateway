@@ -3,7 +3,7 @@
  * key, granted by this phone with its check; FakeAs stores a posted revoke only when hap-core verifies it against the newest grant.
  */
 import { describe, it, expect } from 'vitest';
-import { verifyGrant, buildGrant, signedBytes, b64uEncode, randomBytes, rootKeyFromRecoveryCode, type MandateGrant } from '@hap/core/device-keys';
+import { verifyGrant, buildGrant, signedBytes, b64uEncode, randomBytes, rootKeyFromRecoveryCode, buildReceipt, grantHash, signObject, type MandateGrant } from '@hap/core/device-keys';
 import { GRANT_FIXED_MEMBERS } from '@hap/core/mandate-grant';
 import { PeerComputer, addWithRoot } from './test-kit';
 import { cardWorld, AUTHZ, MANDATE_ID, PROFILE_ID } from './card-world';
@@ -104,5 +104,46 @@ describe('"ended on <device>" (mockup F2): only a revoke that verifies against t
     await d.end();
     w.as.mine[0].status = 'revoked';
     expect(await readOwnMandates(w.deps)).toMatchObject({ ok: true, ended: [] });
+  });
+});
+
+// On-hold mockup v2 (maintainer 2026-11-24, DEC-109/110/111): what the phone's own check holds back, and a give no computer took in.
+describe('on hold on the phone (mockup v2)', () => {
+  it('a mandate without any grant is held back as "given without your touch"; one with a grant that does not verify, by its check code', async () => {
+    const none = await readOwnMandates((await world({ grant: { none: true } })).deps);
+    expect(none).toMatchObject({ ok: true, items: [], held: [{ authorizationId: AUTHZ, title: 'Purchases', code: 'mandate_not_granted' }] });
+    const noCheck = await readOwnMandates((await world({ grant: { noCheck: true } })).deps);
+    expect(noCheck.ok && noCheck.held.length).toBe(1);
+    expect(noCheck.ok && noCheck.held[0].code).toBeTruthy();
+  });
+
+  it('given here, no computer receipt after 10 minutes: names the computer; before 10 minutes or with nothing to name: nothing', async () => {
+    const w = await world();
+    const root = await rootKeyFromRecoveryCode(w.recoveryCode);
+    await addWithRoot(w.as, root, await PeerComputer.create('Office Mac'));
+    await w.rt.session.open();
+    const top = w.as.grants.get(MANDATE_ID)![0];
+    const at = (top.grant as { granted_at: number }).granted_at;
+    const early = await readOwnMandates({ ...w.deps, now: () => at + 60 });
+    expect(early.ok && early.items[0].notReceivedBy).toBeNull();
+    const late = await readOwnMandates({ ...w.deps, now: () => at + 12 * 60 });
+    expect(late).toMatchObject({ ok: true, items: [{ notReceivedBy: 'Office Mac', givenHereAt: at }] });
+    const day = await readOwnMandates({ ...w.deps, now: () => at + 2 * 86400 });
+    expect(day.ok && day.items.length ? day.items[0].notReceivedBy : null).toBeFalsy();
+  });
+
+  it('a computer receipt that verifies: no note', async () => {
+    const w = await world();
+    const root = await rootKeyFromRecoveryCode(w.recoveryCode);
+    const computer = await PeerComputer.create('Office Mac');
+    await addWithRoot(w.as, root, computer);
+    await w.rt.session.open();
+    const state = await w.as.state();
+    const top = w.as.grants.get(MANDATE_ID)![0];
+    const g = top.grant as unknown as MandateGrant;
+    const r = buildReceipt({ mandate_id: MANDATE_ID, mandate_version: 1, grant_hash: await grantHash(g), key_id: computer.keyId, chain_seq: state.head.seq, chain_head: state.head.hash, received_at: w.as.now() });
+    w.as.receipts.set(MANDATE_ID, [{ receipt: r, sig: await signObject(r, computer.seed) }]);
+    const late = await readOwnMandates({ ...w.deps, now: () => g.granted_at + 12 * 60 });
+    expect(late.ok && late.items[0].notReceivedBy).toBeNull();
   });
 });

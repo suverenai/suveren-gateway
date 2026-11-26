@@ -42,7 +42,7 @@ import { OpenSessionScreen } from './screens/OpenSession';
 import { ChangeConfirmDriver, ChangeRequestReader, type ChangeItem } from './lib/change-requests';
 import { ChangeCard, changeTitle, useNowSeconds } from './screens/ChangeCard';
 import { GiveDriver, readGives, type GiveItem } from './lib/mandate-give';
-import { EndDriver, readOwnMandates, type OwnMandate, type EndedElsewhere } from './lib/mandate-end';
+import { EndDriver, readOwnMandates, type OwnMandate, type EndedElsewhere, type HeldOwn } from './lib/mandate-end';
 import { GiveCard, GiveRow, OwnMandates, EndScreen } from './screens/Mandates';
 import { Notice } from './screens/Frame';
 import { useDriver } from './screens/Frame';
@@ -319,6 +319,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   const [gives, setGives] = useState<GiveItem[]>([]);
   const [own, setOwn] = useState<OwnMandate[]>([]);
   const [endedElsewhere, setEndedElsewhere] = useState<EndedElsewhere[]>([]);
+  const [heldOwn, setHeldOwn] = useState<HeldOwn[]>([]);
   const giver = useMemo(() => new GiveDriver({ keys: rt.keys, check: rt.check, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
   const giving = useDriver(giver);
   const ender = useMemo(() => new EndDriver({ keys: rt.keys, api: rt.api, accounts: rt.accounts, session: rt.session, now: rt.now }), [rt]);
@@ -330,7 +331,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     const g = await readGives(rt);
     if (g.ok) setGives(g.items); else if (g.code === 'session_ended') { onEnded(); return; }
     const m = await readOwnMandates(rt);
-    if (m.ok) { setOwn(m.items); setEndedElsewhere(m.ended); }
+    if (m.ok) { setOwn(m.items); setEndedElsewhere(m.ended); setHeldOwn(m.held); }
   }, [rt, onEnded]);
 
   // A computer's change requests waiting for this phone (stage D3): read and checked beside the proposals, in the same panel.
@@ -624,7 +625,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   }
   const now = rt.now();
   // Notes about mandates are never waiting items: a mandate given on another device is already in "Your mandates"; one ended on another
-  // device is said once, under "Your mandates" (Andreas, 2026-11-23: notes under "Waiting for you" read as things to do).
+  // device is said once, under "Your mandates" (maintainer, 2026-11-23: notes under "Waiting for you" read as things to do).
   const endedNotes = endedElsewhere.filter((e) => now - e.at < 14 * 86400).map((e) => P.noticeEnded(e.title, e.by));
   return (
     <RequestsScreen
@@ -634,7 +635,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
         </div>
       ) : undefined}
       waitingCount={shownGives.length}
-      below={<OwnMandates items={own} notes={endedNotes} onEnd={(m) => ender.open(m)} />}
+      below={<OwnMandates items={own} notes={endedNotes} held={heldOwn} nowSeconds={now} onEnd={(m) => ender.open(m)} />}
       proposals={listedProposals} error={error} nowMs={Date.now()}
       changes={changes}
       onOpenChange={(rid) => { setCurrentId(`${CHG}${rid}`); setPanel((p) => ({ ...p, open: true, owed: false })); }}

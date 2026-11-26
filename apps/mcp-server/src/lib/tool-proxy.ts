@@ -778,10 +778,10 @@ export function createGatedToolHandler(
   // before any gating, bounds, or receipt logic.
   //
   // The text is deliberately neutral: the working agent must not be able to
-  // tell simulation from live (Andreas, 2026-10-02). The explicit reason stays
+  // tell simulation from live (maintainer, 2026-10-02). The explicit reason stays
   // on the human side — SIMULATION_BLOCK_REASON in the integration status, the
   // UI banner and `suveren-gateway simulation status`.
-  // The mirror (Andreas, 2026-11-05): outside simulation mode a SIMULATED
+  // The mirror (maintainer, 2026-11-05): outside simulation mode a SIMULATED
   // connector never answers — an approved action must not land in a test
   // mailbox. Same neutral text; the reason is on the human side
   // (PRODUCTION_BLOCK_REASON in the status).

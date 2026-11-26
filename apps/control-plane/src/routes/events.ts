@@ -23,7 +23,8 @@ const KEEPALIVE_INTERVAL_MS = 25_000;
  * rule this stream is built on.
  */
 // 'give-progress' carries only a stage word ('touched' | 'requesting' | 'delivering'), never content.
-const PAYLOAD_ALLOWED: ReadonlySet<EventType> = new Set(['session-locked', 'give-progress']);
+// 'as-changed' carries only a kind word the control plane chose from a fixed list; 'live-events' only { up: boolean }.
+const PAYLOAD_ALLOWED: ReadonlySet<EventType> = new Set(['session-locked', 'give-progress', 'as-changed', 'live-events']);
 
 export function createEventsHandler() {
   return function eventsHandler(_req: Request, res: Response): void {

@@ -1,6 +1,6 @@
 /**
  * Generates the Windows installer's images from the Suveren mark
- * (apps/ui/public/favicon.svg), as signed off by Andreas on 2026-10-05
+ * (apps/ui/public/favicon.svg), as signed off by maintainer on 2026-10-05
  * (temp/installer-graphics-mockup.html):
  *
  *   bundle/windows/wix/dialog.bmp   493 x 312  welcome/licence + finish pages

@@ -181,7 +181,7 @@ function footerText(receiptId: string, verb: string, subject?: Subject): string 
   // wording. It leads with "Sent …"; swap the verb for the channel. Full plain
   // URLs (no <a>) so links work across email / calendar / publishing.
   const identity = deriveIdentityLine(subject, { operatorName: OPERATOR_NAME }).replace(/^Sent\b/, verb);
-  // One line only (Andreas 2026-10-21: the HAP promotion line was too much).
+  // One line only (maintainer 2026-10-21: the HAP promotion line was too much).
   return `\n\n-- ${identity}. Ticket: ${receiptUrl(receiptId)}`;
 }
 

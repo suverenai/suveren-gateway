@@ -1,5 +1,5 @@
 /**
- * The sign-in's first steps fetched ahead (DeviceSession.prepare, Andreas 2026-11-24: the card came seconds after a tap).
+ * The sign-in's first steps fetched ahead (DeviceSession.prepare, Maria 2026-11-24: the card came seconds after a tap).
  * While the open screen waits for the tap, the server's key is proved and a challenge asked for; the open after the tap then
  * starts with the check. Nothing is signed or checked ahead, and a stale or failed step is never used.
  */

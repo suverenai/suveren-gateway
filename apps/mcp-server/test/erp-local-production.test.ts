@@ -196,7 +196,7 @@ import { hashToolArgs } from '../src/lib/execution-journal';
 const CUSTOMER_ARGS = { name: 'Steiner GmbH', address_lines: ['Hauptstr. 1', '1010 Wien'], country: 'AT', uid: 'ATU12345678' };
 const PROPOSAL: SPProposal = {
   id: 'prop-am1', authorizationId: 'authz_md', profileId: 'master-data', path: 'master-data@0.1',
-  pendingDomains: [], committedBy: { owner: { userId: 'andreas', at: 0 } }, rejectedBy: null,
+  pendingDomains: [], committedBy: { owner: { userId: 'maria', at: 0 } }, rejectedBy: null,
   tool: 'erp__create_customer', toolArgs: CUSTOMER_ARGS, executionContext: { action_type: 'customer_create' },
   status: 'committed', executionResult: null, createdAt: 0, expiresAt: 0,
 };

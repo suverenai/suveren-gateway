@@ -47,7 +47,7 @@ describe.skipIf(!hasFixture)('ERP live/local mode — real erp-mcp build over st
     companyFile = join(companyDir, 'company.json');
     writeFileSync(companyFile, JSON.stringify({
       name: 'Suveren Test GmbH',
-      owner: 'Andreas Schadauer',
+      owner: 'Maria Berger',
       address: { street: 'Hauptstraße 1', zip: '1010', city: 'Wien', country: 'Österreich', country_code: 'AT' },
       uid: 'ATU00000000',
       email: 'test@example.com',

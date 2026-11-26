@@ -16,7 +16,7 @@ function proposal(id: string): SPProposal {
     profileId: 'records@0.4',
     path: 'records@0.4',
     pendingDomains: [],
-    committedBy: { owner: { userId: 'andreas', at: 0 } },
+    committedBy: { owner: { userId: 'maria', at: 0 } },
     rejectedBy: null,
     tool: 'records__create_record',
     toolArgs: {},

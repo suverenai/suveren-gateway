@@ -47,7 +47,9 @@ export type SSEEventType =
   | 'report-written'
   | 'identity-reset-pending'
   | 'identity-reset-cleared'
-  | 'give-progress';
+  | 'give-progress'
+  | 'as-changed'
+  | 'live-events';
 
 /**
  * Every type the EventSource registers a browser listener for — built from a
@@ -74,6 +76,8 @@ const SSE_EVENT_TYPE_SET: Record<SSEEventType, true> = {
   'identity-reset-pending': true,
   'identity-reset-cleared': true,
   'give-progress': true,
+  'as-changed': true,
+  'live-events': true,
 };
 
 /** Exported so a test can assert against it directly (see EventSourceContext.test.ts). */

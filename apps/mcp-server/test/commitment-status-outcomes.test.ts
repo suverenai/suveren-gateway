@@ -48,12 +48,12 @@ const textOf = async (proposal: SPProposal, archive?: unknown) => {
 
 describe('rejected — domain-owner path', () => {
   it('no outcome on the row at all (legacy, pre-RJ1) reads as a plain REJECTED', async () => {
-    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } });
+    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'maria', at: 0 } });
     expect(text).toMatch(/^Proposal p1 was REJECTED by the person\. The action did not run and must not be retried\. Ask the person before proposing anything similar\.$/);
   });
 
   it('outcome: rejected, no note — exact wording', async () => {
-    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'rejected' } });
+    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'maria', at: 0, outcome: 'rejected' } });
     expect(text).toBe(
       'Proposal p1 was REJECTED by the person. The action did not run and must not be retried. ' +
       'Ask the person before proposing anything similar.',
@@ -63,7 +63,7 @@ describe('rejected — domain-owner path', () => {
   it('outcome: change_needed — exact wording, note quoted', async () => {
     const text = await textOf({
       ...BASE,
-      rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'change_needed', note: 'Lower the discount' },
+      rejectedBy: { domain: 'owner', userId: 'maria', at: 0, outcome: 'change_needed', note: 'Lower the discount' },
     });
     expect(text).toBe(
       'Proposal p1 was SENT BACK FOR A CHANGE by the person: "Lower the discount". The action did not run. ' +
@@ -74,13 +74,13 @@ describe('rejected — domain-owner path', () => {
   it('outcome: replaced — exact wording, never names who', async () => {
     const text = await textOf({
       ...BASE,
-      rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'replaced' },
+      rejectedBy: { domain: 'owner', userId: 'maria', at: 0, outcome: 'replaced' },
     });
     expect(text).toBe(
       "Proposal p1 was REPLACED: the person signed their own version of this mandate on the mandate screen. " +
       'Nothing was created from this proposal. Use the person\'s mandate — check list-authorizations.',
     );
-    expect(text).not.toContain('andreas');
+    expect(text).not.toContain('maria');
   });
 });
 
@@ -92,7 +92,7 @@ describe('replaced — an AI-proposed mandate or change the person GAVE (on the 
     vi.stubGlobal('fetch', vi.fn(async (url: string) => { asked.push(String(url)); return new Response(JSON.stringify(answer), { status: 200 }); }));
     try { return await textOf(proposal); } finally { vi.unstubAllGlobals(); if (prevSecret === undefined) delete process.env.SUVEREN_INTERNAL_SECRET; else process.env.SUVEREN_INTERNAL_SECRET = prevSecret; }
   };
-  const change = { ...BASE, tool: 'setup__change_mandate', rejectedBy: { domain: 'owner', userId: 'andreas', at: 0, outcome: 'replaced' } } as SPProposal;
+  const change = { ...BASE, tool: 'setup__change_mandate', rejectedBy: { domain: 'owner', userId: 'maria', at: 0, outcome: 'replaced' } } as SPProposal;
 
   it('given: the AI hears that ITS change is in force, with the new mandate id (dev lane 2026-11-23 said "their own version")', async () => {
     const text = await withGateway({ given: { authorizationId: 'authz_new', op: 'change' } }, change);
@@ -116,7 +116,7 @@ describe('rejected — above-cap approver path', () => {
   it('a legacy reason (no outcome, no note) still shows as REJECTED with the reason quoted', async () => {
     const text = await textOf({
       ...BASE,
-      approverRejectedBy: { userId: 'andreas', reason: 'wrong recipient', at: 0 },
+      approverRejectedBy: { userId: 'maria', reason: 'wrong recipient', at: 0 },
     });
     expect(text).toBe(
       'Proposal p1 was REJECTED by the person: "wrong recipient". The action did not run and must not be retried. ' +
@@ -127,7 +127,7 @@ describe('rejected — above-cap approver path', () => {
   it('outcome: change_needed from an approver — same wording as the domain-owner path', async () => {
     const text = await textOf({
       ...BASE,
-      approverRejectedBy: { userId: 'andreas', at: 0, outcome: 'change_needed', note: 'Different wording' },
+      approverRejectedBy: { userId: 'maria', at: 0, outcome: 'change_needed', note: 'Different wording' },
     });
     expect(text).toContain('SENT BACK FOR A CHANGE by the person: "Different wording"');
   });
@@ -135,7 +135,7 @@ describe('rejected — above-cap approver path', () => {
   it('outcome: replaced from "Edit before signing" (RJ5) — no reason, no note needed', async () => {
     const text = await textOf({
       ...BASE,
-      approverRejectedBy: { userId: 'andreas', at: 0, outcome: 'replaced' },
+      approverRejectedBy: { userId: 'maria', at: 0, outcome: 'replaced' },
     });
     expect(text).toContain('REPLACED: the person signed their own version of this mandate');
   });
@@ -143,14 +143,14 @@ describe('rejected — above-cap approver path', () => {
 
 describe('<who> — display name if known locally, else "the person" — never the internal user id', () => {
   it('falls back to the user id with no receipt archive at all (today\'s behaviour)', async () => {
-    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } });
+    const text = await textOf({ ...BASE, rejectedBy: { domain: 'owner', userId: 'maria', at: 0 } });
     expect(text).toContain('by the person.');
   });
 
   it('falls back to the user id when the archive has no verified name for this domain', async () => {
     const { archive } = buildScenario();
     const text = await textOf(
-      { ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } },
+      { ...BASE, rejectedBy: { domain: 'owner', userId: 'maria', at: 0 } },
       archive,
     );
     expect(text).toContain('by the person.');
@@ -172,10 +172,10 @@ describe('<who> — display name if known locally, else "the person" — never t
       },
     });
     const text = await textOf(
-      { ...BASE, rejectedBy: { domain: 'owner', userId: 'andreas', at: 0 } },
+      { ...BASE, rejectedBy: { domain: 'owner', userId: 'maria', at: 0 } },
       archive,
     );
     expect(text).toContain('by Lena Gruber.');
-    expect(text).not.toContain('andreas');
+    expect(text).not.toContain('maria');
   });
 });

@@ -95,7 +95,7 @@ export const SIMULATION_BLOCK_REASON = 'blocked: simulation mode — real system
 
 /** Shown wherever a SIMULATED connector is refused because simulation mode is
  *  OFF — the mirror of SIMULATION_BLOCK_REASON. A gateway is either in
- *  simulation or in production, never both (Andreas, 2026-11-05): outside
+ *  simulation or in production, never both (maintainer, 2026-11-05): outside
  *  simulation mode nothing may answer from simulated data, so an approved
  *  "send" can never quietly land in a test mailbox. */
 export const PRODUCTION_BLOCK_REASON = 'blocked: simulated connector — simulation mode is off';

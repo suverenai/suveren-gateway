@@ -276,6 +276,11 @@ export function buildPinnedHttpsAgent(getPinning: () => AsFetchPinning, asUrl: s
 
 export interface AsFetchPinning {
   /**
+   * The bound on the whole call, instead of {@link DEFAULT_AS_FETCH_TIMEOUT_MS}. Only the live-events stream
+   * (lib/live-events-client.ts) sets it: that one response stays open for minutes by design. Still bounded.
+   */
+  boundMs?: number;
+  /**
    * Refuse a MISMATCH, and refuse to connect at all when no pin is on file
    * — true only when `config set pin-tls on` / `--pin-tls`. When false, a
    * missing or differing pin is never refused by this call: either it is
@@ -332,8 +337,8 @@ const DEFAULT_AS_FETCH_TIMEOUT_MS = 15_000;
 /** `init.signal` combined with a {@link DEFAULT_AS_FETCH_TIMEOUT_MS} bound —
  *  whichever fires first aborts the call. A caller-supplied signal (e.g. the
  *  challenge's own 5s timeout) is never weakened, only ever tightened. */
-function withBoundedSignal(init: RequestInit | undefined): RequestInit {
-  const timeout = AbortSignal.timeout(DEFAULT_AS_FETCH_TIMEOUT_MS);
+function withBoundedSignal(init: RequestInit | undefined, boundMs: number = DEFAULT_AS_FETCH_TIMEOUT_MS): RequestInit {
+  const timeout = AbortSignal.timeout(boundMs);
   const signal = init?.signal ? AbortSignal.any([init.signal as AbortSignal, timeout]) : timeout;
   return { ...init, signal };
 }
@@ -453,14 +458,14 @@ export async function fetchAs(
     const proxyUrl = selectProxyUrl(url);
     if (!proxyUrl) {
       try {
-        const res = await fetch(url, withBoundedSignal(init));
+        const res = await fetch(url, withBoundedSignal(init, pinning.boundMs));
         return { res };
       } catch (err) {
         rethrowWithIssuerHint(err, url);
       }
     }
     const dispatcher = new ProxyAgent({ uri: proxyUrl, requestTls: { ca: effectiveCa() } });
-    const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+    const pending = undiciFetch(url, { ...(withBoundedSignal(init, pinning.boundMs) as Record<string, unknown>), dispatcher });
     closeAfter(dispatcher, pending);
     try {
       const res = (await pending) as unknown as Response;
@@ -486,7 +491,7 @@ export async function fetchAs(
   // (never silently replaced, even though `capture` is set).
   if (pinning.pinnedSpkiHex && (pinning.enforce || !pinning.capture)) {
     const dispatcher = buildPinnedDispatcher(pinning.pinnedSpkiHex, url);
-    const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+    const pending = undiciFetch(url, { ...(withBoundedSignal(init, pinning.boundMs) as Record<string, unknown>), dispatcher });
     closeAfter(dispatcher, pending);
     try {
       const res = (await pending) as unknown as Response;
@@ -508,7 +513,7 @@ export async function fetchAs(
   // captures/refreshes) or pin-tls on and genuinely nothing pinned yet
   // (first-ever pairing — trust-on-first-use at the one legitimate moment).
   const { dispatcher, getCapturedCert } = buildCapturingDispatcher(url);
-  const pending = undiciFetch(url, { ...(withBoundedSignal(init) as Record<string, unknown>), dispatcher });
+  const pending = undiciFetch(url, { ...(withBoundedSignal(init, pinning.boundMs) as Record<string, unknown>), dispatcher });
   closeAfter(dispatcher, pending);
   let res: Response;
   try {

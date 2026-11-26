@@ -2,7 +2,7 @@
  * Agent visibility — what an authorization-enumerating tool/brief may show
  * the WORKING agent while simulation mode is on.
  *
- * Rule (Andreas, 2026-10-02): in simulation mode the agent must not be able
+ * Rule (maintainer, 2026-10-02): in simulation mode the agent must not be able
  * to tell simulation from live. Simulation mode already starts only
  * connectors whose manifest declares `simulation` (see simulation-mode.ts /
  * integration-manager.ts) — every real connector (gmail, deploy-github,

@@ -29,18 +29,18 @@ function world(vault: Record<string, Record<string, string>>, replace?: Replacem
 
 const OLD = {
   clientId: 'cid', clientSecret: 'csecret', refreshToken: 'rtoken',
-  _oauthAccount: 'andreas@example.com', _oauthScopes: 'openid gmail.modify gmail.send', _oauthConnectedAt: '2026-10-01T00:00:00Z',
+  _oauthAccount: 'owner@example.com', _oauthScopes: 'openid gmail.modify gmail.send', _oauthConnectedAt: '2026-10-01T00:00:00Z',
   somethingTheNewOneDoesNotKnow: 'x',
 };
 
-describe('migrating a signed-in gmail (Andreas\'s live gateway)', () => {
+describe('migrating a signed-in gmail (Maria\'s live gateway)', () => {
   it('moves client + token + sign-in metadata to mail, chooses Gmail, drops unknown keys, deletes the old entry', async () => {
     const w = world({ gmail: { ...OLD } });
     const r = await runReplacements(MANIFESTS, w.deps);
     expect(r).toEqual([{ from: 'gmail', to: 'mail', status: 'migrated' }]);
     expect(w.vault.mail).toEqual({
       clientId: 'cid', clientSecret: 'csecret', refreshToken: 'rtoken',
-      _oauthAccount: 'andreas@example.com', _oauthScopes: 'openid gmail.modify gmail.send', _oauthConnectedAt: '2026-10-01T00:00:00Z',
+      _oauthAccount: 'owner@example.com', _oauthScopes: 'openid gmail.modify gmail.send', _oauthConnectedAt: '2026-10-01T00:00:00Z',
       mode: 'live', liveAdapter: 'gmail',
     });
     expect(w.vault.gmail).toBeUndefined();

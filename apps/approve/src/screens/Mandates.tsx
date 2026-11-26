@@ -5,11 +5,11 @@
  * (lib/mandate-give.ts): what is shown is what is signed.
  */
 import { useEffect, useRef, useState } from 'react';
-import { giveSummaryLine, limitRows, scopeLabel, durationText, EndMandate, S13, type SchemaLike, type EndState as SharedEndState } from '@suveren/approval-card/mandate-screens';
+import { giveSummaryLine, limitRows, scopeLabel, durationText, EndMandate, S13, HeldBackList, NotReceivedNote, heldReason, type HeldBackMandate, type SchemaLike, type EndState as SharedEndState } from '@suveren/approval-card/mandate-screens';
 import { MandateChangeDiff } from '@suveren/approval-card/components/MandateChangeCard';
 import { UnknownTop, ResultFoot } from '@suveren/approval-card/components/ApprovalResult';
 import type { GiveItem, GiveState } from '../lib/mandate-give';
-import type { OwnMandate, EndState } from '../lib/mandate-end';
+import type { OwnMandate, EndState, HeldOwn } from '../lib/mandate-end';
 import { P } from '../texts';
 import { TouchWait, Notice, whenText } from './Frame';
 
@@ -164,10 +164,21 @@ export function untilText(expiresAt: number): string {
  * "Your mandates" with End (mockup B2 list). The title is the gateway's (its Mandates page shows the mandate's own title, else the area),
  * not "The mandate for …". Notes about mandates ended on another device sit here, under this heading, never under "Waiting for you".
  */
-export function OwnMandates({ items, notes = [], onEnd }: { items: OwnMandate[]; notes?: string[]; onEnd: (m: OwnMandate) => void }) {
-  if (items.length === 0 && notes.length === 0) return null;
+export function OwnMandates({ items, notes = [], held = [], nowSeconds, onEnd }: { items: OwnMandate[]; notes?: string[]; held?: HeldOwn[]; nowSeconds?: number; onEnd: (m: OwnMandate) => void }) {
+  // On-hold mockup v2: this person's mandates the phone's own check holds back (case 3–5; the phone cannot give again on its own, so
+  // the card carries the words, no button), and a give from this phone no computer took in after 10 minutes (case 2, a calm note).
+  const heldCards: HeldBackMandate[] = held.map((h) => ({ mandateId: h.authorizationId, profileName: h.profileName, title: h.title, ownerName: null, ownerIsYou: true, reason: heldReason(h.code), adminName: null }));
+  const pending = items.filter((m) => m.notReceivedBy && m.givenHereAt);
+  const heldShown = heldCards.length > 0 || pending.length > 0;
+  if (items.length === 0 && notes.length === 0 && !heldShown) return null;
   return (
     <section data-testid="own-mandates">
+      {heldShown && (
+        <div data-testid="phone-held">
+          {pending.map((m) => <NotReceivedNote key={`nr-${m.authorizationId}`} title={m.title} device={m.notReceivedBy!} minutes={Math.max(10, Math.floor(((nowSeconds ?? Math.floor(Date.now() / 1000)) - m.givenHereAt!) / 60))} />)}
+          <HeldBackList mandates={heldCards} host="phone" />
+        </div>
+      )}
       <h2 className="ap-h2">{P.mineTitle}</h2>
       {notes.map((n) => <Notice key={n} kind="info">{n}</Notice>)}
       <div className="dash-rows">

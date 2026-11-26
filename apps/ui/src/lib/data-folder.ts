@@ -6,7 +6,7 @@
  * encrypted before changing it.
  */
 export const DATA_FOLDER_LABEL = 'Data folder:';
-// Option 2, approved by Andreas 2026-11-06 — the approved draft claimed everything was encrypted, which is not true.
+// Option 2, approved by maintainer 2026-11-06 — the approved draft claimed everything was encrypted, which is not true.
 export const DATA_FOLDER_NOTE = 'everything the gateway stores on this computer. Credentials, tickets and logs are encrypted; connector databases (CRM, records, ERP, email) are not.';
 
 /**

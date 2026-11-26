@@ -83,9 +83,9 @@ describe('email@0.9 — allowed_attachment_sources (real profile)', () => {
 
 describe('several email mandates: the one that allows the attachment is chosen (2026-10-18, first real invoice email)', () => {
   const P = 'github.com/humanagencyprotocol/hap-profiles';
-  const old1 = { id: 'a', profileId: `${P}/email@0.8`, context: { allowed_domains: 'sublin.app' } };
+  const old1 = { id: 'a', profileId: `${P}/email@0.8`, context: { allowed_domains: 'example.com' } };
   const old2 = { id: 'b', profileId: `${P}/email@0.8`, context: {} };
-  const new9 = { id: 'c', profileId: `${P}/email@0.9`, context: { allowed_domains: 'sublin.app', [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf' } };
+  const new9 = { id: 'c', profileId: `${P}/email@0.9`, context: { allowed_domains: 'example.com', [ATTACHMENT_SOURCES_FIELD]: 'erp:invoice-pdf' } };
   const ref = { connector: 'erp', kind: 'invoice-pdf' };
 
   it('two email@0.8 mandates and one email@0.9 that lists the source → only the 0.9 one remains', () => {

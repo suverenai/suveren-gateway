@@ -1,5 +1,5 @@
 /**
- * Pinned connector versions (decision Andreas, 2026-10-02, "option A").
+ * Pinned connector versions (decision Maria, 2026-10-02, "option A").
  *
  * Before this, `ensureInstalled` installed `npmPackage` once and never
  * checked its version again — a connector installed on day one silently

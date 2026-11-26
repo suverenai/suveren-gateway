@@ -8,7 +8,7 @@ export const Screen = DeviceFrame;
 export { whenText } from '@suveren/approval-card/lib/pairing-texts';
 
 /**
- * While the system's touch window is coming (Andreas, 2026-11-20): only "Waiting for your touch…" with the gateway's spinner, in
+ * While the system's touch window is coming (maintainer, 2026-11-20): only "Waiting for your touch…" with the gateway's spinner, in
  * place of the buttons; no sketch of the system window. A Cancel stays (the UI review): the person can always leave. When the
  * touch failed, the same place says so, with Try again and Cancel. Layout kept plain on purpose: the reviewed version replaces it.
  */

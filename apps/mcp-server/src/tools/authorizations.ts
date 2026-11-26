@@ -145,7 +145,7 @@ function listedWithoutMandate(
  * A built-in's own "no mandate" text (e.g. Setup's two ways forward) for every
  * built-in whose profile no complete mandate covers. Its tools are usually not
  * listed without a mandate (setup is hidden), so without this the agent never
- * reaches the text and can only say "I can't" (Andreas, 2026-11-05).
+ * reaches the text and can only say "I can't" (maintainer, 2026-11-05).
  */
 function builtinHintsWithoutMandate(
   authorizations: Array<{ profileId: string; complete: boolean }>,
@@ -231,7 +231,7 @@ function rowsForDomain(
  * The rules (golden rule first) at the top of the short answer, the one every AI is sent to before
  * its first reply. The start message alone is not enough: Claude Code keeps only its first 4096
  * characters, and a chat keeps the start message it got when it connected — before 0.45.0 the rules
- * came after a long agent brief and were cut off (Andreas, 2026-11-16).
+ * came after a long agent brief and were cut off (maintainer, 2026-11-16).
  */
 const RULES_SECTION = ['=== RULES ===', ...AGENT_RULES.map(r => `- ${r}`), ''];
 

@@ -1,8 +1,8 @@
 /**
  * An update's approval card shows the CHANGE, not the record (walkthrough
- * 2026-11-11: a CRM update_contact card showed "Name: Andreas", revision 1 and
+ * 2026-11-11: a CRM update_contact card showed "Name: maintainer", revision 1 and
  * every field — the contact as it is — so nobody could see that the name would
- * become "Andreas Schadauer").
+ * become "Maria Berger").
  *
  * Input: the gateway's own preview read of the record the action changes (the
  * single read the manifest marks with a `version`, wire flag `target`) and the

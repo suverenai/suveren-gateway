@@ -3,36 +3,47 @@
  * own routes; the components take nothing else, so the AI can never add text that reaches the person here.
  */
 
-/** Why this gateway holds a mandate back (a gateway code, mapped by {@link heldReason}). */
-export type HeldReason = 'not_received' | 'check_required' | 'owner_unknown' | 'changed' | 'revoked' | 'on_hold';
+/**
+ * Why a mandate is held back, as the screens group it (approved On-hold mockup v2, DEC-109/110/111):
+ *  - `alarm`: what arrived does not match what the owner confirmed (the security alarm);
+ *  - `rules_changed`: the rules (profile) changed after it was given;
+ *  - `touch_missing`: it was given without the owner's touch;
+ *  - `waiting_confirm`: the owner is not yet confirmed by the team's admin (a calm waiting state, not on hold);
+ *  - `not_received`: still on its way to this device (never shown on the gateway; the phone says so after 10 minutes);
+ *  - `ended`: the owner ended it (not on hold: it belongs with the ended mandates);
+ *  - `unknown`: any other code (neutral wording).
+ */
+export type HeldReason = 'alarm' | 'rules_changed' | 'touch_missing' | 'waiting_confirm' | 'not_received' | 'ended' | 'unknown';
 
 export interface HeldBackMandate {
   mandateId: string;
   /** The area's name (the gateway reads it from the profile). */
   profileName: string;
+  /** The mandate's own title when the host knows it (the person's own mandates); null otherwise. */
+  title?: string | null;
   /** The owner's name as the gateway knows it (team member list); null when it does not know one. */
   ownerName: string | null;
   ownerIsYou: boolean;
   reason: HeldReason;
-  /** The admin who confirms colleagues, for `owner_unknown`; null when unknown. */
+  /** The admin who confirms colleagues, for `waiting_confirm`; null when unknown. */
   adminName: string | null;
+  /** Personal workspace or a team: only a team's alarm says "tell your admin". Unknown counts as a team. */
+  workspace?: 'personal' | 'team';
 }
 
 /**
- * Gateway code (the MCP server's verdict, GET /api/mandate/held-back) -> reason. The codes are the gateway's own:
- * `mandate_body_not_received` and `mandate_not_granted` (nothing, or no grant, has reached this computer yet), `grant_check_required`
- * (the grant has no check), `owner_unknown` / `owner_not_this_person` (the owner is not someone this person confirmed), `mandate_revoked`.
- * `mandate_body_mismatch` / `grant_mismatch`: what arrived does not match what the owner granted. Every other code is a neutral
- * "on hold" (Andreas, 2026-11-24: an unknown reason must never claim a mismatch). (`no_grant`, `CHECK_REQUIRED`, `check_required`
- * are older spellings, kept.)
+ * Gateway code (the MCP server's verdict, GET /api/mandate/held-back; the phone's own grant check) -> reason, by the approved
+ * mockup's table. An unknown code is neutral, never an alarm (maintainer, 2026-11-24).
  */
 export function heldReason(code: string): HeldReason {
-  if (code === 'mandate_body_not_received' || code === 'no_grant') return 'not_received';
-  if (code === 'grant_check_required' || code === 'mandate_not_granted' || code === 'CHECK_REQUIRED' || code === 'check_required') return 'check_required';
-  if (code === 'owner_unknown' || code === 'owner_not_this_person') return 'owner_unknown';
-  if (code === 'mandate_revoked') return 'revoked';
-  if (code === 'mandate_body_mismatch' || code === 'grant_mismatch') return 'changed';
-  return 'on_hold';
+  if (code === 'mandate_body_not_received' || code === 'body_not_received' || code === 'no_grant') return 'not_received';
+  if (code === 'grant_check_required' || code === 'mandate_not_granted' || code === 'CHECK_REQUIRED' || code === 'check_required') return 'touch_missing';
+  if (code === 'owner_unknown' || code === 'owner_not_this_person') return 'waiting_confirm';
+  if (code === 'profile_hash_mismatch') return 'rules_changed';
+  if (code === 'mandate_revoked') return 'ended';
+  if (code === 'mandate_body_mismatch' || code === 'grant_mismatch' || code === 'grant_invalid' || code === 'grant_other_authorization'
+    || code === 'grant_other_team' || code === 'mandate_body_refused' || code === 'grant_version_refused') return 'alarm';
+  return 'unknown';
 }
 
 /** The result of ending a mandate, from the device-signed revoke route (POST /api/mandate/revoke). */

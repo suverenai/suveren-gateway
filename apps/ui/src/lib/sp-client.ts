@@ -1173,7 +1173,7 @@ class SPClient {
   };
 
   /** Mandates this gateway holds back, with its own verdict code (step 13, screen 3). `null` when it cannot say (no chain, offline). Read-only. */
-  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null }> | null> {
+  async getHeldBack(): Promise<Array<{ authorizationId: string; mandateId: string; code: string; profileName: string; ownerIsYou: boolean; ownerName: string | null; adminName: string | null; workspace?: 'personal' | 'team'; title?: string | null }> | null> {
     try {
       const res = await this.fetch('/api/mandate/held-back');
       if (!res.ok) return null;
@@ -1452,6 +1452,14 @@ class SPClient {
     });
     if (!res.ok) throw new Error(`Failed to ${archived ? 'archive' : 'unarchive'} mandate: ${res.status}`);
     return ((await res.json()) as { archived: string[] }).archived;
+  }
+
+  // ─── Live events (0.46.1): is the live connection to the AS up? (control plane, never the AS) ───
+
+  async getLiveStatus(): Promise<boolean> {
+    const res = await this.fetch('/api/live-status');
+    if (!res.ok) return false;
+    return ((await res.json()) as { up?: unknown }).up === true;
   }
 
   // ─── Blocked actions: local "last seen" flag (deletes nothing) ───

@@ -5,7 +5,7 @@
   certificate, then build and sign the .msi.
 
 .DESCRIPTION
-  Suveren ships this installer UNSIGNED (decision, Andreas, 2026-10-02: "we do
+  Suveren ships this installer UNSIGNED (decision, maintainer, 2026-10-02: "we do
   not sell the software, so we do not sign it"). This script is what your own
   IT department runs, after verifying the kit's origin (see
   docs/windows-it-guide.md — sha256sum + `gh attestation verify`), to turn it

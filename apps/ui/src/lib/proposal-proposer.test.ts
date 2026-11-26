@@ -7,7 +7,7 @@ import type { Proposal } from './sp-client';
 // AS and gateway exchange, not a hand-built "tom"/"lisa" ideal record.
 const TOM = 'tom-fecb81a6-9e2d-4a11-8f3c-2b9b1a7c4e10@test.local';
 const LISA = 'lisa-7a3f2c91-1b4d-4e9a-9c0e-5f6a8d2b3c71@test.local';
-const ANDREAS = 'andreas-0c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f@test.local';
+const MARIA = 'maria-0c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f@test.local';
 
 describe('isProposer', () => {
   it('true when createdBy matches the current user — real email-shaped ids', () => {
@@ -33,20 +33,20 @@ describe('isProposer', () => {
 
 describe('visibleApprovers', () => {
   it('the real reported bug: pendingApprovers lists the proposer (Tom) alongside Lisa and ' +
-    'Andreas — the card must never render him in the roster', () => {
+    'Maria — the card must never render him in the roster', () => {
     const proposal = {
       createdBy: TOM,
-      pendingApprovers: [TOM, LISA, ANDREAS],
+      pendingApprovers: [TOM, LISA, MARIA],
     } as Pick<Proposal, 'pendingApprovers' | 'createdBy'>;
-    expect(visibleApprovers(proposal)).toEqual([LISA, ANDREAS]);
+    expect(visibleApprovers(proposal)).toEqual([LISA, MARIA]);
   });
 
   it('a roster that already excludes the proposer (a fixed gateway) is unchanged', () => {
     const proposal = {
       createdBy: TOM,
-      pendingApprovers: [LISA, ANDREAS],
+      pendingApprovers: [LISA, MARIA],
     } as Pick<Proposal, 'pendingApprovers' | 'createdBy'>;
-    expect(visibleApprovers(proposal)).toEqual([LISA, ANDREAS]);
+    expect(visibleApprovers(proposal)).toEqual([LISA, MARIA]);
   });
 
   it('no pendingApprovers at all: empty, not a crash', () => {
@@ -55,7 +55,7 @@ describe('visibleApprovers', () => {
   });
 
   it('no createdBy at all: nothing is filtered (undefined never matches a real userId)', () => {
-    const proposal = { createdBy: undefined, pendingApprovers: [LISA, ANDREAS] } as Pick<Proposal, 'pendingApprovers' | 'createdBy'>;
-    expect(visibleApprovers(proposal)).toEqual([LISA, ANDREAS]);
+    const proposal = { createdBy: undefined, pendingApprovers: [LISA, MARIA] } as Pick<Proposal, 'pendingApprovers' | 'createdBy'>;
+    expect(visibleApprovers(proposal)).toEqual([LISA, MARIA]);
   });
 });

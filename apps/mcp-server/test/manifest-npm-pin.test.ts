@@ -1,5 +1,5 @@
 /**
- * Pinned connector versions (decision Andreas, 2026-10-02, "option A") — every
+ * Pinned connector versions (decision Maria, 2026-10-02, "option A") — every
  * shipped manifest that installs an npm package MUST pin the EXACT tested
  * version, and none may ask npm to resolve a moving target.
  *

@@ -81,3 +81,18 @@ describe('isTeamAdmin (the Authority Server: the creator is the admin)', () => {
     expect(isTeamAdmin({ createdBy: 'u_me' }, null, undefined)).toBe(false);
   });
 });
+
+describe('a new profile version the team has not enabled yet (DEC-105)', () => {
+  const base = { configLoaded: true, grantors: undefined, userId: 'u1', profileName: 'Email', teamName: 'Muster GmbH', olderEnabledVersion: '0.10' } as const;
+  it('a member is told an admin must copy the settings from the older version', () => {
+    const r = mandateRight(base);
+    expect(r).toMatchObject({ can: false, code: 'PROFILE_NOT_ENABLED_FOR_GROUP', reason: 'A new version of Email is not enabled in "Muster GmbH" yet.', fix: 'Ask an admin of "Muster GmbH" to copy its settings from 0.10 to the new version.' });
+  });
+  it('an admin is told to copy them, with the link to the team settings', () => {
+    const r = mandateRight({ ...base, isAdmin: true });
+    expect(r).toMatchObject({ can: false, adminCanEnable: true, fix: 'You are an admin of "Muster GmbH": in the team\'s settings, copy the settings from 0.10 to the new version.' });
+  });
+  it('without an older enabled version, the plain "not enabled" stays', () => {
+    expect(mandateRight({ ...base, olderEnabledVersion: null })).toMatchObject({ reason: 'Not enabled in "Muster GmbH".' });
+  });
+});

@@ -1,5 +1,5 @@
 /**
- * Andreas 2026-11-11: checks are for findings, not for the action itself. A tool
+ * Maria 2026-11-11: checks are for findings, not for the action itself. A tool
  * whose preview reads the record it changes (a read with `version`) shows each
  * changed field as Now → New on the card; a notice check that only compares a
  * bound argument with the same field of that record repeats the change above

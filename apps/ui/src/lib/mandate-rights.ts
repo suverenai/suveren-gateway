@@ -39,6 +39,8 @@ export interface MandateRightInput {
   teamName?: string | null;
   /** The signed-in person is an admin of the active team (their membership's role). */
   isAdmin?: boolean;
+  /** The newest OLDER version of this profile the team has enabled (e.g. "0.10"), when this version is not enabled yet. */
+  olderEnabledVersion?: string | null;
 }
 
 export function mandateRight(i: MandateRightInput): MandateRight {
@@ -46,6 +48,21 @@ export function mandateRight(i: MandateRightInput): MandateRight {
   if (!i.configLoaded) return { can: true };
   const team = i.teamName ? `"${i.teamName}"` : 'this team';
   const grantorsEmpty = i.grantors !== 'all' && (i.grantors?.length ?? 0) === 0;
+  if (grantorsEmpty && i.olderEnabledVersion) {
+    // A new version of a profile the team already uses (2026-11-24, after email 0.11 / customers 0.12): the team carries it over
+    // only when an admin copies the settings (DEC-105). Say that, not "not enabled" (DRAFT texts).
+    return i.isAdmin
+      ? {
+        can: false, code: 'PROFILE_NOT_ENABLED_FOR_GROUP', adminCanEnable: true,
+        reason: `A new version of ${i.profileName} is not enabled in ${team} yet.`,
+        fix: `You are an admin of ${team}: in the team's settings, copy the settings from ${i.olderEnabledVersion} to the new version.`,
+      }
+      : {
+        can: false, code: 'PROFILE_NOT_ENABLED_FOR_GROUP',
+        reason: `A new version of ${i.profileName} is not enabled in ${team} yet.`,
+        fix: `Ask an admin of ${team} to copy its settings from ${i.olderEnabledVersion} to the new version.`,
+      };
+  }
   if (grantorsEmpty) {
     // An admin is never told to ask an admin: they enable the area themselves (DRAFT texts).
     if (i.isAdmin) {

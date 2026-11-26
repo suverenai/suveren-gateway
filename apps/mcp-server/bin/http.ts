@@ -441,6 +441,21 @@ app.post('/internal/start-pending-integrations', internalOnly, async (_req: Requ
 // resolves so approve→send is near-instant instead of waiting for the poll.
 let triggerCommittedExecution: () => void = () => {};
 
+// Live events (0.46.1): the control plane says whether its live connection to the AS is up. Up: the proposal poll is a
+// 5-minute backup (changes arrive as /internal/run-committed nudges). The status lapses after 3 minutes without a
+// repeat (the control plane repeats it every minute), so a control plane that went away never leaves this slow.
+let liveUpUntil = 0;
+function liveEventsUp(): boolean { return Date.now() < liveUpUntil; }
+/** Set once the proposal poll starts: re-plans its next tick (used when the live connection goes away). */
+let rescheduleProposalPoll: () => void = () => {};
+app.post('/internal/live-status', internalOnly, (req: Request, res: Response) => {
+  const up = (req.body as { up?: unknown } | undefined)?.up === true;
+  const was = liveEventsUp();
+  liveUpUntil = up ? Date.now() + 3 * 60_000 : 0;
+  if (was && !up) rescheduleProposalPoll(); // back to every 5 s at once, not after the backup's 5 minutes
+  res.json({ ok: true, up });
+});
+
 app.post('/internal/run-committed', internalOnly, (_req: Request, res: Response) => {
   triggerCommittedExecution();
   res.json({ ok: true });
@@ -1618,6 +1633,7 @@ app.listen(port, bindHost, () => {
   // atomic CAS in the SP ensures only one path executes.
 
   const PROPOSAL_POLL_INTERVAL = 5_000;
+  const LIVE_BACKUP_POLL_INTERVAL = 5 * 60_000;
 
   // ONE executor for every trigger (poll, nudge, agent's check-pending call).
   // On 2026-09-04 the nudge and the poll ran the same proposal concurrently;
@@ -1724,7 +1740,17 @@ app.listen(port, bindHost, () => {
     }
   }
 
-  setInterval(executeCommittedProposals, PROPOSAL_POLL_INTERVAL);
+  // Live events (0.46.1, DEC-107): while the control plane holds the live connection to the AS, changes arrive as
+  // /internal/run-committed nudges and this poll is only a 5-minute backup; otherwise every 5 s as before.
+  let proposalPollTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleProposalPoll = () => {
+    if (proposalPollTimer) clearTimeout(proposalPollTimer);
+    // A live status that lapsed (no repeat for 3 min) also counts as down: the next tick is 5 s again.
+    const ms = liveEventsUp() ? LIVE_BACKUP_POLL_INTERVAL : PROPOSAL_POLL_INTERVAL;
+    proposalPollTimer = setTimeout(() => { proposalPollTimer = null; void executeCommittedProposals().finally(scheduleProposalPoll); }, ms);
+  };
+  rescheduleProposalPoll = scheduleProposalPoll;
+  scheduleProposalPoll();
   // Expose the executor for the control-plane's post-resolve nudge (fire-and-forget).
   triggerCommittedExecution = () => { void executeCommittedProposals(); };
 });

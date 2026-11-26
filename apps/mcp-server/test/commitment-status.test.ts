@@ -76,12 +76,12 @@ describe('a distinct, actionable answer per state', () => {
     const text = await textOf({
       ...BASE,
       status: 'rejected',
-      approverRejectedBy: { userId: 'andreas', reason: 'wrong recipient', at: 0 },
+      approverRejectedBy: { userId: 'maria', reason: 'wrong recipient', at: 0 },
     });
     expect(text).toMatch(/REJECTED/);
     // No locally known name → "the person", never the internal user id.
     expect(text).toContain('by the person');
-    expect(text).not.toContain('andreas');
+    expect(text).not.toContain('maria');
     expect(text).toContain('wrong recipient');
     expect(text).toMatch(/must not be retried/i);
   });
