@@ -4324,7 +4324,9 @@ video.document-preview-media { width: 100%; }
   background: var(--bg-elevated); border: 0; border-radius: var(--radius-xl); box-shadow: var(--elevation-2);
   overflow: hidden; container-type: inline-size;
 }
-.av3-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-5) var(--space-5) var(--space-4); }
+.av3-scroll { --av3-pad-b: var(--space-4); flex: 1; min-height: 0; overflow: auto; padding: var(--space-5) var(--space-5) var(--av3-pad-b); }
+/* The sticky footer: the commitment line and the buttons are one opaque surface in the card's own colour, below the scrolling middle. */
+.av3-dock { flex: none; position: relative; z-index: 1; background: var(--bg-elevated); padding-top: var(--space-2); }
 .av3-body { display: flex; flex-direction: column; }
 .av3-next {
   align-self: flex-start; display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-2); margin-bottom: var(--space-2);
@@ -4480,7 +4482,7 @@ video.document-preview-media { width: 100%; }
 }
 .av3-chg textarea:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 @container (max-width: 420px) {
-  .av3-scroll { padding: var(--space-4) var(--space-4) var(--space-5); }
+  .av3-scroll { --av3-pad-b: var(--space-5); padding: var(--space-4) var(--space-4) var(--av3-pad-b); }
   .av3-foot { padding: var(--space-3) var(--space-4) var(--space-4); }
   .mode-band { margin-left: var(--space-4); margin-right: var(--space-4); }
   .av3-title { font-size: 1.1rem; }
@@ -5276,9 +5278,9 @@ body.apr-has-strip .main-content { margin-right: 2.75rem; }
 .sum-line { font-size: var(--text-body-sm); color: var(--text-secondary); font-weight: 600; margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 /* "More below": a fade at the bottom of a scrolling card while there is more; gone at the end. */
 .more-cue {
-  position: sticky; bottom: 0; margin: calc(-1 * var(--space-10)) 0 0; padding: var(--space-10) 0 var(--space-2);
+  position: sticky; bottom: calc(-1 * var(--av3-pad-b, 0px)); margin: calc(-1 * var(--space-10)) 0 0; padding: var(--space-10) 0 var(--space-2);
   text-align: center; font-size: var(--text-caption); font-weight: 600; color: var(--text-secondary);
-  background: linear-gradient(to bottom, transparent, var(--bg-elevated) 60%); pointer-events: none;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg-elevated) 0%, transparent), var(--bg-elevated) 60%); pointer-events: none;
 }
 /* A warning that carries a destructive step (End a mandate, Remove a device). */
 .warn-box { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--text-primary); border-radius: var(--radius-lg); padding: var(--space-4); margin: 0 0 var(--space-4); }

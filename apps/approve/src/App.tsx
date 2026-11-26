@@ -565,7 +565,13 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
   const decideFor = useCallback((id: string) => async (args: DecideArgs) => {
     const cur = cards[id];
     if (!cur || !cur.check || !cur.check.ok) throw new DecideError('generic');
-    if (args.kind === 'change') throw new DecideError('generic');
+    if (args.kind === 'change') {
+      // Sent back with words: sealed for the computers of this chain that read it to the AI, signed as the decision "reject" (outcome change_needed).
+      const chain = rt.session.current()?.chain;
+      const readers = chain ? noteReaders(chain) : [];
+      if (readers.length === 0 || !args.note) throw new DecideError('generic');
+      return rt.decider.decide(cur.proposal, cur.check.ready, 'reject', { shownHash: args.shownHash, outcome: 'change_needed', noteEncrypted: await sealChangeNote(args.note, readers) });
+    }
     return rt.decider.decide(cur.proposal, cur.check.ready, args.kind, { shownHash: args.shownHash });
   }, [rt, cards]);
 

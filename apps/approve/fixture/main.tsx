@@ -15,6 +15,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { GiveCard, OwnMandates } from '../src/screens/Mandates';
 import { RequestPanel } from '../src/screens/RequestPanel';
 import { PhoneTop } from '../src/screens/PhoneTop';
+import { RequestCard } from '../src/screens/Requests';
 import { AuthCard } from '../../ui/src/pages/AuthorizationsPage';
 import type { GiveItem } from '../src/lib/mandate-give';
 import { CASES, type ParityCase } from './cases';
@@ -23,7 +24,7 @@ declare const __PROFILES__: Record<string, AgentProfile>;
 
 const params = new URLSearchParams(location.search);
 const c: ParityCase = CASES.find((x) => x.id === params.get('case')) ?? CASES[0];
-const card = (['phone', 'list', 'phone-list', 'phone-panel', 'phone-top'] as const).find((x) => x === params.get('card')) ?? 'gateway';
+const card = (['phone', 'list', 'phone-list', 'phone-panel', 'phone-top', 'action-gateway', 'action-phone'] as const).find((x) => x === params.get('card')) ?? 'gateway';
 const profile = __PROFILES__[`${c.folder}@${c.version}`];
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -38,6 +39,11 @@ const proposal: Proposal = {
   id: 'parity-proposal', authorizationId: 'auth-setup-1', profileId: 'github.com/humanagencyprotocol/hap-profiles/delegation@0.6', path: 'delegation/create',
   pendingDomains: ['owner'], committedBy: {}, rejectedBy: null, tool: 'setup__create_mandate', executionContext: {}, status: 'pending', executionResult: null,
   createdAt: NOW - 120, expiresAt: NOW + 3600, createdBy: 'fixture-owner', toolArgs: args,
+};
+
+const actionProposal: Proposal = {
+  ...proposal, id: 'action-proposal', profileId: 'email@0.11', path: 'email/send', tool: 'records__create_record', toolArgs: undefined, content: { ciphertext: 'fixture-ciphertext', keys: {} },
+  executionContext: {}, pendingDomains: ['owner'],
 };
 
 const preview: PreviewResponse = {
@@ -71,10 +77,10 @@ const item: GiveItem = {
 };
 
 const noop = () => undefined;
-const wrap = { maxWidth: params.get('max') ? Number(params.get('max')) : 640, margin: '0 auto' } as const;
+const wrap = { maxWidth: params.get('max') ? Number(params.get('max')) : 640, margin: '0 auto', ...(params.get('h') ? { height: Number(params.get('h')), display: 'flex', flexDirection: 'column' as const } : {}) };
 
 async function boot() {
-  if (card === 'phone' || card === 'phone-list' || card === 'phone-panel' || card === 'phone-top') await import('../src/approve.css');
+  if (card === 'phone' || card === 'phone-list' || card === 'phone-panel' || card === 'phone-top' || card === 'action-phone') await import('../src/approve.css');
   const listItem = {
     authorization_id: 'auth-list-1', profile_id: profile.id, path: 'x', title: c.title, sp_status: 'active', frame: { profile: profile.id, ...c.limits },
     required_domains: ['owner'], attested_domains: ['owner'], missing_domains: [], deferred_commitment_domains: c.mode === 'review' ? ['owner'] : [],
@@ -95,6 +101,11 @@ async function boot() {
           </MemoryRouter>
         ) : card === 'phone-list' ? (
           <OwnMandates items={[{ authorizationId: 'a', mandateId: 'm', version: 1, title: c.title, expiresAt: NOW + 30 * 86400, mode: c.mode, fields: {}, givenOn: null, givenAt: null }]} nowSeconds={NOW} onEnd={noop2} />
+        ) : card === 'action-gateway' ? (
+          <ApprovalCard proposal={actionProposal} currentUserId="fixture-owner" decide={async () => ({})} />
+        ) : card === 'action-phone' ? (
+          <RequestCard proposal={actionProposal} userId="fixture-owner" decide={async () => ({})}
+            check={{ ok: true, ready: { facts: { mandateId: 'm1', actionType: 'send' }, contentHash: 'sha256:' + '0'.repeat(64), args: { title: 'Test C - approve this action on the phone' }, executionContext: { title: 'Test C - approve this action on the phone' }, display: {}, route: { kind: 'domain', domain: 'owner' } } as never }} />
         ) : card === 'phone-top' ? (
           <div className="ap-shell"><PhoneTop /><h1 style={{ padding: '0 var(--space-3)' }}>Your mandates</h1></div>
         ) : card === 'phone-panel' ? (

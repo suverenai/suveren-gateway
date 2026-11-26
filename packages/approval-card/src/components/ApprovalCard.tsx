@@ -323,7 +323,7 @@ export function ApprovalCard({
       {hostGive?.active && <div data-testid="card-give">{hostGive.footer}</div>}
 
       {showButtons && !hostGive?.active && phase.t !== 'change' && (
-        <>
+        <div className="av3-dock">
         {/* The commitment, right above the give button (D3): what the person commits to is the last thing read before the touch. */}
         {isMandate && !isChange && typeof mandateArgs?.mode === 'string' && <CommitmentBand mode={mandateArgs.mode} />}
         <footer className="av3-foot">
@@ -360,7 +360,7 @@ export function ApprovalCard({
             </button>
           </div>
         </footer>
-        </>
+        </div>
       )}
       </CardGated>
       </LoadGate>

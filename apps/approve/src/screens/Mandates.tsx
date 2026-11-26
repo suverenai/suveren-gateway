@@ -173,7 +173,7 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onAskCh
         {moreBelow && <div className="more-cue" aria-hidden="true" data-testid="more-cue">More below ↓</div>}
       </div>
       {state.step === 'review' && phase.t !== 'change' && !decided && (
-        <>
+        <div className="av3-dock">
           {/* The commitment, right above the give button, as on the gateway's card (a change has its own card and no band). */}
           {!(item.op === 'change' && item.diff) && <CommitmentBand mode={item.payload.commitment_mode} />}
           <footer className="av3-foot">
@@ -184,7 +184,7 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onAskCh
               {PHONE_CARD.offersReject && onReject && <button type="button" className="av3-btn" data-testid="btn-reject" onClick={() => void run('reject')}>{P.giveReject}</button>}
             </div>
           </footer>
-        </>
+        </div>
       )}
       {state.step === 'review' && phase.t === 'change' && (
         <ChangeNoteFooter id={item.key} note={note} onNote={setNote} error={error} onSend={sendChange} onBack={() => { setPhase({ t: 'idle' }); setError(''); }} />

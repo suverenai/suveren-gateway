@@ -286,3 +286,69 @@ for (const view of ['phone-top', 'phone-panel'] as const) {
     expect(top, 'and does not add a second inset on top of it').toBeLessThan(59 + 24);
   });
 }
+
+// An action approval (not a mandate give): the phone's card has the gateway's decision footer, word for word and button for button.
+async function actionFooter(page: Page, card: 'gateway' | 'phone', width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(`/fixture/index.html?case=crm&card=action-${card}`);
+  await page.waitForSelector('[data-testid=btn-approve]');
+  const buttons = (await page.locator('.av3-foot button').allTextContents()).map((t) => t.replace(/\s+/g, ' ').trim());
+  const rows = await page.locator('.av3-foot .av3-btn').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+  await fits(page, `${card} action card`, width);
+  await page.locator('[data-testid=btn-change-needed]').click();
+  const note = {
+    label: (await page.locator('.av3-chg-l').textContent())?.trim(),
+    buttons: (await page.locator('.av3-chg button').allTextContents()).map((t) => t.trim()),
+    fieldPx: await page.locator('[data-testid=change-note]').evaluate((e) => parseFloat(getComputedStyle(e).fontSize)),
+  };
+  await fits(page, `${card} action note`, width);
+  await page.locator('[data-testid=change-note]').fill('Use the reply address instead.');
+  if (SHOTS && width === 390) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `action-note-${card}-390.png`), fullPage: true }); }
+  await page.locator('[data-testid=btn-send-back]').click();
+  await page.waitForSelector('[data-testid=decision-stamp]');
+  const stamp = (await page.locator('[data-testid=decision-stamp]').textContent())?.replace(/\s+/g, ' ').trim();
+  await fits(page, `${card} action stamp`, width);
+  return { buttons, sameRow: rows.map((r) => r === rows[rows.length - 1]), note, stamp };
+}
+for (const width of [320, 375, 390]) {
+  test(`action approval at ${width}px: the phone offers what the gateway offers`, async ({ page }) => {
+    const gateway = await actionFooter(page, 'gateway', width);
+    const phone = await actionFooter(page, 'phone', width);
+    expect(phone).toEqual(gateway);
+    expect(gateway.buttons.some((b) => /Ask for changes|Changes/.test(b))).toBe(true);
+    expect(gateway.buttons.filter((b) => b === 'Reject').length).toBe(1);
+    expect(gateway.note.buttons).toEqual(['Send to the AI', 'Back']);
+    expect(gateway.note.fieldPx).toBeGreaterThanOrEqual(16);
+    expect(gateway.stamp).toBe('Sent back to the AIRecorded');
+  });
+}
+
+// The sticky footer is one opaque surface in the card's colour: nothing of the scrolled text shows through or behind it, and the
+// "More below" fade ends exactly where the footer begins.
+for (const theme of ['light', 'dark'] as const) {
+  for (const card of ['phone-panel', 'gateway'] as const) {
+    test(`${card} ${theme}: the footer is opaque, the text scrolls under the fade and never behind the buttons`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`/fixture/index.html?case=crm&card=${card}${card === 'gateway' ? '&h=640' : ''}`);
+      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+      await page.waitForSelector('.av3-dock');
+      await page.evaluate(() => { const s = document.querySelector('.av3-scroll') as HTMLElement; s.scrollTop = 300; });
+      await page.waitForSelector('[data-testid=more-cue]');
+      const r = await page.evaluate(() => {
+        const q = (s: string) => document.querySelector(s) as HTMLElement;
+        const dock = q('.av3-dock'), scroll = q('.av3-scroll'), cue = q('[data-testid=more-cue]');
+        const d = dock.getBoundingClientRect(), s = scroll.getBoundingClientRect(), c = cue.getBoundingClientRect();
+        const bg = getComputedStyle(dock).backgroundColor;
+        // a point inside the dock, on its padding (not on a control): what is hit there must be the dock itself
+        const hit = document.elementFromPoint(d.left + d.width / 2, d.top + 2);
+        const inScroll = [...scroll.querySelectorAll('*')].some((e) => { const b = e.getBoundingClientRect(); return b.height > 0 && b.top < d.bottom && b.bottom > d.top && e.textContent && e.children.length === 0 && b.bottom > d.top + 1 && b.top < d.top && false; });
+        return { bg, scrollBottom: s.bottom, dockTop: d.top, cueBottom: c.bottom, hitInDock: !!hit?.closest('.av3-dock'), inScroll };
+      });
+      expect(r.bg, 'the footer has a background').not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+      expect(r.scrollBottom, 'the scrolling middle ends where the footer begins').toBeLessThanOrEqual(r.dockTop + 0.5);
+      expect(Math.abs(r.cueBottom - r.scrollBottom), 'the fade sits flush on the footer, no strip of text between').toBeLessThan(1.5);
+      expect(r.hitInDock).toBe(true);
+      if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `scrolled-${card}-${theme}-390.png`) }); }
+    });
+  }
+}
