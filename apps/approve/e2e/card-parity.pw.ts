@@ -269,3 +269,20 @@ for (const width of [320, 375, 390]) {
     }
   }
 }
+
+// An installed iPhone app: the status bar floats over the page. The first row of the phone (the top bar, the full-screen panel's head)
+// starts below the safe-area inset. Chromium has no inset, so the inset is injected as the variable both rows read.
+for (const view of ['phone-top', 'phone-panel'] as const) {
+  test(`${view}: the brand row starts below the safe-area inset (and the inset comes from the system's env value)`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/fixture/index.html?case=crm&card=${view}`);
+    await page.waitForSelector('.logo-group');
+    const css = await page.evaluate(() => [...document.styleSheets].flatMap((s) => [...s.cssRules]).map((r) => r.cssText).join('\n'));
+    expect(css).toMatch(/--ap-inset-top:\s*env\(safe-area-inset-top\)/);
+    expect(css).toMatch(/display-mode:\s*standalone[\s\S]*--ap-inset-top:\s*max\(env\(safe-area-inset-top\)/);
+    await page.addStyleTag({ content: ':root { --ap-inset-top: 59px !important; }' });
+    const top = (await page.locator('.logo-group').boundingBox())!.y;
+    expect(top, 'the brand row clears a 59 px status bar').toBeGreaterThanOrEqual(59);
+    expect(top, 'and does not add a second inset on top of it').toBeLessThan(59 + 24);
+  });
+}
