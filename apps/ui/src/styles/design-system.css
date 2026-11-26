@@ -4405,13 +4405,11 @@ video.document-preview-media { width: 100%; }
 .mode-pill .mi { width: 14px; height: 14px; }
 .mode-pill.mode-automatic { border-color: var(--prov-ai); background: var(--prov-ai-subtle); color: var(--prov-ai); }
 .ob-type .mode-pill { height: 20px; }
-.mode-band { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--border-strong); border-radius: var(--radius-md); padding: var(--space-3); color: var(--text-primary); margin: 0 var(--space-5) var(--space-2); background: var(--bg-sunken); }
-.mode-band .mi { width: 28px; height: 28px; }
-.mode-band.mode-automatic { border-color: var(--prov-ai); border-width: 3px; background: var(--prov-ai-subtle); color: var(--prov-ai); }
+.mode-band { display: flex; gap: var(--space-2); align-items: center; box-sizing: border-box; height: 40px; border: 2px solid var(--border-strong); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--text-primary); margin: 0 var(--space-5) var(--space-1); background: var(--bg-sunken); }
+.mode-band .mi { width: 20px; height: 20px; }
+.mode-band.mode-automatic { border-color: var(--prov-ai); background: var(--prov-ai-subtle); color: var(--prov-ai); }
 .mode-l { font-size: var(--text-caption); font-weight: 500; opacity: 0.85; }
-.mode-t { font-size: var(--text-lead); font-weight: 700; line-height: 1.25; }
-.mode-x { font-size: var(--text-body-sm); font-weight: 500; margin-top: 0.15rem; }
-@media (max-width: 520px) { .mode-band { margin: 0 var(--space-4) var(--space-2); } }
+.mode-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-body-sm); font-weight: 700; line-height: 1.25; }
 /* Mandate proposal rows the card adds to the tile (Commitment, Applies to) — same grid as the preview's rows. */
 .av3-sealed dl.av3-mandate-rows { display: grid; column-gap: var(--space-3); row-gap: 0.35rem; margin: 0 0 0.35rem; }
 .av3-sealed dl.av3-mandate-rows:last-child { margin: 0.35rem 0 0; }
@@ -4484,9 +4482,10 @@ video.document-preview-media { width: 100%; }
 @container (max-width: 420px) {
   .av3-scroll { padding: var(--space-4) var(--space-4) var(--space-5); }
   .av3-foot { padding: var(--space-3) var(--space-4) var(--space-4); }
+  .mode-band { margin-left: var(--space-4); margin-right: var(--space-4); }
   .av3-title { font-size: 1.1rem; }
-  .av3-btn .long { display: none; }
-  .av3-btn .short { display: inline; }
+  .av3-btns:not(.av3-btns-give) .av3-btn .long { display: none; }
+  .av3-btns:not(.av3-btns-give) .av3-btn .short { display: inline; }
   .av3-fold > summary .one { display: none; }
   .av3-sealed { padding: var(--space-3); }
   .av3-sealed dl { grid-template-columns: 1fr !important; gap: 0 !important; }
@@ -4997,6 +4996,13 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .apr-head.is-compact { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 0 var(--space-2); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3); min-height: 3.25rem; }
 .apr-head.is-compact .apr-title { padding-left: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .apr-head.is-compact .apr-nav { gap: var(--space-1); }
+/* With the brand row (the phone): brand and the actions on the first line, the title and the pager on the second. */
+.apr-head.has-brand { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand acts" "title nav"; row-gap: 0; padding-top: var(--space-2); }
+.apr-head.has-brand .apr-brand { grid-area: brand; min-width: 0; }
+.apr-head.has-brand .apr-title { grid-area: title; }
+.apr-head.has-brand .apr-nav { grid-area: nav; justify-self: end; }
+.apr-head.has-brand .apr-nav-ph { display: none; }
+.apr-head.has-brand .apr-acts { grid-area: acts; }
 .apr-head.is-compact .apr-pos { min-width: 3.5rem; font-size: var(--text-caption); }
 .apr-ico { min-width: 44px; padding: 0 !important; }
 .apr-ico-plain { font-size: var(--text-lead); line-height: 1; padding: 0 !important; }

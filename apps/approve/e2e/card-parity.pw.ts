@@ -184,3 +184,88 @@ for (const width of [320, 375, 390]) {
     });
   }
 }
+
+// The give footer, one layout on both devices: the give button alone on the first row, "Ask for changes" | "Reject" side by side below,
+// no Cancel on the phone (the head's close does that), and the commitment as one compact line above.
+for (const width of [320, 375, 390]) {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const id of ['crm', 'email-test']) {
+      const mode = CASES.find((c) => c.id === id)!.mode;
+      for (const card of ['gateway', 'phone'] as const) {
+        test(`${id} ${card} at ${width}px ${theme}: compact commitment line, give on top, two equal buttons below`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 844 });
+          await page.goto(`/fixture/index.html?case=${id}&card=${card}`);
+          await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+          await page.waitForSelector('[data-testid=mandate-facts]');
+          const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+          const band = await box('[data-testid=commitment-band]');
+          const give = await box(card === 'phone' ? '[data-testid=btn-give]' : '[data-testid=btn-approve]');
+          const ask = await box('[data-testid=btn-change-needed]');
+          const rej = await box('[data-testid=btn-reject]');
+          expect(band.height, 'the commitment line is at most 44 px high').toBeLessThanOrEqual(44);
+          // one line: the title is a single row and says the mode (and no sentence under it)
+          const lines = await page.locator('[data-testid=commitment-band] .mode-t').evaluate((e) => Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight)));
+          expect(lines).toBe(1);
+          expect(await page.locator('[data-testid=commitment-band]').textContent()).toContain(mode === 'automatic' ? 'Automatic' : 'Review Each Action');
+          expect(await page.locator('[data-testid=commitment-band] .mode-x').count()).toBe(0);
+          // layout: give above, then Ask | Reject on one row, equal widths, all aligned to the same edges as the band
+          expect(ask.y).toBeGreaterThan(give.y + give.height - 1);
+          expect(Math.abs(ask.y - rej.y)).toBeLessThan(1);
+          expect(Math.abs(ask.width - rej.width)).toBeLessThan(1.5);
+          expect(ask.x).toBeLessThan(rej.x);
+          expect(Math.abs(give.x - ask.x)).toBeLessThan(1);
+          expect(Math.abs(give.x + give.width - (rej.x + rej.width))).toBeLessThan(1);
+          expect(Math.abs(band.x - give.x)).toBeLessThan(1);
+          expect(Math.abs(band.x + band.width - (give.x + give.width))).toBeLessThan(1);
+          // band + give + the row together stay small
+          expect(rej.y + rej.height - band.y, 'band, give button and row together').toBeLessThanOrEqual(170);
+          // the words
+          expect((await page.locator('[data-testid=btn-change-needed]').innerText()).trim()).toBe('Ask for changes');
+          expect((await page.locator('[data-testid=btn-reject]').textContent())?.trim()).toBe('Reject');
+          const names = (await page.locator('.av3-foot button').allTextContents()).map((t) => t.trim());
+          expect(names).not.toContain('Cancel');
+          expect(names.length).toBe(3);
+          await fits(page, 'the give footer', width);
+          if (SHOTS && width === 390) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `give-${id}-${card}-${theme}-390.png`), fullPage: true, clip: { x: 0, y: band.y - 160, width, height: rej.y + rej.height - band.y + 200 } }); }
+        });
+      }
+    }
+  }
+}
+
+// The phone's header: the brand row (mark, "Suveren", the black "Approvals" badge) on the first line, the page title on its own line below,
+// the theme switch / pager / menu / close at the right, and all of it inside the screen.
+for (const width of [320, 375, 390]) {
+  for (const theme of ['light', 'dark'] as const) {
+    for (const view of ['phone-top', 'phone-panel'] as const) {
+      test(`${view} at ${width}px ${theme}: brand row, title below, nothing crowded or off screen`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.goto(`/fixture/index.html?case=crm&card=${view}`);
+        await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+        await page.waitForSelector('.logo-group');
+        await expect(page.locator('.logo-group .logo')).toHaveText('Suveren');
+        await expect(page.locator('.logo-group .version-badge')).toHaveText('Approvals');
+        expect(await page.locator('.logo-group svg').count()).toBe(1);
+        const brand = (await page.locator('.logo-group').boundingBox())!;
+        const title = (await page.locator(view === 'phone-top' ? 'h1' : '.apr-title').boundingBox())!;
+        expect(title.y, 'the title is on its own line below the brand').toBeGreaterThanOrEqual(brand.y + brand.height - 1);
+        const badge = (await page.locator('.logo-group .version-badge').boundingBox())!;
+        const right = view === 'phone-top' ? (await page.locator('.theme-toggle').boundingBox())! : (await page.locator('[data-testid=approval-later]').boundingBox())!;
+        expect(right.x, 'the right-hand controls do not touch the brand').toBeGreaterThanOrEqual(badge.x + badge.width + 4);
+        expect(right.x + right.width).toBeLessThanOrEqual(width);
+        expect(Math.abs((right.y + right.height / 2) - (brand.y + brand.height / 2)), 'brand and right-hand controls share a line').toBeLessThan(14);
+        if (view === 'phone-panel') {
+          await expect(page.locator('[data-testid=approval-position]')).toHaveText('1 of 2');
+          const menu = (await page.locator('[data-testid=approval-head-menu]').boundingBox())!;
+          expect(menu.x).toBeGreaterThanOrEqual(badge.x + badge.width + 4);
+          const pos = (await page.locator('[data-testid=approval-position]').boundingBox())!;
+          const next = (await page.locator('[data-testid=approval-next]').boundingBox())!;
+          expect(pos.y).toBeGreaterThanOrEqual(brand.y + brand.height - 1);
+          expect(next.x + next.width).toBeLessThanOrEqual(width);
+        }
+        await fits(page, view, width);
+        if (SHOTS && width !== 375) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `head-${view}-${theme}-${width}.png`), clip: { x: 0, y: 0, width, height: 220 } }); }
+      });
+    }
+  }
+}

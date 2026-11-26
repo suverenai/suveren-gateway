@@ -6,7 +6,7 @@
 .ap-shell .ftabs { margin: var(--space-3) var(--space-4) 0; }
 
 /* The theme switch sits top right, inside the safe area. */
-.ap-top { display: flex; justify-content: flex-end; padding: calc(env(safe-area-inset-top) + var(--space-2)) calc(env(safe-area-inset-right) + var(--space-3)) 0 var(--space-3); }
+.ap-top { display: flex; justify-content: space-between; align-items: center; padding: calc(env(safe-area-inset-top) + var(--space-2)) calc(env(safe-area-inset-right) + var(--space-3)) 0 var(--space-3); }
 
 /* Scanning. On an iPhone the preview can stay black: the frame and the line under it carry the screen. */
 .ap-scan { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 22rem; margin: var(--space-4) auto; border: 2px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-sunken); overflow: hidden; }

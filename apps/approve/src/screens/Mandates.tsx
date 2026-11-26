@@ -178,9 +178,8 @@ export function GiveCard({ state, nowSeconds, onGive, onLater, onReject, onAskCh
           {!(item.op === 'change' && item.diff) && <CommitmentBand mode={item.payload.commitment_mode} />}
           <footer className="av3-foot">
             {error && <p className="msg-error av3-error" role="alert">{error}</p>}
-            <div className="av3-btns-stack">
+            <div className="av3-btns av3-btns-give">
               <button type="button" className="av3-btn av3-btn-primary" data-testid="btn-give" onClick={onGive}>{item.op === 'change' ? P.changeButton : P.giveButton}</button>
-              <button type="button" className="av3-btn" onClick={onLater}>{P.cancel}</button>
               {PHONE_CARD.offersAskForChanges && onAskChanges && <button type="button" className="av3-btn" data-testid="btn-change-needed" onClick={() => { setError(''); setPhase({ t: 'change' }); }}>{P.giveAskChanges}</button>}
               {PHONE_CARD.offersReject && onReject && <button type="button" className="av3-btn" data-testid="btn-reject" onClick={() => void run('reject')}>{P.giveReject}</button>}
             </div>

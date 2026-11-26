@@ -9,7 +9,7 @@
  *
  * Previous and Next carry the same weight (`apr-o`, both outline): only the card's decision button is primary (UI review, DEC-88).
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 /**
  * "Waiting for you", shortened to "Waiting" on a narrow screen (CSS hides " for you" below 430px) so the title is never cut
@@ -38,9 +38,11 @@ export interface ApprovalPanelHeadProps {
   onToggleAuto: () => void;
   /** A decision is being signed: nothing in the head moves the person away (the phone's touch; UI review). Default false. */
   locked?: boolean;
+  /** The phone's brand row (mark, name, app badge): the top line of the compact head, with the title on its own line below. */
+  brand?: ReactNode;
 }
 
-export function ApprovalPanelHead({ compact, position, total, prevId: prev, nextId: next, onMove, onLater, autoOpen, onToggleAuto, locked = false }: ApprovalPanelHeadProps) {
+export function ApprovalPanelHead({ compact, position, total, prevId: prev, nextId: next, onMove, onLater, autoOpen, onToggleAuto, locked = false, brand }: ApprovalPanelHeadProps) {
   const prevId = locked ? null : prev;
   const nextId = locked ? null : next;
   const [menu, setMenu] = useState(false);
@@ -50,7 +52,8 @@ export function ApprovalPanelHead({ compact, position, total, prevId: prev, next
 
   if (compact) {
     return (
-      <header className="apr-head is-compact">
+      <header className={`apr-head is-compact${brand ? ' has-brand' : ''}`}>
+        {brand && <div className="apr-brand">{brand}</div>}
         <h2 className="apr-title" tabIndex={-1} data-apr-focus><Title /></h2>
         {many ? (
           <nav className="apr-nav" aria-label="Move between approvals">

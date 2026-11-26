@@ -13,6 +13,8 @@ import { ApprovalCard } from '../../../packages/approval-card/src/components/App
 import type { Proposal, PreviewResponse, RequestContextResponse } from '../../../packages/approval-card/src/types';
 import { MemoryRouter } from 'react-router-dom';
 import { GiveCard, OwnMandates } from '../src/screens/Mandates';
+import { RequestPanel } from '../src/screens/RequestPanel';
+import { PhoneTop } from '../src/screens/PhoneTop';
 import { AuthCard } from '../../ui/src/pages/AuthorizationsPage';
 import type { GiveItem } from '../src/lib/mandate-give';
 import { CASES, type ParityCase } from './cases';
@@ -21,7 +23,7 @@ declare const __PROFILES__: Record<string, AgentProfile>;
 
 const params = new URLSearchParams(location.search);
 const c: ParityCase = CASES.find((x) => x.id === params.get('case')) ?? CASES[0];
-const card = (['phone', 'list', 'phone-list'] as const).find((x) => x === params.get('card')) ?? 'gateway';
+const card = (['phone', 'list', 'phone-list', 'phone-panel', 'phone-top'] as const).find((x) => x === params.get('card')) ?? 'gateway';
 const profile = __PROFILES__[`${c.folder}@${c.version}`];
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -72,7 +74,7 @@ const noop = () => undefined;
 const wrap = { maxWidth: params.get('max') ? Number(params.get('max')) : 640, margin: '0 auto' } as const;
 
 async function boot() {
-  if (card === 'phone' || card === 'phone-list') await import('../src/approve.css');
+  if (card === 'phone' || card === 'phone-list' || card === 'phone-panel' || card === 'phone-top') await import('../src/approve.css');
   const listItem = {
     authorization_id: 'auth-list-1', profile_id: profile.id, path: 'x', title: c.title, sp_status: 'active', frame: { profile: profile.id, ...c.limits },
     required_domains: ['owner'], attested_domains: ['owner'], missing_domains: [], deferred_commitment_domains: c.mode === 'review' ? ['owner'] : [],
@@ -93,6 +95,10 @@ async function boot() {
           </MemoryRouter>
         ) : card === 'phone-list' ? (
           <OwnMandates items={[{ authorizationId: 'a', mandateId: 'm', version: 1, title: c.title, expiresAt: NOW + 30 * 86400, mode: c.mode, fields: {}, givenOn: null, givenAt: null }]} nowSeconds={NOW} onEnd={noop2} />
+        ) : card === 'phone-top' ? (
+          <div className="ap-shell"><PhoneTop /><h1 style={{ padding: '0 var(--space-3)' }}>Your mandates</h1></div>
+        ) : card === 'phone-panel' ? (
+          <RequestPanel position={{ index: 1 }} total={2} prevId={null} nextId="x" onMove={noop} onLater={noop} autoOpen onToggleAuto={noop} shown={null} other={{ key: 'give:parity:1', node: <GiveCard state={{ step: 'review', item }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={async () => ({})} onAskChanges={async () => ({})} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" /> }} />
         ) : card === 'phone'
           ? <GiveCard state={{ step: 'review', item }} nowSeconds={NOW} onGive={noop} onLater={noop} onReject={async () => ({})} onAskChanges={async () => ({})} onCancelTouch={noop} onCheckAgain={noop} onDone={noop} dismissLabel="Next" />
           : <ApprovalCard proposal={proposal} currentUserId="fixture-owner" decide={async () => ({})} />}

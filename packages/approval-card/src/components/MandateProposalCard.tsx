@@ -33,7 +33,7 @@ export function ModeBadge({ mode }: { mode: string | null | undefined }) {
   return <span className={`mode-pill mode-${tone}`} data-testid="mode-badge" data-mode={mode?.trim()}>{tone === 'automatic' ? BOLT : SHIELD}{v.title}</span>;
 }
 
-/** The commitment in a full-width band directly above the give button: the mode and the sentence that says what it means. */
+/** The commitment as one compact line directly above the give button: icon, then the mode. What the mode means stays in the Commitment row. */
 export function CommitmentBand({ mode }: { mode: string | null | undefined }) {
   const v = modeView(mode);
   if (!v) return null;
@@ -41,7 +41,7 @@ export function CommitmentBand({ mode }: { mode: string | null | undefined }) {
   return (
     <div className={`mode-band mode-${tone}`} data-testid="commitment-band" data-mode={mode?.trim()}>
       {tone === 'automatic' ? BOLT : SHIELD}
-      <div><div className="mode-t"><span className="mode-l">{v.label} · </span>{v.title}</div>{v.text && <div className="mode-x">{v.text}</div>}</div>
+      <div className="mode-t"><span className="mode-l">{v.label} · </span>{v.title}</div>
     </div>
   );
 }

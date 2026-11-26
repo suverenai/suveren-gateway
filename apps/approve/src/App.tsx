@@ -20,7 +20,7 @@ import { DecideError, type DecisionExtras } from './lib/decide';
 import { noteReaders, sealChangeNote } from './lib/change-note';
 import type { DecisionResult } from '@suveren/approval-card/lib/approval-flow';
 import type { DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
-import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
+import { PhoneTop } from './screens/PhoneTop';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
 import { P, errorText, blockedText } from './texts';
 import { NeedsScreen, WelcomeScreen } from './screens/Start';
@@ -75,7 +75,7 @@ type View =
 export default function App() {
   return (
     <>
-      <div className="ap-top"><ThemeToggle /></div>
+      <PhoneTop />
       <Screens />
     </>
   );
