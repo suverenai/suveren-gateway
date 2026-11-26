@@ -25,7 +25,7 @@ import type { AgentProfile, ProfileBoundsField } from '@hap/core';
 import type { ExecutionReceipt, IntegrationManifest } from '../types';
 import { profileDisplayName } from './profile-display';
 import { humanizeKey } from './approval-view';
-import { formatUnit } from './bound-format';
+import { formatUnit, formatLimitValue } from './bound-format';
 import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
 
 /** `gmail__send_message` → `{ integrationId: 'gmail', toolName: 'send_message' }`. */
@@ -272,7 +272,7 @@ export function limitChecks(
 
     const unit = formatUnit(def.unit);
     const label = def.displayName ?? humanizeKey(of);
-    const fmt = (n: number) => (unit ? `${n.toLocaleString()} ${unit}` : n.toLocaleString());
+    const fmt = (n: number) => (def.unit?.startsWith('currency:') ? formatLimitValue(n, def.unit) : unit ? `${n.toLocaleString()} ${unit}` : n.toLocaleString());
     checks.push({ key, label, ok: value <= limit, valueText: fmt(value), limitText: fmt(limit) });
   }
   return checks;

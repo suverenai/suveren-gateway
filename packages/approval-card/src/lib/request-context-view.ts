@@ -10,7 +10,7 @@
  * (<reason>)", "Written by the AI via Suveren, <time> — not checked", etc.)
  * — an e2e test asserts substrings of these, not a rendered layout.
  */
-import type { RequestResult, HistoryResult, HistoryItem, ConnectorHistoryMatch } from '../types';
+import type { RequestResult, HistoryResult, HistoryItem, ConnectorHistoryMatch, RequestContextResponse } from '../types';
 
 const BODY_PREVIEW_LINES = 6;
 
@@ -183,4 +183,20 @@ export function historyBlockView(result: HistoryResult): HistoryBlockView {
     return { state: 'empty', label: HISTORY_LABEL, note: 'Nothing in the last few days.', matchNotes, items: [], unreachableNote };
   }
   return { state: 'ok', label: HISTORY_LABEL, note: '', matchNotes, items, unreachableNote };
+}
+
+/**
+ * Is this the shape the card's Request and History rows draw? A host that gets the data from somewhere other than its own read (the phone:
+ * sealed into the give by the computer) checks it first, so a malformed one is "not sent", never a card that cannot be drawn.
+ */
+export function isRequestContext(v: unknown): v is RequestContextResponse {
+  const o = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
+  if (!o(v) || !o(v.request) || !o(v.history)) return false;
+  const r = v.request;
+  if (r.status === 'ok') { if (typeof r.connector !== 'string' || typeof r.kind !== 'string' || !Array.isArray(r.chain)) return false; }
+  else if (r.status !== 'none' && r.status !== 'not_found' && !(r.status === 'unreadable' && typeof r.reason === 'string')) return false;
+  const h = v.history;
+  if (h.status === 'ok') return Array.isArray(h.matches) && h.matches.every((m) => o(m) && Array.isArray(m.items)) && Array.isArray(h.unreachableConnectorIds);
+  if (h.status === 'unreachable') return Array.isArray(h.connectorIds);
+  return h.status === 'no_customer_link' || h.status === 'no_match';
 }

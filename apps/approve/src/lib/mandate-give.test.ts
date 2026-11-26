@@ -100,6 +100,21 @@ describe('reading a give on the phone', () => {
     expect((await onlyItem(w)).proposalId).toBeUndefined();
   });
 
+  it('what the computer adds to show (workspace, Request and History) is shown, never signed; a malformed one is ignored', async () => {
+    const w = await world();
+    const ctx = { request: { status: 'none' }, history: { status: 'no_customer_link' } };
+    await w.prepare((c) => { c.give.shown = { workspace: 'Muster GmbH', request_context: ctx }; });
+    const item = await onlyItem(w);
+    expect(item.workspace).toBe('Muster GmbH');
+    expect(item.requestContext).toEqual(ctx);
+    await w.prepare((c) => { c.give.shown = { workspace: 42, request_context: { request: { status: 'none' }, history: { status: 'ok' } } }; });
+    const bad = await onlyItem(w);
+    expect(bad.workspace).toBeUndefined();
+    expect(bad.requestContext).toBeUndefined();
+    await w.prepare();
+    expect((await onlyItem(w)).workspace).toBeUndefined();
+  });
+
   it('the members it will sign are rebuilt here from the mandate (the gateway\'s rule)', async () => {
     const w = await world();
     const { payload } = await w.prepare();

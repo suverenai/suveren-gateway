@@ -19,7 +19,7 @@
  * code alone, then to the Authority Server's own message shown whole.
  */
 import type { AgentProfile } from '@hap/core';
-import { formatUnit } from './bound-format';
+import { formatUnit, formatLimitValue } from './bound-format';
 
 type Window = 'daily' | 'weekly' | 'monthly';
 
@@ -96,6 +96,7 @@ export function cumulativeBounds(profile: AgentProfile | null | undefined): Cumu
 }
 
 function fmtAmount(n: number, unit?: string): string {
+  if (unit?.startsWith('currency:')) return formatLimitValue(n, unit);
   const u = formatUnit(unit);
   const s = n.toLocaleString('en-US');
   return u ? `${s} ${u}` : s;

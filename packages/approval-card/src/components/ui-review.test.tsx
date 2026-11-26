@@ -103,13 +103,13 @@ describe('the summary line under a mandate\'s title', () => {
   it('every shown limit and scope value with the profile\'s own label, then how long; schema-driven (UI review: bare values could not be read)', () => {
     const scopeSchema = { fields: { region: { displayName: 'Region' } } };
     expect(giveSummaryLine({ limits: { offer_value: 2000, per_day: 10 }, scope: { region: ['Austria', 'Germany'] }, durationSeconds: 14 * 86400, boundsSchema: schema, scopeSchema }))
-      .toBe('Value of one offer: 2000 EUR · Offers per day: 10 · Region: Austria, Germany · 14 days');
+      .toBe('Value of one offer: €2,000 · Offers per day: 10 · Region: Austria, Germany · 14 days');
   });
   it('a field the schema does not label shows its key, never a bare value', () => {
     expect(giveSummaryLine({ limits: { write_daily_max: 50 }, scope: { region: 'AT' } })).toBe('write_daily_max: 50 · region: AT');
   });
   it('a hidden limit, profile and path stay out; nothing at all gives no line', () => {
-    expect(giveSummaryLine({ limits: { offer_value: 2000, per_day: 10, profile: 'x' }, scope: { path: '/x' }, boundsSchema: schema, hidden: new Set(['per_day']) })).toBe('Value of one offer: 2000 EUR');
+    expect(giveSummaryLine({ limits: { offer_value: 2000, per_day: 10, profile: 'x' }, scope: { path: '/x' }, boundsSchema: schema, hidden: new Set(['per_day']) })).toBe('Value of one offer: €2,000');
     expect(giveSummaryLine({})).toBe('');
   });
 });

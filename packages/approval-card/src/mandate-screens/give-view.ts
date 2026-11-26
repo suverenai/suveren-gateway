@@ -4,18 +4,15 @@
  * the phone app. No React, no network.
  */
 import { S13 } from './texts';
-import { formatUnit } from '../lib/bound-format';
+import { formatLimitValue } from '../lib/bound-format';
+import { listItems, listText } from '../lib/mandate-facts';
 
 export interface FieldLike { displayName?: string; unit?: string }
 export interface SchemaLike { fields?: Record<string, FieldLike> }
 
-/** "up to 500 EUR" style value for one limit, with the profile's unit. */
+/** One limit's value with the profile's unit: "€2,000", "20%", "30 days", a count plain (lib/bound-format.ts, the one definition). */
 export function limitValueText(def: FieldLike | undefined, v: string | number): string {
-  const u = formatUnit(def?.unit);
-  if (!u) return String(v);
-  if (def?.unit === 'percent') return `${v}${u}`;
-  if (def?.unit?.startsWith('currency:')) return `${v} ${u.replace(/^\s+/, '')}`;
-  return `${v} ${u}`;
+  return formatLimitValue(v, def?.unit);
 }
 
 /** One row per limit: the profile's label (the key only when the profile has none) and the value with its unit. */
@@ -43,6 +40,15 @@ export function durationText(seconds: number): string {
 
 export function endDateText(nowMs: number, seconds: number): string {
   return new Date(nowMs + seconds * 1000).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * "30 days (until 26 Dec 2026, 14:20)": how long the mandate is granted for, and the date that gives if it is signed now. The duration is
+ * the granted one (what the mandate carries), never the time left until an end date, so 30 days stays "30 days" however long the card waited.
+ */
+export function validText(seconds: number | null | undefined, nowMs: number): string {
+  if (!seconds || seconds <= 0) return '';
+  return S13.giveUntil(durationText(seconds), endDateText(nowMs, seconds));
 }
 
 /** `approverNames`: the names of the approvers without a device chain (approver_has_no_chain), when the page knows them. */
@@ -91,7 +97,8 @@ export function giveSummaryLine(input: {
   const parts: string[] = limitRows(input.limits ?? {}, input.boundsSchema, input.hidden).map(r => `${r.label}: ${r.value}`);
   for (const [k, v] of Object.entries(input.scope ?? {})) {
     if (k === 'profile' || k === 'path') continue;
-    const text = Array.isArray(v) ? v.filter(x => typeof x === 'string' || typeof x === 'number').join(', ') : (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
+    // A list reads with a space after each comma ("customer, lead"), so it wraps at the commas (lib/mandate-facts.ts).
+    const text = Array.isArray(v) || typeof v === 'string' || typeof v === 'number' ? listText(listItems(v)) : '';
     if (text) parts.push(`${scopeLabel(k, input.scopeSchema)}: ${text}`);
   }
   if (input.durationSeconds && input.durationSeconds > 0) parts.push(durationText(input.durationSeconds));

@@ -20,7 +20,7 @@ import { DecideError } from './lib/decide';
 import type { DecideArgs } from '@suveren/approval-card/components/ApprovalCard';
 import { ThemeToggle } from '@suveren/approval-card/components/ThemeToggle';
 import { Tabs } from '@suveren/approval-card/components/Tabs';
-import { P, errorText } from './texts';
+import { P, errorText, blockedText } from './texts';
 import { NeedsScreen, WelcomeScreen } from './screens/Start';
 import { RegisterScreen } from './screens/Register';
 import { JoinScreen } from './screens/Join';
@@ -482,6 +482,26 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
     })();
   }, [giving, rt, load]);
 
+  // Reject the AI's proposal a give carries out: the same signed decision the gateway's Reject makes. Closed only once the Authority Server
+  // accepted it (never optimistic); a refusal is told in the panel's own error line and the give stays.
+  const rejectGive = useCallback(async (item: GiveItem) => {
+    if (!item.proposalId) return;
+    setBusy(true);
+    try {
+      const r = await rt.reader.get(item.proposalId, true);
+      if (!r.ok) { if (r.code === 'session_ended') onEnded(); else setError(P.listFailed); return; }
+      const check = await checkCard(rt.checks, r.data);
+      if (!check.ok) { if (check.reason === 'session_ended') onEnded(); else setError(blockedText(check.reason)); return; }
+      await rt.decider.decide(r.data, check.ready, 'reject');
+      giver.close();
+      finishSettling(item.key);
+      void loadMandates();
+      void load(false);
+    } catch (e) {
+      setError(e instanceof DecideError ? e.message : errorText('generic'));
+    } finally { setBusy(false); }
+  }, [rt, giver, onEnded, load, loadMandates]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // The give's own result decides like a decision does (the shared panel rules): Signed times away; not received stays.
   useEffect(() => {
     if (giving.step === 'signed' && settlingRef.current?.id !== giving.item.key) {
@@ -578,7 +598,7 @@ function Requests({ rt, onEnded, openRequest, onOpened }: { rt: Rt; onEnded: () 
           node: (
             <GiveCard
               state={giving} nowSeconds={rt.now()}
-              onGive={() => void giver.give()} onLater={later} onCancelTouch={() => giver.cancelTouch()}
+              onGive={() => void giver.give()} onLater={later} onReject={giving.item?.proposalId ? () => void rejectGive(giving.item!) : undefined} onCancelTouch={() => giver.cancelTouch()}
               onCheckAgain={() => void giver.checkAgain()}
               onDone={() => { const k = shownId; giver.close(); finishSettling(k); void loadMandates(); }}
               dismissLabel={resultDismissLabel(afterDecision(settling ? settling.before : ids, shownId).next !== null)}

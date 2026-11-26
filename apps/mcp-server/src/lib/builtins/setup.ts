@@ -243,7 +243,14 @@ function formatBoundValue(value: unknown, unit: string | undefined): string {
   const u = formatUnit(unit);
   if (!u) return String(value);
   if (unit === 'percent') return `${value}${u}`;
-  if (unit?.startsWith('currency:')) return `${u} ${value}`;
+  if (unit?.startsWith('currency:')) {
+    // "€2,000", as the approval card writes it (approval-card lib/bound-format.ts formatLimitValue; duplicated, like formatUnit).
+    const n = typeof value === 'number' ? value : (value.trim() !== '' ? Number(value) : NaN);
+    if (!Number.isFinite(n)) return `${value} ${u}`;
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: u.toUpperCase(), currencyDisplay: 'narrowSymbol', minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 }).format(n);
+    } catch { return `${n.toLocaleString('en-US')} ${u}`; }
+  }
   return `${value} ${u}`;
 }
 

@@ -5,7 +5,7 @@
  * labelled word diff.
  */
 import type { ChangeRow, ChangeTag, MandateDiff } from '@hap/core/mandate-change';
-import { formatUnit } from './bound-format';
+import { formatLimitValue } from './bound-format';
 import { modeView } from './mandate-proposal';
 import { ATTACHMENT_SOURCE_HEADING, isAttachmentSourceField, type SourceManifestLike } from './attachment-sources';
 import { scopeValueName, type NameSources } from './display-names';
@@ -41,11 +41,7 @@ export function tagClass(tag: ChangeTag): 'mc-more' | 'mc-less' {
 
 export function rowValue(row: Pick<ChangeRow, 'unit'>, value: string | number | null): string {
   if (value === null) return '—';
-  const u = formatUnit(row.unit);
-  if (!u) return String(value);
-  if (row.unit === 'percent') return `${value}${u}`;
-  if (row.unit?.startsWith('currency:')) return `${u} ${value}`;
-  return `${value} ${u}`;
+  return formatLimitValue(value, row.unit);
 }
 
 export function dateText(seconds: number): string {

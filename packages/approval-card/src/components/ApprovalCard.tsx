@@ -21,6 +21,7 @@ import type { IntegrationManifest, Proposal, ShownSnapshotPayload } from '../typ
 import { approvalHost, hostData } from '../host';
 import type { ToolDisplay } from '../lib/approval-view';
 import { ApprovalBody } from './ApprovalBody';
+import { CommitmentBand } from './MandateProposalCard';
 import { validateChangeNote, CHANGE_NOTE_MAX } from '../lib/reject-outcome';
 import { decisionButtonsVisible } from '../lib/use-proposal-content';
 import { isAutomatedBrowser, AUTOMATION_REFUSAL } from '../lib/automation';
@@ -321,6 +322,9 @@ export function ApprovalCard({
       {hostGive?.active && <div data-testid="card-give">{hostGive.footer}</div>}
 
       {showButtons && !hostGive?.active && phase.t !== 'change' && (
+        <>
+        {/* The commitment, right above the give button (D3): what the person commits to is the last thing read before the touch. */}
+        {isMandate && !isChange && typeof mandateArgs?.mode === 'string' && <CommitmentBand mode={mandateArgs.mode} />}
         <footer className="av3-foot">
           {error && <p className="msg-error av3-error" role="alert">{error}</p>}
           {mandateEnded && (
@@ -355,6 +359,7 @@ export function ApprovalCard({
             </button>
           </div>
         </footer>
+        </>
       )}
       </CardGated>
       </LoadGate>

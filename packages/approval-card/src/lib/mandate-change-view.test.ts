@@ -36,7 +36,7 @@ describe('the card\'s fixed sentences', () => {
     expect(tagClass('Less')).toBe('mc-less');
   });
   it('values carry their unit', () => {
-    expect(rowValue({ unit: 'currency:EUR' }, 1000)).toBe('EUR 1000');
+    expect(rowValue({ unit: 'currency:EUR' }, 1000)).toBe('€1,000');
     expect(rowValue({ unit: 'percent' }, 10)).toBe('10%');
     expect(rowValue({ unit: 'count' }, 5)).toBe('5');
     expect(rowValue({}, null)).toBe('—');

@@ -30,6 +30,8 @@ export interface OwnMandate {
   version: number;
   title: string;
   expiresAt: number;
+  /** The commitment of the signed mandate (`review` / `automatic` / `review_above_cap`): the badge in the list. */
+  mode: string | null;
   /** The members of the newest verified grant: what the revoke names. */
   fields: Record<string, unknown>;
   /** The device of this chain that gave that grant, when it is not this phone (the notice "given on …", mockup F2); else null. */
@@ -122,7 +124,7 @@ export async function readOwnMandates(d: EndDeps): Promise<{ ok: true; items: Ow
       }
     }
     items.push({
-      authorizationId, mandateId: full.mandate_id, version: verdict.version, title, expiresAt: full.expires_at, fields,
+      authorizationId, mandateId: full.mandate_id, version: verdict.version, title, expiresAt: full.expires_at, mode: typeof full.commitment_mode === 'string' ? full.commitment_mode : null, fields,
       givenOn: by ? by.label : null, givenAt: by && typeof g0.granted_at === 'number' ? g0.granted_at : null,
       notReceivedBy, givenHereAt,
     });

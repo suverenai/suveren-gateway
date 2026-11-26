@@ -4375,8 +4375,9 @@ video.document-preview-media { width: 100%; }
 .av3-sealed dl { margin: 0; }
 /* One kv grid for every renderer inside the tile (labels never take the width of a long description). */
 .av3-sealed dl { grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr) !important; }
-.av3-sealed dt { white-space: normal !important; overflow-wrap: anywhere; }
-.av3-sealed dd { min-width: 0; overflow-wrap: anywhere; }
+.av3-sealed dt { white-space: normal !important; overflow-wrap: break-word; }
+/* Values wrap at their spaces and commas; a word with none (an address) breaks only when it must, never one letter to a line. */
+.av3-sealed dd { min-width: 0; overflow-wrap: break-word; }
 .av3-sealed dd { font-weight: 600; }
 .av3-sealed dt { color: var(--text-muted) !important; }
 .av3-sealed .src-tag-sealed { display: none; }
@@ -4392,6 +4393,25 @@ video.document-preview-media { width: 100%; }
 .av3-intent { margin-bottom: var(--space-4); }
 .av3-intent-l { font-size: var(--text-caption); color: var(--prov-ai); margin-bottom: 0.2rem; }
 .av3-intent p { margin: 0; color: var(--prov-ai); font-size: var(--text-lead); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+/* The mandate card (components/MandateProposalCard.tsx): Valid, Limits and Scope in the tile; nested rows read label then value. */
+.av3-sealed dl.av3-facts { display: grid; gap: 0.3rem 0.75rem; margin: 0.4rem 0; }
+.av3-sealed dl.av3-facts-sub { display: grid; gap: 0.15rem 0.6rem; margin: 0; }
+.av3-sealed dl.av3-facts > dd, .av3-sealed dl.av3-facts-sub > dd { margin: 0; }
+.av3-sealed dl.av3-facts-sub > dt { font-weight: 400; }
+/* The commitment, in the type line (badge) and above the buttons (band). Review reads neutral; Automatic takes the AI's amber and a heavier frame. */
+.mi { width: 1.25em; height: 1.25em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mode-pill { display: inline-flex; align-items: center; gap: 0.3rem; height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-xs); font-size: var(--text-caption); font-weight: 700; border: 2px solid var(--border-strong); color: var(--text-primary); }
+.mode-pill::before { content: none !important; }
+.mode-pill .mi { width: 14px; height: 14px; }
+.mode-pill.mode-automatic { border-color: var(--prov-ai); background: var(--prov-ai-subtle); color: var(--prov-ai); }
+.ob-type .mode-pill { height: 20px; }
+.mode-band { display: flex; gap: var(--space-3); align-items: flex-start; border: 2px solid var(--border-strong); border-radius: var(--radius-md); padding: var(--space-3); color: var(--text-primary); margin: 0 var(--space-5) var(--space-2); background: var(--bg-sunken); }
+.mode-band .mi { width: 28px; height: 28px; }
+.mode-band.mode-automatic { border-color: var(--prov-ai); border-width: 3px; background: var(--prov-ai-subtle); color: var(--prov-ai); }
+.mode-l { font-size: var(--text-caption); font-weight: 500; opacity: 0.85; }
+.mode-t { font-size: var(--text-lead); font-weight: 700; line-height: 1.25; }
+.mode-x { font-size: var(--text-body-sm); font-weight: 500; margin-top: 0.15rem; }
+@media (max-width: 520px) { .mode-band { margin: 0 var(--space-4) var(--space-2); } }
 /* Mandate proposal rows the card adds to the tile (Commitment, Applies to) — same grid as the preview's rows. */
 .av3-sealed dl.av3-mandate-rows { display: grid; column-gap: var(--space-3); row-gap: 0.35rem; margin: 0 0 0.35rem; }
 .av3-sealed dl.av3-mandate-rows:last-child { margin: 0.35rem 0 0; }

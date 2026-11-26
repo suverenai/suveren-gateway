@@ -71,8 +71,8 @@ describe('profileFieldLines — limits and scope the way the mandate screen name
   it('display names and units from the profile, in its order', () => {
     expect(profileFieldLines({ discount_max: 10, value_max: 1000, read_access: 'unlimited', profile: 'x' }, PROFILE, 'limits')).toEqual([
       { key: 'read_access', label: 'Read access', value: 'unlimited', hint: undefined, unknown: false },
-      { key: 'value_max', label: 'Max value per quote or order', value: '1000 EUR', hint: 'Net total', unknown: false },
-      { key: 'discount_max', label: 'Max discount', value: '10 %', hint: undefined, unknown: false },
+      { key: 'value_max', label: 'Max value per quote or order', value: '€1,000', hint: 'Net total', unknown: false },
+      { key: 'discount_max', label: 'Max discount', value: '10%', hint: undefined, unknown: false },
     ]);
     expect(profileFieldLines({ currency: 'EUR' }, PROFILE, 'scope')).toEqual([
       { key: 'currency', label: 'Currency', value: 'EUR', hint: undefined, unknown: false },

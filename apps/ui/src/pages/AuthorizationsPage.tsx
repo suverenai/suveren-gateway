@@ -18,6 +18,9 @@ import { deviceClient } from '../lib/device-client';
 import { DomainBadge } from '../components/DomainBadge';
 import { ObTypeLine, ObFold, ObLock, useFoldAccordion } from '../components/ObjectCard';
 import { COMMITMENT_REVIEW, COMMITMENT_AUTOMATIC } from '@suveren/approval-card/lib/commitment-words';
+import { ModeBadge } from '@suveren/approval-card/components/MandateProposalCard';
+import { shortSummaryText, type FactSchema } from '@suveren/approval-card/lib/mandate-facts';
+import type { SourceManifestLike } from '@suveren/approval-card/lib/attachment-sources';
 import { useMandateReceipts, usedTodayNumbers, ticketsUnder } from '@suveren/approval-card/lib/mandate-card-usage';
 import { useCumulativeUsage, usageEntryFor } from '@suveren/approval-card/lib/cumulative-usage';
 import { cumulativeBound, sharedLimitLabel, limitWordsForProfile } from '@suveren/approval-card/lib/limit-words';
@@ -125,9 +128,11 @@ interface AuthCardProps {
   manifests?: IntegrationManifest[];
   /** Whether the gateway is in simulation (null while not known). */
   simulation?: boolean | null;
+  /** The scope of this mandate as this gateway holds it (the active-authorizations read); the closed card's summary names scope first. */
+  scope?: Record<string, string | number>;
 }
 
-function AuthCard({
+export function AuthCard({
   item,
   newerProfile,
   area,
@@ -157,6 +162,7 @@ function AuthCard({
   replacedSet,
   manifests = [],
   simulation = null,
+  scope,
 }: AuthCardProps) {
   const status = getAuthStatus(item, { revokedSet });
   const needsReapproval = status === 'active' && (needsReapprovalSet?.has(item.authorization_id) ?? false);
@@ -233,13 +239,16 @@ function AuthCard({
 
   const isHighlighted = highlightHash != null && item.authorization_id === highlightHash;
 
-  // UI spec §18.2 — the closed card's one quiet line: the commitment, then the
-  // main limits in the area's own words.
-  const commitmentTitle = item.deferred_commitment_domains.length > 0 ? COMMITMENT_REVIEW.title : COMMITMENT_AUTOMATIC.title;
-  const MAIN_LIMITS = 3;
-  const mainLimits = boundsEntries.slice(0, MAIN_LIMITS).map(([k, v]) => `${limitLabel(k)} ${limitValue(k, v)}`);
-  const moreLimits = boundsEntries.length - mainLimits.length;
-  const quietLine = [commitmentTitle, ...mainLimits, ...(moreLimits > 0 ? [`+${moreLimits} more`] : [])].join(' · ');
+  // The closed card's one quiet line: the facts that tell this mandate apart (scope first, then limits, by the profile's own schema: the
+  // one rule every surface uses, lib/mandate-facts.ts). The commitment is the badge in the type line, not a word in this line.
+  const commitmentMode = item.deferred_commitment_domains.length > 0 ? 'review' : 'automatic';
+  const quietLine = shortSummaryText({
+    limits: Object.fromEntries(boundsEntries),
+    scope: scope ?? gateEntry?.context ?? {},
+    boundsSchema: profile?.boundsSchema as FactSchema | undefined,
+    scopeSchema: profile?.scopeSchema as FactSchema | undefined,
+    manifests: manifests as SourceManifestLike[],
+  });
 
   const since = item.created_at
     ? `since ${new Date(item.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
@@ -265,6 +274,7 @@ function AuthCard({
       <button type="button" className="ob-head" aria-expanded={isExpanded} onClick={() => onExpand(item)}>
         <ObTypeLine
           tag="Mandate"
+          badge={<ModeBadge mode={commitmentMode} />}
           profileId={item.profile_id}
           parts={[
             area,
@@ -275,7 +285,7 @@ function AuthCard({
           ]}
         />
         <span className="ob-title">{item.title || profileShortName}</span>
-        {!isExpanded && <span className="ob-one">{quietLine}</span>}
+        {!isExpanded && quietLine && <span className="ob-one">{quietLine}</span>}
       </button>
 
       {upgradeHint}
@@ -323,7 +333,7 @@ function AuthCard({
               )}
             </div>
             <dl className="ob-kv ob-part">
-              <dt>Commitment</dt><dd>{commitmentTitle}</dd>
+              <dt>Commitment</dt><dd>{commitmentMode === 'review' ? COMMITMENT_REVIEW.title : COMMITMENT_AUTOMATIC.title}</dd>
               {(item.earliest_expiry || status === 'revoked') && (
                 <>
                   <dt>Valid</dt>
@@ -613,6 +623,7 @@ export function AuthorizationsPage() {
   // (the gateway's own cache, not AS-sourced), so this only applies to the
   // Mine tab — a team row's data comes straight from the Authority Server.
   const [needsReapprovalSet, setNeedsReapprovalSet] = useState<Set<string>>(new Set());
+  const [scopeById, setScopeById] = useState<Map<string, Record<string, string | number>>>(new Map());
   const [replacedSet, setReplacedSet] = useState<Set<string>>(new Set());
 
   const navigate = useNavigate();
@@ -674,7 +685,10 @@ export function AuthorizationsPage() {
   // "needs re-approval" on a mandate that is fine.
   const fetchNeedsReapproval = useCallback(() => {
     spClient.getEnrichedAuthorizations()
-      .then(entries => setNeedsReapprovalSet(new Set(entries.filter(e => e.needsReapproval).map(e => e.authorizationId))))
+      .then(entries => {
+        setNeedsReapprovalSet(new Set(entries.filter(e => e.needsReapproval).map(e => e.authorizationId)));
+        setScopeById(new Map(entries.map(e => [e.authorizationId, e.context ?? {}] as const)));
+      })
       .catch(() => {});
   }, []);
   useEffect(() => { fetchNeedsReapproval(); }, [fetchNeedsReapproval]);
@@ -1239,6 +1253,7 @@ export function AuthorizationsPage() {
                     <AuthCard
                       key={item.authorization_id}
                       item={item}
+                      scope={scopeById.get(item.authorization_id)}
                       newerProfile={newerProfileFor(item.profile_id)}
                       area={areaGroup.name}
                       ownerLabel={ownerLabel}

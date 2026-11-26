@@ -40,11 +40,11 @@ describe('refusalSentence (wording A)', () => {
   });
   it('says what would have been reached for a summed limit', () => {
     const r = refusalSentence({ code: 'CUMULATIVE_LIMIT_EXCEEDED', message: 'x', field: 'total_monthly_max', expected: 5000, actual: 5400 }, MONEY);
-    expect(r.text).toBe('Not done. The monthly limit would be exceeded: 5,400 EUR of 5,000 EUR this month.');
+    expect(r.text).toBe('Not done. The monthly limit would be exceeded: €5,400 of €5,000 this month.');
   });
   it('names a per-call limit from its display name and unit', () => {
     const r = refusalSentence({ code: 'BOUND_EXCEEDED', message: 'x', field: 'net_max', expected: 1000, actual: 1200 }, MONEY);
-    expect(r.text).toBe('Not done. Max net: 1,200 EUR is above the limit of 1,000 EUR.');
+    expect(r.text).toBe('Not done. Max net: €1,200 is above the limit of €1,000.');
     expect(r.basis).toBe('data');
   });
   it('falls back to the code alone when the server sent no numbers (missing data)', () => {
@@ -119,7 +119,7 @@ describe('sharedLimitLabel (wording B)', () => {
   });
   it('shows money with its unit', () => {
     const l = sharedLimitLabel({ profile: MONEY, key: 'total_monthly_max', team: true, used: 1200, usedIsTeamWide: true, limit: 5000 })!;
-    expect(l.text).toBe('Billed per month (team) (1,200 EUR of 5,000 EUR used)');
+    expect(l.text).toBe('Billed per month (team) (€1,200 of €5,000 used)');
   });
   it('two limits in one window each carry their own name', () => {
     expect(sharedLimitLabel({ profile: MONEY, key: 'bills_monthly_max', team: false })!.name).toBe('Bills per month');

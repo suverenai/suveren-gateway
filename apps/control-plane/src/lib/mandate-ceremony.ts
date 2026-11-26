@@ -577,7 +577,7 @@ type StoredContext = Omit<GrantedContext, 'issueInput'>;
  * the same plan and the same grant members as `createMandate` on this gateway, sealed to the person's devices. Nothing is requested from
  * the Authority Server until the phone's grant is here and matches (`pollPhoneGive`). The wait is kept in the vault across a restart.
  */
-export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, o: { proposalId?: string } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
+export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, o: { proposalId?: string; requestContext?: Record<string, unknown> } = {}): Promise<{ mandateId: string; mandateVersion: number; expiresAt: number }> {
   if (!deps.grants?.active()) refuse('This gateway has no device chain, so there is no phone to give the mandate on.');
   // One give per AI proposal: the one already waiting (offered when the proposal arrived, or sent from the card) is the one the phone shows.
   if (o.proposalId) {
@@ -593,8 +593,10 @@ export async function giveOnPhone(req: MandateRequest, deps: CeremonyDeps, o: { 
   try {
     give = await deps.grants!.sendToPhone(ctx.issueInput, {
       title: plan.title,
+      workspace: plan.groupName,
       ...(req.replaces ? { previous: await previousOf(req.replaces, deps) } : {}),
       ...(o.proposalId ? { proposalId: o.proposalId } : {}),
+      ...(o.requestContext ? { requestContext: o.requestContext } : {}),
     });
   } catch (err) { return grantRefused(err); }
   const { issueInput: _fn, ...stored } = ctx;

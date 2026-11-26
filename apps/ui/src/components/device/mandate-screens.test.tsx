@@ -350,7 +350,7 @@ describe('screen 1: give a mandate (review step, chain accounts)', () => {
   it('limits show profile labels and units', () => {
     const schema = { fields: { amount: { displayName: 'Value of one offer', unit: 'currency:EUR' }, per_day: { displayName: 'Offers per day', unit: 'count' } } };
     expect(limitRows({ profile: 'x', amount: 500, per_day: 10, other: 3 }, schema)).toEqual([
-      { key: 'amount', label: 'Value of one offer', value: '500 EUR' }, { key: 'per_day', label: 'Offers per day', value: '10' }, { key: 'other', label: 'other', value: '3' }]);
+      { key: 'amount', label: 'Value of one offer', value: '€500' }, { key: 'per_day', label: 'Offers per day', value: '10' }, { key: 'other', label: 'other', value: '3' }]);
     expect(limitValueText({ unit: 'percent' }, 5)).toBe('5%');
   });
   it('end date next to the duration', () => {

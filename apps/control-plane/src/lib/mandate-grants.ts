@@ -613,7 +613,7 @@ export class MandateGrants {
    * `previous`: for a change, the version it continues, in plaintext (limits, scope, intent, end, profile). The phone shows the crossed-out
    * diff from it and checks it first against the previous grant's hashes, so a wrong value here only gets the give refused there.
    */
-  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious; proposalId?: string }): Promise<PhoneGive> {
+  async sendToPhone(i: IssueInput, shown: { title: string; previous?: PhonePrevious; proposalId?: string; workspace?: string; requestContext?: Record<string, unknown> }): Promise<PhoneGive> {
     const dk = await deviceKeys();
     const s = await this.session();
     const plan = await this.planGrant(i, s, dk, false);
@@ -628,6 +628,9 @@ export class MandateGrants {
       // The AI proposal this give carries out: the phone shows the give in that request's place and closes the request once given.
       ...(shown.proposalId ? { proposal_id: shown.proposalId } : {}),
       ...(plan.op === 'change' && shown.previous ? { previous: { ...shown.previous, mandate_version: plan.version - 1 } } : {}),
+      // What the card shows beside the mandate: this computer's own facts (never part of what is signed). The workspace it applies to, and the
+      // Request and History this computer read for the AI's proposal (the phone cannot read them itself).
+      ...(shown.workspace || shown.requestContext ? { shown: { ...(shown.workspace ? { workspace: shown.workspace } : {}), ...(shown.requestContext ? { request_context: shown.requestContext } : {}) } } : {}),
     };
     const readers = dk.activeDevices(s.own).map(x => ({ did: x.key_id, publicKey: dk.b64uDecode(x.read_pub) }));
     const sealed = await encryptProposalContent({ v: 2, mandate_id: plan.mandateId, mandate_version: plan.version, scope: i.scope, intent: i.intent, give }, readers);

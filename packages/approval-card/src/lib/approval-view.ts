@@ -14,7 +14,7 @@
  * Purely presentational. What is approved is the proposal itself.
  */
 import type { AgentProfile } from '@hap/core';
-import { formatUnit } from './bound-format';
+import { formatLimitValue } from './bound-format';
 import { isAttachmentSourceField, formatAttachmentSources, type SourceManifestLike } from './attachment-sources';
 import type { IntegrationManifest } from '../types';
 
@@ -207,14 +207,13 @@ export function profileFieldLines(
     if (key === 'profile' || !(key in (value as object))) continue;
     const raw = (value as Record<string, unknown>)[key];
     const f = fields[key];
-    const unit = formatUnit(f?.unit);
     const shown = isAttachmentSourceField(f)
       ? (formatAttachmentSources(Array.isArray(raw) ? raw.join(',') : String(raw), manifests) || 'None: text only')
       : Array.isArray(raw) ? raw.join(', ') : String(raw);
     lines.push({
       key,
       label: f?.displayName ?? humanizeKey(key),
-      value: unit ? `${shown} ${unit}` : shown,
+      value: which === 'limits' ? formatLimitValue(shown, f?.unit) : shown,
       hint: f?.description,
       unknown: profile ? !f : undefined,
     });

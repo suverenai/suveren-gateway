@@ -34,7 +34,9 @@ import { useMandateUsage } from '../lib/mandate-usage';
 import { limitWordsForTool } from '../lib/limit-words';
 import { previewBoxView, sealedTileHeading } from '../lib/approval-preview-view';
 import { SystemBoxes } from './RenderedCreationView';
-import { giveSummaryLine, type SchemaLike } from '../mandate-screens/give-view';
+import { MandateProposalBody, MandateFold } from './MandateProposalCard';
+import { cardFacts } from '../lib/mandate-card-model';
+import type { FactSchema } from '../lib/mandate-facts';
 import { isTestSetupAction, profileIdentity, shortProfileId } from '../lib/profile-identity';
 import { AttachmentsSealedBox } from './AttachmentsSealedBox';
 import { AiTextBox } from './AiTextBox';
@@ -371,15 +373,18 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
   const destructive = ['delete', 'refund', 'cancel', 'revoke'].some((w) => lowerTool.includes(w));
   const imagePreview = typeof content.toolArgs?._imagePreview === 'string' ? (content.toolArgs._imagePreview as string) : null;
   const sealedHeading = sealedTileHeading(previewView, isMandate);
-  // UI review (DEC-88): the numbers the person signs, in one line under the title, before the detail blocks.
-  const mandateSummary = isMandate && readable && mandateArgs ? giveSummaryLine({
-    limits: plainRecord(mandateArgs.limits) as Record<string, string | number>,
+  // The facts the person signs, as every device shows them (lib/mandate-card-model.ts): the same rows, summary line and "Valid" text.
+  const grantedSeconds = typeof mandateArgs?.duration_hours === 'number' ? Math.round(mandateArgs.duration_hours * 3600) : (targetProfile?.ttl?.default ?? null);
+  const facts = isMandate && readable && mandateArgs ? cardFacts({
+    limits: plainRecord(mandateArgs.limits),
     scope: plainRecord(mandateArgs.scope),
-    durationSeconds: typeof mandateArgs.duration_hours === 'number' ? Math.round(mandateArgs.duration_hours * 3600) : null,
-    boundsSchema: targetProfile?.boundsSchema as SchemaLike | undefined,
-    scopeSchema: targetProfile?.scopeSchema as SchemaLike | undefined,
+    durationSeconds: grantedSeconds,
+    boundsSchema: targetProfile?.boundsSchema as FactSchema | undefined,
+    scopeSchema: targetProfile?.scopeSchema as FactSchema | undefined,
     hidden: hiddenTarget,
-  }) : '';
+    manifests: manifests as import('../lib/attachment-sources').SourceManifestLike[] | undefined,
+    nowMs: Date.now(),
+  }) : { limits: [], scope: [], valid: '', summary: '' };
   const technicalOne = isMandate ? mandateTechnicalLine(parts) : `${headline} · ${shortProfileId(proposal.profileId)}${proposal.profileId.includes('@') ? `@${proposal.profileId.split('@')[1]}` : ''}`;
 
   if (proposal.tool === CHANGE_MANDATE_TOOL) {
@@ -405,17 +410,61 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
 
   return (
     <>
+      {!isMandate && (
+        <>
       {/* UI spec §17.2 — the type line: a small, quiet line above the title. */}
       <div className="av3-type" style={{ order: 0 }} data-testid="approval-type">
-        {isMandate ? <span className="av3-mtag">Mandate</span> : <b>Action</b>}
+        <b>Action</b>
         <span className="av3-area"><AreaIcon icon={areaIcon(typeProfile)} />{typeArea}</span>
         <span>{ageLabel(proposal.createdAt * 1000, Date.now())}</span>
         {testSetup && <span className="sim-mark">Test setup</span>}
       </div>
       {/* §4.2.1 — one sentence from the manifest's summary template and the
           sealed values (never AI text). */}
-      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{isMandate ? <>{typeArea} · {mandateTitleParts(typeArea, mandateArgs).name ?? 'new mandate'}</> : approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
-      {mandateSummary && <p className="sum-line" style={{ order: 1 }} data-testid="mandate-summary">{mandateSummary}</p>}
+      <h2 className="av3-title" style={{ order: 1 }} data-testid="approval-summary">{approvalSummary(proposal.tool, content.toolArgs, manifests, undefined, summaryPreviewFrom(previewData ?? undefined, content.toolArgs))}</h2>
+        </>
+      )}
+      {isMandate && (
+        <MandateProposalBody
+          model={{
+            area: typeArea,
+            areaIcon: <AreaIcon icon={areaIcon(typeProfile)} />,
+            age: ageLabel(proposal.createdAt * 1000, Date.now()),
+            testSetup,
+            mode: typeof mandateArgs?.mode === 'string' ? mandateArgs.mode : parts.mode ?? null,
+            name: mandateTitleParts(typeArea, mandateArgs).name,
+            summary: facts.summary,
+            intent: aiIntent,
+            valid: facts.valid,
+            limits: facts.limits,
+            scope: facts.scope,
+            workspace: parts.workspace,
+            technical: { one: technicalOne, proposal: parts.proposal, version: parts.profileVersion },
+          }}
+          slots={{
+            afterIntent: readable && openMandateScreen ? (
+              <div className="av3-edit">
+                <button type="button" className="av3-link" data-testid="edit-before-signing" onClick={handleEditBeforeSigning} disabled={editingBeforeSigning}>
+                  {editingBeforeSigning ? 'Opening…' : 'Edit before signing'}
+                </button>
+                {editError && <p className="msg-error">{editError}</p>}
+              </div>
+            ) : null,
+            foldsBefore: (
+              <MandateFold heading="Proposed through" one={`Setup${parts.checks[0] ? ` · ${parts.checks[0]}` : ''}`} order={10} testid="proposed-through">
+                <p>Proposed by the AI through your <strong>Setup</strong> mandate.</p>
+                {parts.checks.length > 0 && (
+                  <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
+                )}
+                <MandateIntent intent={intent} loading={intentLoading} error={intentError} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
+              </MandateFold>
+            ),
+            requestAndHistory: readable ? <RequestContextBox proposalId={proposal.id} layout="folds" onData={setRequestContextData} /> : null,
+            legendNote: content.sealed ? <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span> : undefined,
+            noTechnical: !readable,
+          }}
+        />
+      )}
       {due && <p className="av3-quiet av3-due" style={{ order: 1 }} data-testid="approval-deadline">{due}</p>}
       {/* §4.2.2 — a failed check is the one red line, right under the title. */}
       <ChecksLines lines={lines} placement="top" />
@@ -457,6 +506,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       {/* The sealed tile (§17.2): what the person approves, complete, never
           truncated (Tier A2). The preview's heading and "sealed" tag stay in
           the markup for readers and tests; the tile's own heading says it. */}
+      {!isMandate && (
       <section className="av3-sealed" style={{ order: 6 }} data-testid="sealed-values" aria-labelledby={`sealed-h-${proposal.id}`}>
         <h3 id={`sealed-h-${proposal.id}`} className="av3-sealed-h">
           <svg className="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
@@ -537,6 +587,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
           </dl>
         )}
       </section>
+      )}
       {readable && content.toolArgs && (
         <div style={{ order: 6 }}><NotSealedArgs args={content.toolArgs} display={toolDisplay} /></div>
       )}
@@ -577,22 +628,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       )}
 
       {/* ── Folded rows (§17.3): one line each, chevron, no lines between ── */}
-      {isMandate ? (
-        <details className="av3-fold" style={{ order: 10 }} data-testid="proposed-through">
-          <summary>
-            <span className="h">Proposed through</span>
-            <span className="one">Setup{parts.checks[0] ? ` · ${parts.checks[0]}` : ''}</span>
-            <Chev />
-          </summary>
-          <div className="av3-fold-body">
-            <p>Proposed by the AI through your <strong>Setup</strong> mandate.</p>
-            {parts.checks.length > 0 && (
-              <ul className="av3-plain" data-testid="mandate-checks">{parts.checks.map((c) => <li key={c}>{c}</li>)}</ul>
-            )}
-            <MandateIntent intent={intent} loading={intentLoading} error={intentError} expanded={expanded} onToggle={() => setExpanded(!expanded)} />
-          </div>
-        </details>
-      ) : (
+      {!isMandate && (
         <details className="av3-fold" style={{ order: 10 }} data-testid="covered-by">
           <summary>
             <span className="h">Covered by</span>
@@ -613,7 +649,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
       )}
 
       {/* Request + History (AU10) as two folded rows. */}
-      {readable && <RequestContextBox proposalId={proposal.id} layout="folds" onData={setRequestContextData} />}
+      {readable && !isMandate && <RequestContextBox proposalId={proposal.id} layout="folds" onData={setRequestContextData} />}
 
       {/* Inspection links — judging the action needs something to look at,
           not just an identifier. Open, above the folded rows. */}
@@ -634,7 +670,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
         </div>
       )}
 
-      {readable && (
+      {readable && !isMandate && (
         <details className="av3-fold" style={{ order: 15 }} data-testid="technical-details">
           <summary>
             <span className="h">Technical details</span>
