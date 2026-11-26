@@ -137,3 +137,50 @@ for (const kind of ['reject', 'change'] as const) {
     expect(gateway.buttonsAfter).toBe(0);
   });
 }
+
+// Every state of the decision footer fits the screen: no sideways scroll, nothing of the card sticks out past the viewport edge.
+async function fits(page: Page, what: string, width: number) {
+  const r = await page.evaluate(() => {
+    const vw = window.innerWidth;
+    const out: string[] = [];
+    document.querySelectorAll('main *').forEach((e) => {
+      if (e.closest('.sr-only')) return; // visually hidden text, by design
+      const b = e.getBoundingClientRect();
+      if (b.width > 0 && (b.right > vw + 0.5 || b.left < -0.5)) out.push(`${e.tagName.toLowerCase()}.${(e as HTMLElement).className} ${Math.round(b.left)}..${Math.round(b.right)}`);
+    });
+    return { scroll: document.scrollingElement!.scrollWidth, vw, out: out.slice(0, 6) };
+  });
+  expect(r.scroll, `${what} at ${width}px: page scrolls sideways`).toBeLessThanOrEqual(r.vw);
+  expect(r.out, `${what} at ${width}px: sticks out of the viewport`).toEqual([]);
+}
+for (const width of [320, 375, 390]) {
+  for (const card of ['gateway', 'phone'] as const) {
+    test(`${card} at ${width}px: the note box, the working line and the stamps stay inside the screen`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/fixture/index.html?case=crm&card=${card}`);
+      await page.waitForSelector('[data-testid=mandate-facts]');
+      await fits(page, 'the card', width);
+      await page.locator('[data-testid=btn-change-needed]').click();
+      await page.waitForSelector('[data-testid=change-note]');
+      await page.locator('[data-testid=change-note]').fill('Use the reply address instead, and keep the limit as it is today please.');
+      await fits(page, 'the note box', width);
+      // iOS Safari zooms the whole page into any field whose text is under 16 px, which pushes the right edge (the textarea border and
+      // "Back") off the screen and lets the page scroll sideways. Chromium has no such zoom, so the cause is checked where it lives.
+      const fieldPx = await page.locator('[data-testid=change-note]').evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+      expect(fieldPx, `the note box at ${width}px: text under 16 px makes iOS zoom the page`).toBeGreaterThanOrEqual(16);
+      if (SHOTS) { mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `note-${card}-${width}.png`), fullPage: true }); }
+      await page.locator('[data-testid=btn-send-back]').click();
+      await page.waitForSelector('[data-testid=decision-stamp]');
+      await fits(page, 'the sent-back stamp', width);
+      for (const kind of ['reject'] as const) {
+        await page.goto(`/fixture/index.html?case=crm&card=${card}`);
+        await page.waitForSelector('[data-testid=mandate-facts]');
+        await page.locator('[data-testid=btn-reject]').click();
+        await page.waitForSelector('[data-testid=decision-working], [data-testid=decision-stamp]');
+        await fits(page, `the ${kind} working line or stamp`, width);
+        await page.waitForSelector('[data-testid=decision-stamp]');
+        await fits(page, `the ${kind} stamp`, width);
+      }
+    });
+  }
+}

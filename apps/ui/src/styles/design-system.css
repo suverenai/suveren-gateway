@@ -4478,7 +4478,7 @@ video.document-preview-media { width: 100%; }
 .av3-chg-l { display: block; font-size: var(--text-caption); color: var(--text-muted); margin-bottom: var(--space-1); }
 .av3-chg textarea {
   display: block; width: 100%; min-height: 76px; resize: vertical; margin-bottom: var(--space-2); padding: var(--space-2) var(--space-3);
-  border: 0; border-radius: var(--radius-md); background: var(--bg-sunken); color: var(--text-primary); font: inherit; font-size: var(--text-body-sm);
+  border: 0; border-radius: var(--radius-md); background: var(--bg-sunken); color: var(--text-primary); font: inherit; font-size: max(16px, var(--text-body-sm)); /* under 16 px iOS Safari zooms the page into the field */
 }
 .av3-chg textarea:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 @container (max-width: 420px) {
