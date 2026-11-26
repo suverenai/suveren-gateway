@@ -12,7 +12,11 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # macOS on Apple silicon: the package carries the native Touch ID helper (Swift, ad-hoc signed Suveren.app),
+    # which only builds there. The rest of the package is the same on any runner.
+    # workflow_dispatch (a branch, not a tag) is a DRY RUN: it builds, packs and checks, and publishes nothing.
+    runs-on: macos-15
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write    # for npm provenance
@@ -51,12 +55,17 @@ jobs:
       - name: Build apps
         run: pnpm build
 
-      - name: Assemble bundle
-        run: node bundle/build.mjs
+      - name: Build the Touch ID helper (release, ad-hoc signed)
+        working-directory: packages/unlock-helper/macos
+        run: ./build-app.sh
+
+      - name: Assemble bundle (with the helper)
+        run: node bundle/build.mjs --with-helper
         env:
           HAP_PROFILES_SRC: ${{ github.workspace }}/.hap-profiles
 
       - name: Verify bundle version matches git tag
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -e
           TAG="${GITHUB_REF_NAME#v}"
@@ -75,7 +84,23 @@ jobs:
         working-directory: bundle/dist
         run: npm install --omit=dev --no-audit --no-fund
 
+      - name: Pack, install the tarball, check the helper
+        # The helper must survive packing and installing: present, executable, signature valid.
+        run: |
+          set -e
+          cd bundle/dist
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/check" && cd "$RUNNER_TEMP/check"
+          npm init -y >/dev/null
+          npm install --omit=dev --no-audit --no-fund "$RUNNER_TEMP"/suveren-gateway-*.tgz
+          PKG=$(ls -d node_modules/@suveren/gateway)
+          test -x "$PKG/helper/Suveren.app/Contents/MacOS/suveren-unlock-helper"
+          test -f "$PKG/dist/control-plane/helper-manifest.json"
+          codesign --verify --strict "$PKG/helper/Suveren.app"
+          echo "helper present, executable, signature valid"
+
       - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/v')
         # Trusted Publishing via OIDC — no NPM_TOKEN secret. Configured at
         # https://www.npmjs.com/package/@suveren/gateway (Trusted Publishers).
         # The `id-token: write` permission on this job lets npm verify the
