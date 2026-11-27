@@ -41,6 +41,17 @@ describe('lockedNotice', () => {
     expect(notice).toMatch(/API key/i);
   });
 
+  it('with device keys on, tells the person to unlock with password or Touch ID, never the API key', () => {
+    const notice = lockedNotice(undefined, 'restart', { SUVEREN_DEVICE_KEYS: 'on' });
+    expect(notice).toContain('TELL THE USER: open the Suveren Gateway page in your own browser and unlock it with your password or Touch ID.');
+    expect(notice).not.toMatch(/API key/i);
+    expect(notice).not.toMatch(/localhost|http/);
+  });
+
+  it('with device keys off, keeps the API key text', () => {
+    expect(lockedNotice(undefined, 'restart', {})).toMatch(/enter your Suveren API key/);
+  });
+
   it('honours a non-default control-plane port', () => {
     const prev = process.env.SUVEREN_CP_PORT;
     process.env.SUVEREN_CP_PORT = '7400';

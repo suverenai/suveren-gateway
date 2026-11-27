@@ -109,9 +109,17 @@ describe('buildNotifyCommand — elsewhere', () => {
 
 describe('lockedNotification', () => {
   it('names the port it asks the person to open', () => {
-    const n = lockedNotification(3400);
+    const n = lockedNotification(3400, {});
     expect(n.url).toBe('http://localhost:3400');
     expect(n.message).toContain('http://localhost:3400');
+    expect(n.message).toContain('enter your API key');
+  });
+
+  it('with device keys on, asks for the password or Touch ID, not the API key', () => {
+    const n = lockedNotification(3400, { SUVEREN_DEVICE_KEYS: 'on' });
+    expect(n.message).toContain('Open the Suveren Gateway page and unlock it with your password or Touch ID.');
+    expect(n.message).not.toMatch(/API key/);
+    expect(n.url).toBe('http://localhost:3400');
   });
 });
 
