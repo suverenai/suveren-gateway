@@ -4,6 +4,7 @@
  *
  *   GET  /auth/device/devices                 the devices of this account, from the chain this computer verified
  *   GET  /auth/device/pairing/status          the pairing in progress (the mailbox is looked at once) or { flow: 'none' }
+ *   GET  /auth/device/pairing/app-origin      where the phone app is opened, as the Authority Server says it: { ok, appOrigin? } (absent when it names none)
  *   POST /auth/device/pairing/admit/start     "Add a phone": the QR of an admitter (shown_by: admitter)
  *   POST /auth/device/pairing/admit/choose    { code } the tapped comparison code; the touch; the append
  *   POST /auth/device/pairing/join/start      "Add this computer": the QR of a joiner (shown_by: joiner)
@@ -56,6 +57,7 @@ export function createDevicePairingRouter(deps: DevicePairingRouterDeps): Router
 
   api.get('/devices', run(async (_req, res) => { res.json({ ok: true, ...(await pairing.devices()) }); }));
   api.get('/pairing/status', run(async (_req, res) => { res.json({ ok: true, view: await pairing.status() }); }));
+  api.get('/pairing/app-origin', run(async (_req, res) => { const appOrigin = await pairing.appOrigin(); res.json({ ok: true, ...(appOrigin ? { appOrigin } : {}) }); }));
   api.post('/pairing/admit/start', run(async (_req, res) => { res.json({ ok: true, view: await pairing.admitStart() }); }));
   api.post('/pairing/admit/choose', run(async (req, res) => { res.json({ ok: true, view: await pairing.admitChoose(body(req).code) }); }));
   api.post('/pairing/join/start', run(async (_req, res) => { res.json({ ok: true, view: await pairing.joinStart() }); }));

@@ -11,7 +11,7 @@ import { QrCode } from '@suveren/approval-card/components/QrCode';
 import { DeviceRows } from '@suveren/approval-card/components/DeviceRows';
 import type { DevicesAnswer, PairingDeviceRow } from '../../lib/device-client';
 import type { PairingUiState } from '../../lib/pairing-driver';
-import { PT, pairingErrorText, whenText } from '../../lib/pairing-texts';
+import { PT, pairingErrorText, whenText, addPhoneScanText } from '../../lib/pairing-texts';
 
 /** The list of devices, from a chain this computer verified itself: the shared device rows (one implementation with the phone app). */
 export function DeviceList({ rows, nowSeconds }: { rows: PairingDeviceRow[]; nowSeconds: number }) {
@@ -81,7 +81,7 @@ export function AddPhoneScreen(p: AddPhoneScreenProps) {
       return (
         <DeviceFrame title={PT.addPhoneTitle}>
           {err}
-          <p>{PT.addPhoneScan}</p>
+          <p>{addPhoneScanText(p.state.appOrigin)}</p>
           <QrCode text={view.qr} label={PT.addPhoneQrLabel} testid="pairing-qr" />
           <p className="form-hint">{PT.addPhoneQrTime}</p>
           <button type="button" className="btn btn-ghost btn-full" onClick={p.onCancel} disabled={busy}>{PT.cancel}</button>

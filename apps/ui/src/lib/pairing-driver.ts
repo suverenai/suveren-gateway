@@ -21,6 +21,8 @@ export interface PairingUiState {
   error?: string;
   /** The first look at what the control plane holds is not done yet. */
   loading: boolean;
+  /** Where the phone app is opened, as the Authority Server says it; absent when it names none (an older server). Only "Add a phone" uses it. */
+  appOrigin?: string;
 }
 
 export interface PairingDeps {
@@ -53,12 +55,26 @@ export class PairingDriver extends Driver<PairingUiState> {
     else this.set({ ...this.state, busy: false, loading: false, error: this.words(r.code, r.retryAfterSeconds) });
   }
 
+  /**
+   * "Add a phone", while its code is shown: where the person opens the phone app, once. The Authority Server names it; when it
+   * does not (older server, none configured, unreachable) nothing is set and the screen says it without an address.
+   */
+  private async loadAppOrigin(): Promise<void> {
+    const v = this.state.view;
+    if (this.d.flow !== 'admit' || v.flow !== 'admit' || v.step !== 'qr' || this.state.appOrigin !== undefined) return;
+    try {
+      const r = await this.d.client.pairingAppOrigin();
+      if (r.ok && typeof r.data.appOrigin === 'string' && this.state.view === v) this.set({ ...this.state, appOrigin: r.data.appOrigin });
+    } catch { /* no address: the sentence without one */ }
+  }
+
   /** On mount: what the control plane holds. A pairing of the OTHER flow is not this page's: it is shown as nothing and not touched. */
   async resume(): Promise<void> {
     const r = await this.d.client.pairingStatus();
     if (!r.ok) { this.set({ view: { flow: 'none' }, busy: false, loading: false, error: this.words(r.code) }); return; }
     const v = r.data.view;
     this.set({ view: v.flow === this.d.flow ? v : { flow: 'none' }, busy: false, loading: false });
+    await this.loadAppOrigin();
   }
 
   async start(): Promise<void> {
@@ -66,6 +82,7 @@ export class PairingDriver extends Driver<PairingUiState> {
     this.set({ ...this.state, busy: true, error: undefined });
     const r = await (this.d.flow === 'admit' ? this.d.client.admitStart() : this.d.client.joinStart());
     this.take(r);
+    await this.loadAppOrigin();
   }
 
   /** One look at the mailbox, only while a step waits. */
@@ -77,7 +94,7 @@ export class PairingDriver extends Driver<PairingUiState> {
       const r = await this.d.client.pairingStatus();
       // The person moved on (cancelled, chose) while the answer was on its way: the later action wins.
       if (this.state.view !== before || this.state.busy) return;
-      if (r.ok) this.set({ view: r.data.view, busy: false, loading: false });
+      if (r.ok) this.set({ view: r.data.view, busy: false, loading: false, ...(this.state.appOrigin !== undefined ? { appOrigin: this.state.appOrigin } : {}) });
       else this.set({ ...this.state, error: this.words(r.code, r.retryAfterSeconds) });
     } finally {
       this.polling = false;

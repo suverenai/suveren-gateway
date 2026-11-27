@@ -440,6 +440,25 @@ export class DevicePairing {
 
   // ─── ADMIT: "Add a phone" ─────────────────────────────────────────────────────
 
+  /**
+   * Where the person opens the phone app, as the Authority Server says it (`appOrigin` of GET /api/as/compat, present only when
+   * its operator configured one). Undefined for an older server, an unconfigured one, an unreachable one or an answer that is not a
+   * bare origin: the page then says it without an address. Never a stale value; looked up each time.
+   */
+  async appOrigin(): Promise<string | undefined> {
+    try {
+      const r = await this.d.client.call('GET', '/api/as/compat');
+      const v = r.status === 200 ? (r.body as { appOrigin?: unknown } | null)?.appOrigin : undefined;
+      if (typeof v !== 'string') return undefined;
+      const u = new URL(v);
+      const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+      if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) return undefined;
+      return u.origin === v ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async admitStart(): Promise<PairingView> {
     this.requireVault();
     this.requireFree();

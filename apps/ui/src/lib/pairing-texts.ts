@@ -45,7 +45,7 @@ export const PT = liveTexts({
   // Changes when D2 ships (the phone approves): today the phone only reads, so "you approve or reject them here" is true; after D2 it is not.
   addPhoneIntro: 'The Suveren app on your phone becomes one of your devices. For now you read requests there. You approve or reject them here.', // DRAFT (= P.joinIntro, from the other side)
   addPhoneShow: 'Show the code', // DRAFT
-  addPhoneScan: 'On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.', // DRAFT (= P.welcomeJoin)
+  addPhoneScan: 'On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.', // DRAFT (= P.welcomeJoin); the sentence of a server that names no phone app address (see addPhoneScanText)
   addPhoneQrLabel: 'Code to add a phone', // DRAFT (the picture's text for a screen reader)
   addPhoneQrTime: 'The code works for 10 minutes. Show it to your own phone only.', // DRAFT
   addPhoneConnected: 'Your phone is connecting...', // DRAFT
@@ -96,6 +96,17 @@ export const PT = liveTexts({
   startAgain: SP.startAgain, // shared (approval-card pairing-texts)
   tryAgain: SP.tryAgain, // shared (approval-card pairing-texts)
 } as const);
+
+/**
+ * "Add a phone": where the person opens the phone app. The address comes from the Authority Server (`appOrigin`), never from this
+ * code: a company's own server names its own. Without one (an older server, or none configured) the sentence is `PT.addPhoneScan`.
+ * Outside `PT` on purpose: the host of the app is not the name of the Authority Server and must not be rewritten with it.
+ */
+export function addPhoneScanText(appOrigin: string | undefined): string {
+  let host = '';
+  try { host = appOrigin ? new URL(appOrigin).host : ''; } catch { host = ''; }
+  return host ? `On your phone, open ${host}, choose Add this phone to my account, and scan this code.` : PT.addPhoneScan;
+}
 
 /** The sentence for a pairing code. DRAFT, in the style of the phone app's `ERRORS`; a code nobody here knows falls to the device-key texts, then the generic one. */
 const ERRORS: Record<string, string> = {
