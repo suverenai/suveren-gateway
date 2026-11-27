@@ -115,7 +115,8 @@ describe('lockedNotice(action, "expired")', () => {
     const notice = lockedNotice(undefined, 'expired');
     expect(notice).toContain('TELL THE USER');
     expect(notice).toContain('the Suveren Gateway page'); expect(notice).not.toMatch(/localhost/);
-    expect(notice).toMatch(/API key/i);
+    expect(notice).toContain('open the Suveren Gateway page in your own browser and sign in again');
+    expect(notice).not.toMatch(/API key/i);
   });
 
   it('defaults to the restart notice when no reason is given', () => {

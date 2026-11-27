@@ -730,7 +730,7 @@ function proposalRefusalText(notes: ProposalRefusalNote[], profileOf?: (authoriz
     ? usedUpLimitText({ profile: profileOf?.(notes[0].authorizationId) as never, field: notes[0].detail.field, value: notes[0].detail.expected })
     : undefined;
   if (used) return `${head} No proposal was created. ${used}`;
-  return `${head} No proposal was created and nothing ran. The limit counts everything done under it in its period, so trying again will not help; the person decides whether to raise it.`;
+  return `${head} No proposal was created and nothing ran. The limit counts everything done under it in its period (a day, a week…), so trying again will not help; the person decides whether to raise it.`;
 }
 
 /**

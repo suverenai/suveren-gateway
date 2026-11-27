@@ -85,8 +85,8 @@ function expiredSessionNotice(what: string): string {
   return (
     `${what} Suveren gateway's sign-in has ended (sign-ins last 30 days, or ` +
     `it was revoked), so it is now LOCKED.\n\n` +
-    `TELL THE USER: open the Suveren Gateway page in your own browser and enter your Suveren API key to sign ` +
-    `in again. Your mandates are safe; nothing ran.`
+    `TELL THE USER: open the Suveren Gateway page in your own browser and sign in again. ` +
+    `Your mandates are safe; nothing ran.`
   );
 }
 
