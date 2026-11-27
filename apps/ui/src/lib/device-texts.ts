@@ -9,7 +9,9 @@
  * filled in by the functions here.
  */
 
-export const T = {
+import { liveTexts, hostText } from '@suveren/approval-card/lib/as-host';
+
+export const T = liveTexts({
   // Screen 1: password
   passwordTitle: 'Set an unlock password', // 1
   passwordWhy: 'You type it when the gateway starts and to open this page. Without it, your connector logins (for example Gmail) stay locked.', // 2 (+ confusion note 2)
@@ -138,7 +140,7 @@ export const T = {
   // The Touch ID window's own sentences (sent by the helper; kept here so the screens and the helper agree)
   touchWindowReplace: (name: string): string => `replace the login of "${name}"`, // 78
   touchWindowRemove: (name: string): string => `remove the login of "${name}"`, // 79
-} as const;
+} as const);
 
 /** The card of screen 5 (item 71) and the done line (item 75). */
 export function changeSentence(kind: 'replace' | 'remove', name: string): string {
@@ -157,7 +159,7 @@ export function changeDone(kind: 'replace' | 'remove', name: string): string {
  * Texts the recommendation does not have: written in its style (what happened, then what to do, "Nothing
  * changed" only where it is true). Every one is listed in the hand-over report for the maintainer to confirm.
  */
-export const DRAFT = {
+export const DRAFT = liveTexts({
   connectChainExists: 'This account already has a device. Add this computer from a device you already have. Nothing changed.', // DRAFT (plan 20.18 point 6)
   loading: 'Loading…', // DRAFT
   connectWaitingWhat: 'Still missing: press Connect on the suveren.ai page in that tab.', // DRAFT
@@ -224,7 +226,7 @@ export const DRAFT = {
   tryAgain: 'Try again', // DRAFT
   // Signing in with the device key after an unlock
   signinFailedRetry: 'Signing in did not work. Try again.', // DRAFT
-} as const;
+} as const);
 
 /** Wording for codes the recommendation has no text for. DRAFT, same style. */
 const DRAFT_CODES: Record<string, string> = {
@@ -294,6 +296,10 @@ export function minutesText(retryAfterSeconds: number | undefined): string {
  * generic text 103, never the raw code and never the control plane's placeholder message.
  */
 export function textForCode(code: string | undefined, ctx: TextContext = {}): string {
+  return hostText(textForCodeRaw(code, ctx));
+}
+
+function textForCodeRaw(code: string | undefined, ctx: TextContext): string {
   const screen = ctx.screen ?? 'general';
   // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code. Trying again never helps,
   // so the generic "refused … Try again" would send the person round in circles.

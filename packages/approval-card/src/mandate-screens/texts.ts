@@ -7,7 +7,9 @@
  * Pure: no React, no network.
  */
 
-export const S13 = {
+import { liveTexts } from '../lib/as-host';
+
+export const S13 = liveTexts({
   // Screen 1: give a mandate (step 13; today's review step, changed in place: DEC-80)
   giveButton: 'Give this mandate with Touch ID', // 211
   /** DRAFT: while the touch is asked for. */
@@ -268,7 +270,7 @@ export const S13 = {
   changesErrNotCompared: 'Compare identity codes first. Nothing changed.',
   changesErrAnchor: 'This person has not compared your identity code yet. Nothing changed.',
   changesErrMismatch: 'What the new admin signed is not what you expected. Nothing was signed.',
-} as const;
+} as const);
 
 /** Never a gendered pronoun for a named person: "them", "their". */
 

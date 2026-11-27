@@ -3,6 +3,8 @@
  * app talks to, and the commit it was built from. The CSP's `connect-src` names the same origin.
  */
 
+import { setAsHost } from '@suveren/approval-card/lib/as-host';
+
 /** https only; http only for a local Authority Server on the dev and test lanes (same rule as hap-core's pairing QR). */
 const AS_URL_SHAPE = /^(https:\/\/[^\s/?#]+|http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?)$/;
 
@@ -14,6 +16,8 @@ export function asUrlOf(raw: string | undefined): string {
 }
 
 export const AS_URL: string = asUrlOf(import.meta.env.VITE_AS_URL);
+/** The server's name in every sentence the person reads (suveren.ai in production; a company's own server names itself). */
+setAsHost(AS_URL);
 export const BUILD_COMMIT: string = import.meta.env.VITE_BUILD_COMMIT ?? 'dev';
 
 /** Epoch seconds. Injected into the flows so tests can move the clock. */

@@ -16,8 +16,9 @@
  */
 
 import { SP, SHARED_ERRORS } from '@suveren/approval-card/lib/pairing-texts';
+import { liveTexts, hostText } from '@suveren/approval-card/lib/as-host';
 
-export const P = {
+export const P = liveTexts({
   // ─── The phone cannot pair (compat.ts) ───────────────────────────────────────
   needsTitle: 'This phone cannot be set up yet', // DRAFT
   needsIntro: 'To work, this app needs:', // DRAFT
@@ -290,7 +291,7 @@ export const P = {
   mineActiveUntil: (when: string) => `Active until ${when}`, // DRAFT new
   noticeGiven: (title: string, by: string) => `The mandate for ${title} was given on ${by}.`, // DRAFT new (mockup F2)
   noticeEnded: (title: string, by: string) => `The mandate for ${title} was ended on ${by}.`, // DRAFT new (mockup F2)
-} as const;
+} as const);
 
 /**
  * Why a request shows no buttons (card-checks.ts). One sentence each, written for a person who knows nothing of keys or
@@ -322,7 +323,7 @@ const BLOCKED: Record<string, string> = {
 };
 
 export function blockedText(reason: string): string {
-  return Object.prototype.hasOwnProperty.call(BLOCKED, reason) ? BLOCKED[reason] : BLOCKED.reads_failed;
+  return Object.prototype.hasOwnProperty.call(BLOCKED, reason) ? hostText(BLOCKED[reason]) : hostText(BLOCKED.reads_failed);
 }
 
 /** Every reason with a text of its own. */
@@ -430,7 +431,7 @@ const ERRORS: Record<string, string> = {
 
 export function errorText(code: string | undefined): string {
   const key = (code ?? '').toLowerCase();
-  return Object.prototype.hasOwnProperty.call(ERRORS, key) ? ERRORS[key] : ERRORS.generic;
+  return Object.prototype.hasOwnProperty.call(ERRORS, key) ? hostText(ERRORS[key]) : hostText(ERRORS.generic);
 }
 
 /** Every code with a text of its own (so a test can list them, and the hand-over can). */

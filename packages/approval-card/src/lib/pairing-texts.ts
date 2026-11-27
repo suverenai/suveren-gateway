@@ -4,7 +4,9 @@
  * and the computer in the other) stays in its app. ALL are DRAFT: the wording is the maintainer's (O19). Words follow DEC-78/79.
  * Pure: no React, no network.
  */
-export const SP = {
+import { liveTexts } from './as-host';
+
+export const SP = liveTexts({
   // The device list
   devicesTitle: 'Your devices', // DRAFT
   devKindComputer: 'Computer', // DRAFT
@@ -50,7 +52,7 @@ export const SP = {
   back: 'Back', // DRAFT
   startAgain: 'Start again', // DRAFT
   tryAgain: 'Try again', // = DRAFT.tryAgain of device-texts.ts
-} as const;
+} as const);
 
 /** Where a line says when a device was added: today, yesterday, n days ago, else the date. */
 export function whenText(epochSeconds: number, nowSeconds: number): string {
@@ -62,7 +64,7 @@ export function whenText(epochSeconds: number, nowSeconds: number): string {
 }
 
 /** Pairing refusals whose sentence is the same on both apps, by code. */
-export const SHARED_ERRORS: Record<string, string> = {
+export const SHARED_ERRORS: Record<string, string> = liveTexts({
   too_many_devices: 'Your account already has the most devices it can have. Remove one first.', // DRAFT
   qr_expired: 'This code has run out. Show a new one and scan it again.', // DRAFT (10 minutes, plan 4.3)
   wrong_code: 'That was not the code. Nothing was added.', // DRAFT (20.11)
@@ -76,4 +78,4 @@ export const SHARED_ERRORS: Record<string, string> = {
   mailbox_missing: 'This code is not open any more. Show a new one and scan it again.', // DRAFT
   chain_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // DRAFT
   chain_head_moved: 'Your list of devices changed meanwhile. Nothing was added. Start again.', // DRAFT
-};
+});

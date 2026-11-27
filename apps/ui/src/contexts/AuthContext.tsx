@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { setAsHost } from '@suveren/approval-card/lib/as-host';
 import { spClient, deviceDecisionsFromHealth, SESSION_GONE_EVENT, sessionEvents, type SessionGoneDetail, type SPUser, type SPGroup, type GroupMember, type PendingJoinRequest } from '../lib/sp-client';
 import { deviceClient } from '../lib/device-client';
 import { accessFromProbe, LEGACY, type Access, type AccessState } from '../lib/access';
@@ -166,6 +167,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((health: { spUrl?: string; deviceKeys?: boolean; session?: { lockedReason?: string } }) => {
         // A gateway with device keys signs its decisions in the control plane (step 12); one without keeps the legacy path.
         spClient.setDeviceDecisions(deviceDecisionsFromHealth(health));
+        // The sentences name the Authority Server this gateway uses, not always suveren.ai.
+        setAsHost(health.spUrl);
         if (health.session?.lockedReason === 'as-url-changed') {
           setError(`Authority Server changed to ${health.spUrl ?? 'a new server'} — sign in again.`);
         }

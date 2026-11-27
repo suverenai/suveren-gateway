@@ -14,10 +14,11 @@
  */
 import { textForCode } from './device-texts';
 import { SP, SHARED_ERRORS, whenText } from '@suveren/approval-card/lib/pairing-texts';
+import { liveTexts, hostText } from '@suveren/approval-card/lib/as-host';
 
 export { whenText };
 
-export const PT = {
+export const PT = liveTexts({
   // ─── The Devices page ─────────────────────────────────────────────────────────
   devicesTitle: SP.devicesTitle, // shared (approval-card pairing-texts)
   devicesBack: 'Back to settings', // DRAFT
@@ -94,7 +95,7 @@ export const PT = {
   back: SP.back, // shared (approval-card pairing-texts)
   startAgain: SP.startAgain, // shared (approval-card pairing-texts)
   tryAgain: SP.tryAgain, // shared (approval-card pairing-texts)
-} as const;
+} as const);
 
 /** The sentence for a pairing code. DRAFT, in the style of the phone app's `ERRORS`; a code nobody here knows falls to the device-key texts, then the generic one. */
 const ERRORS: Record<string, string> = {
@@ -119,7 +120,7 @@ const ERRORS: Record<string, string> = {
 
 export function pairingErrorText(code: string | undefined): string {
   const key = (code ?? '').toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(ERRORS, key)) return ERRORS[key];
+  if (Object.prototype.hasOwnProperty.call(ERRORS, key)) return hostText(ERRORS[key]);
   return textForCode(code, { screen: 'general' });
 }
 
