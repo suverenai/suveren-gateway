@@ -786,13 +786,14 @@ export function usedUpLimitText(limit: UsedUpLimit | undefined): string | undefi
   if (!bt || (bt.kind !== 'cumulative_count' && bt.kind !== 'cumulative_sum')) return undefined;
   const words = bt.window ? WINDOW_WORDS[bt.window] : undefined;
   const actions = boundGovernsActions(limit.field, def);
-  const label = actions && actions.length > 0
-    ? actions.join(' or ')
-    : bt.kind === 'cumulative_sum' && bt.of ? bt.of.replace(/_/g, ' ')
+  const plain = (w: string) => w.replace(/_/g, ' ');
+  // A sum limit is about what it adds up (the amount); a count limit about the actions it counts.
+  const label = bt.kind === 'cumulative_sum' && bt.of ? plain(bt.of)
+    : actions && actions.length > 0 ? actions.map(plain).join(' or ')
     : undefined;
-  const value = typeof limit.value === 'number' || typeof limit.value === 'string' ? ` (${limit.value})` : '';
+  const value = typeof limit.value === 'number' && Number.isFinite(limit.value) ? ` (${limit.value})` : '';
   const name = [words?.adjective, label, 'limit'].filter(Boolean).join(' ');
-  return `Nothing ran. The ${name}${value} is used up. Tell the person; they can raise it or wait ${words?.until ?? 'until the period ends'}.`;
+  return `Nothing ran. The ${name}${value} is used up. Tell the person; they can raise it or wait ${words?.until ?? 'until the period ends'}. Do not retry the same call.`;
 }
 
 /**
