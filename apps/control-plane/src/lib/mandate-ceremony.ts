@@ -301,12 +301,26 @@ export async function checkMandateRight(
   return { groupName: r.group.name, profileId: r.profile.id };
 }
 
+/**
+ * A bound the profile marks `required` and gives a `default` is filled with that default when the
+ * request leaves it out (hap-core's validation ignores defaults). Generic: read from the profile
+ * schema only. A value the request did set, 0 included, is never changed.
+ */
+export function fillRequiredDefaults<T extends Record<string, unknown>>(limits: T, profile: { boundsSchema?: { fields?: Record<string, unknown> } }): T {
+  const out: Record<string, unknown> = { ...limits };
+  for (const [field, def] of Object.entries(profile.boundsSchema?.fields ?? {})) {
+    const d = def as { required?: boolean; default?: unknown } | undefined;
+    if (d?.required === true && out[field] === undefined && d.default !== undefined && d.default !== null) out[field] = d.default;
+  }
+  return out as T;
+}
+
 /** Validate the request and resolve everything needed — creates nothing. */
 export async function planMandate(req: MandateRequest, deps: CeremonyDeps): Promise<MandatePlan> {
   const { user, group, isPersonal, profile, name, approvers, teamCaps, teamApprovals, teamEligible } = await resolveWorkspaceAndRight(req, deps);
 
   // Limits and scope against the profile.
-  const bounds = { ...scalarRecord('limits', req.limits), profile: profile.id };
+  const bounds = { ...fillRequiredDefaults(scalarRecord('limits', req.limits), profile), profile: profile.id };
   const bv = validateBoundsParams(bounds as never, profile);
   const errors = [...bv.errors];
   for (const [field, value] of Object.entries(bounds)) {

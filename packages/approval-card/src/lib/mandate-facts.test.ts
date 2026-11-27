@@ -180,9 +180,12 @@ describe('the mockup\'s example mandates (E)', () => {
   for (const e of examples) {
     it(`${e.name}: ${e.expected}`, () => {
       const p = profileOf(e.folder, e.version);
-      expect(shortSummaryText({ limits: e.limits, scope: e.scope, boundsSchema: p.boundsSchema ?? {}, scopeSchema: p.scopeSchema, manifests })).toBe(e.expected);
+      expect(shortSummaryText({ limits: e.limits, scope: e.scope, boundsSchema: p.boundsSchema ?? {}, scopeSchema: p.scopeSchema, manifests })).toBe(e.expected.replaceAll(' · ', '\u00A0· '));
     });
   }
+  it('a wrapped line never starts with the dot: it is always glued to the item before it', () => {
+    for (const e of examples) expect(e.expected.replaceAll(' · ', '\u00A0· ')).not.toMatch(/ ·/);
+  });
   it('covers every card of the mockup\'s list (the fourteen areas and Setup)', () => {
     expect(examples.length).toBe(15);
   });

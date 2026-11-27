@@ -4338,9 +4338,10 @@ video.document-preview-media { width: 100%; }
 /* Type line + title */
 .av3-type { display: flex; align-items: center; flex-wrap: wrap; gap: 0.15rem var(--space-2); font-size: var(--text-caption); color: var(--text-muted); margin-bottom: var(--space-2); }
 .av3-type b { color: var(--text-primary); font-weight: 600; }
-.av3-type > span + span::before { content: '·'; margin-right: var(--space-2); }
-.av3-type > .av3-mtag + span::before { content: none; }
-.av3-type > .av3-mtag::before { content: none; }
+/* The dot closes the item before it (never opens the next), so a wrapped row never starts with it. */
+.av3-type > span:has(+ span)::after { content: '·'; margin-left: var(--space-2); }
+.av3-type > .av3-mtag:has(+ span)::after { content: none; }
+.av3-type > span:has(+ .av3-mtag)::after { content: none; }
 .av3-mtag {
   display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--radius-xs);
   background: var(--neutral); color: var(--bg-elevated); font-size: var(--text-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
@@ -4582,8 +4583,8 @@ video.document-preview-media { width: 100%; }
   font-size: var(--text-caption); color: var(--text-muted); margin: 0 0 var(--space-1);
   white-space: normal; overflow: visible;
 }
-.ob-type > span + span::before { content: '·'; margin-right: var(--space-2); }
-.ob-type > .ob-tag + span::before { content: none; }
+.ob-type > span:has(+ span)::after { content: '·'; margin-left: var(--space-2); }
+.ob-type > .ob-tag:has(+ span)::after { content: none; }
 .ob-tag {
   display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--radius-xs);
   background: var(--neutral); color: var(--bg-elevated); font-size: var(--text-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
@@ -4719,7 +4720,7 @@ a.dash-row:hover, .dash-row:not([open]):hover { box-shadow: var(--elevation-2); 
 .dash-row > summary { list-style: none; cursor: pointer; display: block; }
 .dash-row > summary::-webkit-details-marker { display: none; }
 .dash-row .ob-one { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); }
-.dash-row .ob-one > span + span::before { content: '·'; margin-right: var(--space-2); }
+.dash-row .ob-one > span:has(+ span)::after { content: '·'; margin-left: var(--space-2); }
 .dash-row.auto-grp .auto-grp-list { margin-top: var(--space-3); padding-top: 0; border-top: 0; }
 .dash-row .ob-check-x { color: var(--text-primary); display: block; }
 .dash-row .ob-check-x b { font-weight: 700; }
