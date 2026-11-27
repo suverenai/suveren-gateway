@@ -20,6 +20,13 @@ describe('the server named in the phone app texts', () => {
     expect(errorText('mailbox_refused')).not.toContain('suveren.ai'); // a shared sentence, from the approval-card package
   });
 
+  it('www.suveren.ai is the hosted server: nothing is rewritten', async () => {
+    vi.stubEnv('VITE_AS_URL', 'https://www.suveren.ai');
+    await import('./config');
+    const { errorText } = await import('../texts');
+    expect(errorText('as_unreachable')).toBe('Cannot reach suveren.ai. Check your internet connection and try again.');
+  });
+
   it('keeps the port of a local Authority Server', async () => {
     vi.stubEnv('VITE_AS_URL', 'http://localhost:4100');
     await import('./config');

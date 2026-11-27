@@ -9,7 +9,7 @@
  * filled in by the functions here.
  */
 
-import { liveTexts, hostText } from '@suveren/approval-card/lib/as-host';
+import { liveTexts } from '@suveren/approval-card/lib/as-host';
 
 export const T = liveTexts({
   // Screen 1: password
@@ -229,7 +229,7 @@ export const DRAFT = liveTexts({
 } as const);
 
 /** Wording for codes the recommendation has no text for. DRAFT, same style. */
-const DRAFT_CODES: Record<string, string> = {
+const DRAFT_CODES: Record<string, string> = liveTexts({
   recovery_code_invalid: 'This is not a recovery code. Check it and try again.',
   recovery_code_unknown: 'No account belongs to this recovery code. Check it and try again.',
   recovery_code_wrong: 'This is not the current recovery code of this account. Use the newest one.',
@@ -272,7 +272,7 @@ const DRAFT_CODES: Record<string, string> = {
   not_enabled: 'Touch ID unlock is not on.',
   busy: 'Another Touch ID step is running. Wait a moment.',
   vault_changed: 'The gateway changed meanwhile. Try again.',
-};
+});
 
 /** The codes with a DRAFT text (so a test can list them, and the report can). */
 export const DRAFT_CODE_LIST: readonly string[] = Object.keys(DRAFT_CODES);
@@ -296,10 +296,6 @@ export function minutesText(retryAfterSeconds: number | undefined): string {
  * generic text 103, never the raw code and never the control plane's placeholder message.
  */
 export function textForCode(code: string | undefined, ctx: TextContext = {}): string {
-  return hostText(textForCodeRaw(code, ctx));
-}
-
-function textForCodeRaw(code: string | undefined, ctx: TextContext): string {
   const screen = ctx.screen ?? 'general';
   // Plan 20.18 point 6: an account that already has a device chain gets no enrolment code. Trying again never helps,
   // so the generic "refused … Try again" would send the person round in circles.

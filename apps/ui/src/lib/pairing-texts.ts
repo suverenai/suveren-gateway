@@ -14,7 +14,7 @@
  */
 import { textForCode } from './device-texts';
 import { SP, SHARED_ERRORS, whenText } from '@suveren/approval-card/lib/pairing-texts';
-import { liveTexts, hostText } from '@suveren/approval-card/lib/as-host';
+import { liveTexts } from '@suveren/approval-card/lib/as-host';
 
 export { whenText };
 
@@ -109,7 +109,7 @@ export function addPhoneScanText(appOrigin: string | undefined): string {
 }
 
 /** The sentence for a pairing code. DRAFT, in the style of the phone app's `ERRORS`; a code nobody here knows falls to the device-key texts, then the generic one. */
-const ERRORS: Record<string, string> = {
+const ERRORS: Record<string, string> = liveTexts({
   ...SHARED_ERRORS, // the pairing sentences both apps say in the same words
   other_account: 'This phone belongs to another account than the one this computer is signed in to. Nothing was added.', // DRAFT (plan 20.2)
   sign_in_first: 'This computer holds logins for connected systems. Sign in to your account first, then add this computer.', // DRAFT (plan 20.2)
@@ -127,11 +127,11 @@ const ERRORS: Record<string, string> = {
   no_user_verification: 'The phone did not ask for a touch. Nothing was added.', // DRAFT
   helper_unavailable: 'This computer cannot ask for your touch right now. Nothing changed.', // DRAFT
   no_biometry: 'This computer has no Touch ID. Nothing changed.', // DRAFT
-};
+});
 
 export function pairingErrorText(code: string | undefined): string {
   const key = (code ?? '').toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(ERRORS, key)) return hostText(ERRORS[key]);
+  if (Object.prototype.hasOwnProperty.call(ERRORS, key)) return ERRORS[key];
   return textForCode(code, { screen: 'general' });
 }
 
