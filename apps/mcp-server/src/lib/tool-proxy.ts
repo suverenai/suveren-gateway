@@ -32,7 +32,7 @@ import {
   stripAttachmentsSealedMeta,
 } from './attachment-resolution';
 import { validateDocumentReferences, validateInsertReferences } from './attachment-reference';
-import { attachmentNotAllowedText, refusalNextStep, pickerCard, howToGetMandate } from './guidance';
+import { attachmentNotAllowedText, refusalNextStep, usedUpLimitText, pickerCard, howToGetMandate } from './guidance';
 import { setupMandateFacts, newestProfileOf } from './guidance-runtime';
 import { verifyTicket, TicketBindingMismatchError, mandateForTicket } from './ticket-verify';
 import { wireExecutionContext as hapWireExecutionContext, checkExecutionValues, missingSumFields } from '@hap/core';
@@ -713,7 +713,7 @@ function proposalRefusalNote(err: unknown, auth: { authorizationId: string; path
 }
 
 /** The one refusal the AI gets when no mandate could carry the proposal. */
-function proposalRefusalText(notes: ProposalRefusalNote[]): string {
+function proposalRefusalText(notes: ProposalRefusalNote[], profileOf?: (authorizationId: string) => unknown): string {
   const reasons = notes.map((n) =>
     n.code === 'MANDATE_REVOKED' ? `the mandate "${n.path}" was revoked`
     : n.code === 'MANDATE_EXPIRED' ? `the mandate "${n.path}" has expired`
@@ -722,10 +722,15 @@ function proposalRefusalText(notes: ProposalRefusalNote[]): string {
   const head = notes.length === 1
     ? `Refused: ${reasons[0]}.`
     : `Refused: none of the ${notes.length} mandates that fit could carry this: ${reasons.join('; ')}.`;
-  const tail = notes.every((n) => n.kind === 'dead-mandate')
-    ? ' Ask the person to grant a new mandate.'
-    : ' The limit counts everything done under it today, so trying again will not help; the person decides whether to raise it.';
-  return `${head} No proposal was created and nothing ran.${tail}`;
+  if (notes.every((n) => n.kind === 'dead-mandate')) {
+    return `${head} No proposal was created and nothing ran. Ask the person to grant a new mandate.`;
+  }
+  // One limit hit and named: say which, in its own window ("weekly", not "today").
+  const used = notes.length === 1 && notes[0].kind === 'no-room'
+    ? usedUpLimitText({ profile: profileOf?.(notes[0].authorizationId) as never, field: notes[0].detail.field, value: notes[0].detail.expected })
+    : undefined;
+  if (used) return `${head} No proposal was created. ${used}`;
+  return `${head} No proposal was created and nothing ran. The limit counts everything done under it in its period, so trying again will not help; the person decides whether to raise it.`;
 }
 
 /**
@@ -1882,7 +1887,7 @@ function createGatedToolHandlerInner(
             console.error(
               `[Suveren MCP] proposal(${tool.namespacedName}): no mandate left after ${note.code} on ${auth.authorizationId}`,
             );
-            return Promise.resolve({ content: [{ type: 'text', text: proposalRefusalText(notes) }], isError: true });
+            return Promise.resolve({ content: [{ type: 'text', text: proposalRefusalText(notes, (id) => getProfile(candidates.find((c) => c.authorizationId === id)?.profileId ?? '')) }], isError: true });
           }
           console.error(
             `[Suveren MCP] proposal(${tool.namespacedName}): ${note.code} on ${auth.authorizationId} → ` +
@@ -2525,7 +2530,7 @@ function createGatedToolHandlerInner(
             }
             recordAsRefusal(state, tool, auth.authorizationId, errors403?.[0]);
             return {
-              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, cardNameOf(tool))}` }],
+              content: [{ type: 'text', text: `Blocked by SP: ${err.message} ${refusalNextStep(errors403?.[0]?.code, cardNameOf(tool), { profile: getProfile(auth.profileId) as never, field: errors403?.[0]?.field, value: errors403?.[0]?.expected })}` }],
               isError: true,
             };
           }

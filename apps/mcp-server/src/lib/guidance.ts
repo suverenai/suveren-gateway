@@ -15,7 +15,7 @@
  */
 
 import { attachmentSourcesFieldDeclared, attachmentSourcesValue, isAttachmentSourceAllowed, type AttachmentPolicyProfileLike } from './attachment-policy';
-import { isDocumentSourcesField, atLeastOneGroups } from '@hap/core/scope-rules';
+import { isDocumentSourcesField, atLeastOneGroups, boundGovernsActions } from '@hap/core/scope-rules';
 import { classifyEnumSwitches } from './read-gate';
 
 // ─── Inputs (narrow views, so tests and callers need no full types) ─────────
@@ -757,12 +757,50 @@ export const BEFORE_PROPOSING =
 export const WHEN_TO_SUGGEST_A_CHANGE =
   'Suggest a change only when there is a reason: a limit was reached, the mandate is about to end, or the same refusal keeps coming back. Say the reason once and do not press. Ask for everything you need in one short bullet list, including any new limit the area asks for, and ask again only what is still open. Tell them in plain words what the change really allows.' + ' ' + INTENT_HAS_NO_LIMITS;
 
+/** The refused cumulative bound, as the refusal names it: the profile it belongs to, its field and its value. */
+export interface UsedUpLimit {
+  profile: { boundsSchema?: { fields?: Record<string, unknown> } } | undefined;
+  field: unknown;
+  value: unknown;
+}
+
+/** How a window reads in a sentence: "weekly" … "until next week". Any window the schema adds without a word here reads neutrally. */
+const WINDOW_WORDS: Record<string, { adjective: string; until: string }> = {
+  daily: { adjective: 'daily', until: 'until tomorrow' },
+  weekly: { adjective: 'weekly', until: 'until next week' },
+  monthly: { adjective: 'monthly', until: 'until next month' },
+};
+
+/**
+ * "Nothing ran. The weekly send limit (30) is used up. Tell the person; they can raise it or wait
+ * until next week." Generated from the bound that was hit: the window and the action types it
+ * governs come from the profile's bound schema, the value from the refusal. Undefined when the
+ * refusal does not name a cumulative bound the profile knows, so the caller keeps its general text.
+ */
+export function usedUpLimitText(limit: UsedUpLimit | undefined): string | undefined {
+  if (!limit || typeof limit.field !== 'string') return undefined;
+  const def = limit.profile?.boundsSchema?.fields?.[limit.field] as
+    | { boundType?: { kind?: string; window?: string; of?: string }; displayName?: string }
+    | undefined;
+  const bt = def?.boundType;
+  if (!bt || (bt.kind !== 'cumulative_count' && bt.kind !== 'cumulative_sum')) return undefined;
+  const words = bt.window ? WINDOW_WORDS[bt.window] : undefined;
+  const actions = boundGovernsActions(limit.field, def);
+  const label = actions && actions.length > 0
+    ? actions.join(' or ')
+    : bt.kind === 'cumulative_sum' && bt.of ? bt.of.replace(/_/g, ' ')
+    : undefined;
+  const value = typeof limit.value === 'number' || typeof limit.value === 'string' ? ` (${limit.value})` : '';
+  const name = [words?.adjective, label, 'limit'].filter(Boolean).join(' ');
+  return `Nothing ran. The ${name}${value} is used up. Tell the person; they can raise it or wait ${words?.until ?? 'until the period ends'}.`;
+}
+
 /**
  * The step for the person after the Authority Server (or the gate's own check) refused a call,
  * by its canonical code. Every refusal text ends with one, so nobody is left not knowing what to do.
  * `card` is the connector's card name when known.
  */
-export function refusalNextStep(code: unknown, card?: string): string {
+export function refusalNextStep(code: unknown, card?: string, limit?: UsedUpLimit): string {
   const c = typeof code === 'string' ? code : '';
   const sign = card ? `**Mandates → + New mandate →** card **${card}**` : '**Mandates → + New mandate**';
   switch (c) {
@@ -770,8 +808,10 @@ export function refusalNextStep(code: unknown, card?: string): string {
     case 'MANDATE_EXPIRED':
     case 'MANDATE_NOT_FOUND':
       return `Nothing ran. Tell the person this mandate is no longer valid. They give a new one (${sign}) or press **Sign again** on it under **Mandates**. Do not retry.`;
-    case 'BOUND_EXCEEDED':
     case 'CUMULATIVE_LIMIT_EXCEEDED':
+      if (usedUpLimitText(limit)) return usedUpLimitText(limit)!;
+    // falls through: no bound named, the general text
+    case 'BOUND_EXCEEDED':
       return 'Nothing ran. Tell the person a limit stopped it. They can raise it (**Mandates**, open the mandate, **Edit**, sign again) or wait until the period ends. Do not retry the same call.';
     case 'PROFILE_NOT_ENABLED_FOR_GROUP':
     case 'OWNER_NOT_APPROVER':

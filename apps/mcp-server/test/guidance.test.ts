@@ -472,6 +472,36 @@ describe('5. refusal endings', () => {
   it('names the connector\'s card when it is known', () => {
     expect(refusalNextStep('MANDATE_EXPIRED', 'Post')).toContain('card **Post**');
   });
+
+  describe('a used-up cumulative limit names the bound that was hit', () => {
+    const schema = {
+      boundsSchema: {
+        fields: {
+          send_weekly_max: { boundType: { kind: 'cumulative_count', window: 'weekly' }, appliesTo: ['send'] },
+          send_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['send'] },
+          spend_monthly_max: { boundType: { kind: 'cumulative_sum', window: 'monthly', of: 'amount' } },
+          post_quarterly_max: { boundType: { kind: 'cumulative_count', window: 'quarterly' } },
+        },
+      },
+    };
+    const text = (field: unknown, value: unknown) => refusalNextStep('CUMULATIVE_LIMIT_EXCEEDED', 'Post', { profile: schema, field, value });
+    it('weekly', () => {
+      expect(text('send_weekly_max', 30)).toBe('Nothing ran. The weekly send limit (30) is used up. Tell the person; they can raise it or wait until next week.');
+    });
+    it('daily', () => {
+      expect(text('send_daily_max', 5)).toBe('Nothing ran. The daily send limit (5) is used up. Tell the person; they can raise it or wait until tomorrow.');
+    });
+    it('monthly sum, named by the field it adds up', () => {
+      expect(text('spend_monthly_max', 500)).toBe('Nothing ran. The monthly amount limit (500) is used up. Tell the person; they can raise it or wait until next month.');
+    });
+    it('a window the gateway has no word for reads neutrally', () => {
+      expect(text('post_quarterly_max', 3)).toBe('Nothing ran. The limit (3) is used up. Tell the person; they can raise it or wait until the period ends.');
+    });
+    it('without a named bound, falls back to the general text', () => {
+      expect(text(undefined, undefined)).toMatch(/a limit stopped it/);
+      expect(text('not_in_profile', 3)).toMatch(/a limit stopped it/);
+    });
+  });
 });
 
 // ── Through the real wiring ────────────────────────────────────────────────
