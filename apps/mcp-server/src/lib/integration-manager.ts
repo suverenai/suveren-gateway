@@ -7,7 +7,7 @@
 
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
-import { existsSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -15,6 +15,7 @@ import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import type { ProfileToolGating } from './tool-gating-types';
 import type { IntegrationConfig, ToolGatingConfig } from './integration-registry';
 import { getManifest, isExactSemver } from './manifest-loader';
+import { watchInactivity, npmInstallIdleMs } from './inactivity-watch';
 import { remotePreflightTarget, preflightRemoteAuth } from './remote-auth-preflight';
 import { isSimulationMode, connectorCurrentlySimulated, SIMULATION_BLOCK_REASON, PRODUCTION_BLOCK_REASON } from './simulation-mode';
 import { inheritedConnectorEnv } from './connector-env';
@@ -661,28 +662,50 @@ export class IntegrationManager {
     await new Promise<void>((resolve, reject) => {
       const child = execFile(
         'npm',
-        ['install', '--no-fund', '--no-audit', spec],
+        // `--loglevel http`: one line per request, so a working install shows progress to the watch below.
+        ['install', '--no-fund', '--no-audit', '--loglevel', 'http', spec],
         {
           cwd: INTEGRATIONS_DIR,
           // Windows: a shell so cmd.exe finds npm.cmd (see EINVAL note above).
           // POSIX: no shell — npm is a normal executable and keeping shell off
           // means the validated package spec is still passed as a bare argv.
           shell: isWin,
-          // No timeout: a slow install on a machine with antivirus is not an
-          // error, and killing it midway is what created broken installs in
-          // the first place. Progress is visible in the log.
+          // No TOTAL timeout: a slow install on a machine with antivirus is not
+          // an error, and killing it midway is what created broken installs in
+          // the first place. An INACTIVITY limit instead (below): it ends only an
+          // install that shows no progress at all (a dead network).
           maxBuffer: 10 * 1024 * 1024,
           windowsHide: true,
         },
         (err, _stdout, stderr) => {
+          watch.stop();
+          if (stalled) return;
           if (err) {
-            reject(new Error(`Failed to install ${spec}: ${err.message}${stderr ? ` — ${stderr.trim()}` : ''}`));
+            const tail = stderr ? stderr.trim().slice(-2000) : '';
+            reject(new Error(`Failed to install ${spec}: ${err.message}${tail ? ` — ${tail}` : ''}`));
             return;
           }
           resolve();
         },
       );
-      child.on('error', err => reject(new Error(`Failed to run npm for ${spec}: ${err.message}`)));
+      let stalled = false;
+      const modules = join(INTEGRATIONS_DIR, 'node_modules');
+      const limit = npmInstallIdleMs();
+      const watch = watchInactivity({
+        limitMs: limit,
+        probe: () => { try { return statSync(modules).mtimeMs; } catch { return null; } },
+        onIdle: () => {
+          stalled = true;
+          child.kill();
+          reject(new Error(
+            `Installing ${spec} made no progress for ${Math.round(limit / 60_000)} minute(s), so it was stopped. ` +
+            'The network may be down or npm unreachable. Nothing was activated; try again when the connection is back.',
+          ));
+        },
+      });
+      child.stdout?.on('data', () => watch.touch());
+      child.stderr?.on('data', () => watch.touch());
+      child.on('error', err => { watch.stop(); reject(new Error(`Failed to run npm for ${spec}: ${err.message}`)); });
     });
 
     if (!this.isUsableInstall(npmPackage)) {
