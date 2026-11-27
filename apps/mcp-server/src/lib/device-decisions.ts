@@ -170,6 +170,18 @@ function cpBase(): string {
 }
 
 /** The control plane over loopback with the shared internal secret. Env is read per call. */
+/**
+ * Whether the gateway has an unlock password, as the control plane says it (readable while locked). Only a plain yes counts:
+ * an unanswered question, an older control plane or a gateway with device keys off is "no" (the locked notice then names the account key).
+ */
+export async function controlPlaneHasPassword(): Promise<boolean> {
+  try {
+    return (await cpCall('GET', '/internal/unlock-password') as { hasPassword?: unknown }).hasPassword === true;
+  } catch {
+    return false;
+  }
+}
+
 export const controlPlaneDevice: DeviceCpClient = {
   async chainState() {
     const body = await cpCall('GET', '/internal/device-chain');

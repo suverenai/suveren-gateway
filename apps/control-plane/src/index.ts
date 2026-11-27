@@ -1451,7 +1451,7 @@ app.listen(port, bindHost, () => {
   // it reports being blocked, possibly hours later. Autostart made this failure
   // quieter, so it has to announce itself.
   if (process.env.SUVEREN_AUTOSTART === '1' && !vault.isUnlocked()) {
-    const { title, message, url } = lockedNotification(port);
+    const { title, message, url } = lockedNotification(port, process.env, vault.hasPassword());
     // Pass the URL so the notification is clickable where the platform allows
     // it — otherwise clicking the "unlock me" notice opens Finder.
     notify(title, message, process.platform, url);

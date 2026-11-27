@@ -8,7 +8,7 @@
  */
 
 import type { SharedState, EnrichedAuthorization } from '../lib/shared-state';
-import { lockedNotice } from '../lib/locked-notice';
+import { lockedNoticeNow } from '../lib/locked-notice-now';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { getProfile } from '@hap/core';
 import { getConsumptionState, formatConsumptionCompact, formatConsumptionFull } from '../lib/consumption';
@@ -261,7 +261,7 @@ function listAuthorizations(
   return async (args?: { domain?: string }) => {
     // Running but locked reads as "no authorizations" unless we say so.
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('list authorizations', state.spClient.getLockReason() ?? 'restart') }] };
+      return { content: [{ type: 'text' as const, text: await lockedNoticeNow('list authorizations', state.spClient.getLockReason() ?? 'restart') }] };
     }
     // In simulation mode, hide authorizations for profiles with no running
     // integration — see agent-visibility.ts. A no-op outside simulation.

@@ -115,11 +115,16 @@ describe('lockedNotification', () => {
     expect(n.message).toContain('enter your API key');
   });
 
-  it('with device keys on, asks for the password or Touch ID, not the API key', () => {
-    const n = lockedNotification(3400, { SUVEREN_DEVICE_KEYS: 'on' });
+  it('with device keys on AND an unlock password, asks for the password or Touch ID, not the API key', () => {
+    const n = lockedNotification(3400, { SUVEREN_DEVICE_KEYS: 'on' }, true);
     expect(n.message).toContain('Open the Suveren Gateway page and unlock it with your password or Touch ID.');
     expect(n.message).not.toMatch(/API key/);
     expect(n.url).toBe('http://localhost:3400');
+  });
+
+  it('with device keys on but no unlock password, or with device keys off, still the API key', () => {
+    expect(lockedNotification(3400, { SUVEREN_DEVICE_KEYS: 'on' }, false).message).toContain('enter your API key');
+    expect(lockedNotification(3400, {}, true).message).toContain('enter your API key');
   });
 });
 

@@ -12,6 +12,7 @@
 import type { IntegrationManager, DiscoveredTool } from './integration-manager';
 import type { SharedState, EnrichedAuthorization } from './shared-state';
 import { lockedNotice } from './locked-notice';
+import { lockedNoticeNow } from './locked-notice-now';
 import type { DenialReason, DenialKind } from './denial-log';
 import { SPReceiptError, SPProposalError } from './sp-client';
 import { isCommitmentDowngrade, AsKeyMismatchError } from './attestation-cache';
@@ -1002,7 +1003,7 @@ function createGatedToolHandlerInner(
     async (args: Record<string, unknown>): Promise<ToolResult> => {
       if (!state.spClient.isUnlocked()) {
         return {
-          content: [{ type: 'text', text: lockedNotice(`use ${tool.namespacedName}`, state.spClient.getLockReason() ?? 'restart') }],
+          content: [{ type: 'text', text: await lockedNoticeNow(`use ${tool.namespacedName}`, state.spClient.getLockReason() ?? 'restart') }],
           isError: true,
         };
       }

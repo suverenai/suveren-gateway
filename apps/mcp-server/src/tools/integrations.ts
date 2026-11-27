@@ -7,7 +7,7 @@
  */
 
 import type { SharedState } from '../lib/shared-state';
-import { lockedNotice } from '../lib/locked-notice';
+import { lockedNoticeNow } from '../lib/locked-notice-now';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { profileMatches } from '../lib/tool-proxy';
 
@@ -24,7 +24,7 @@ export function listIntegrationsHandler(
 ) {
   return async () => {
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('list integrations', state.spClient.getLockReason() ?? 'restart') }] };
+      return { content: [{ type: 'text' as const, text: await lockedNoticeNow('list integrations', state.spClient.getLockReason() ?? 'restart') }] };
     }
     if (!integrationManager) {
       return { content: [{ type: 'text' as const, text: 'No integration manager available.' }] };

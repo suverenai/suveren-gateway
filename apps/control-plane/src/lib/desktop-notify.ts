@@ -179,10 +179,12 @@ export function buildNotifyCommand(
 export function lockedNotification(
   port: string | number,
   env: NodeJS.ProcessEnv = process.env,
+  /** The vault has an unlock password. Without one the gateway still opens with the account key, device keys on or not. */
+  hasPassword = false,
 ): { title: string; message: string; url: string } {
   const url = `http://localhost:${port}`;
-  // With device keys on the person unlocks with their password or Touch ID; the account key is the switch-off path.
-  const how = env.SUVEREN_DEVICE_KEYS === 'on'
+  // With device keys on and an unlock password set, the person unlocks with it or Touch ID; otherwise the account key.
+  const how = env.SUVEREN_DEVICE_KEYS === 'on' && hasPassword
     ? 'Open the Suveren Gateway page and unlock it with your password or Touch ID.'
     : `Open ${url} and enter your API key.`;
   return {
