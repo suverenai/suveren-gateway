@@ -58,6 +58,7 @@ import { mandatePrefillGate, type CreateMandateProposalArgs } from '../lib/creat
 import { CHANGE_MANDATE_TOOL, type ChangeArgs } from '../lib/mandate-change-view';
 import { MandateChangeBody } from './MandateChangeCard';
 import { applyChangeForEdit } from '../lib/mandate-change-edit';
+import { hostText } from '../lib/as-host';
 
 // NEVER truncate: approvers commit to exactly what they can read here, so
 // the full content must be visible at once (an email body cut at 200 chars
@@ -460,7 +461,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               </MandateFold>
             ),
             requestAndHistory: readable ? <RequestContextBox proposalId={proposal.id} layout="folds" onData={setRequestContextData} /> : null,
-            legendNote: content.sealed ? <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span> : undefined,
+            legendNote: content.sealed ? <span>{hostText('Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.')}</span> : undefined,
             noTechnical: !readable,
           }}
         />
@@ -703,7 +704,7 @@ export function ApprovalBody({ proposal, currentUserId, proposalLinks, toolDispl
               <span><i className="creation-legend-dot creation-legend-dot-sealed" />sealed — approved and executed exactly so</span>
               <span><i className="creation-legend-dot creation-legend-dot-system" />from the system — read by the gateway, not by the AI</span>
               <span><i className="creation-legend-dot au10-dot-ai" />the AI's own claim or text — not checked</span>
-              {content.sealed && <span>Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.</span>}
+              {content.sealed && <span>{hostText('Decrypted on this device — suveren.ai stores only an unreadable copy and its fingerprint.')}</span>}
             </p>
           </div>
         </details>

@@ -176,13 +176,20 @@ export function buildNotifyCommand(
 }
 
 /** The message itself — one place, so the agent notice and this one agree. */
-export function lockedNotification(port: string | number): { title: string; message: string; url: string } {
+export function lockedNotification(
+  port: string | number,
+  env: NodeJS.ProcessEnv = process.env,
+  /** The vault has an unlock password. Without one the gateway still opens with the account key, device keys on or not. */
+  hasPassword = false,
+): { title: string; message: string; url: string } {
   const url = `http://localhost:${port}`;
+  // With device keys on and an unlock password set, the person unlocks with it or Touch ID; otherwise the account key.
+  const how = env.SUVEREN_DEVICE_KEYS === 'on' && hasPassword
+    ? 'Open the Suveren Gateway page and unlock it with your password or Touch ID.'
+    : `Open ${url} and enter your API key.`;
   return {
     title: 'Suveren is running but locked',
-    message:
-      `Your agent has no authority until you unlock it. ` +
-      `Open ${url} and enter your API key.`,
+    message: `Your agent has no authority until you unlock it. ${how}`,
     url,
   };
 }

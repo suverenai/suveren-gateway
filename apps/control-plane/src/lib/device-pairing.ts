@@ -440,6 +440,23 @@ export class DevicePairing {
 
   // ─── ADMIT: "Add a phone" ─────────────────────────────────────────────────────
 
+  /**
+   * Where the person opens the phone app. Held by the gateway, never taken from the Authority Server, so a hacked or hostile
+   * server cannot send people to a fake app. `SUVEREN_APP_ORIGIN` when the company's IT set it (a bare https origin; http only on
+   * localhost); otherwise https://app.suveren.ai when this gateway uses suveren.ai; otherwise none, and the page says it without
+   * an address. A value that is not a bare origin gives none, never a guess.
+   */
+  async appOrigin(): Promise<string | undefined> {
+    const set = process.env.SUVEREN_APP_ORIGIN;
+    if (set !== undefined && set !== '') return bareOrigin(set);
+    try {
+      const host = new URL(this.d.client.asUrl).hostname;
+      return host === 'suveren.ai' || host === 'www.suveren.ai' ? 'https://app.suveren.ai' : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async admitStart(): Promise<PairingView> {
     this.requireVault();
     this.requireFree();
@@ -848,5 +865,17 @@ export class DevicePairing {
     })();
     this.pollP = run;
     return run;
+  }
+}
+
+/** `v` when it is a bare origin (https, or http on localhost), else undefined. */
+function bareOrigin(v: string): string | undefined {
+  try {
+    const u = new URL(v);
+    const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) return undefined;
+    return u.origin === v ? v : undefined;
+  } catch {
+    return undefined;
   }
 }

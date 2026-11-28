@@ -175,7 +175,9 @@ export class AttestationCache {
   /** Re-run the gate over every cached authorization (what the timer does). A refusal drops the entry; an error leaves it until it is stale. */
   async recheckAll(): Promise<void> {
     if (!this.grantGate) return;
-    for (const id of [...this.authorizations.keys()]) {
+    // Held-back mandates too: a refusal drops the entry from `authorizations`, so without them here a mandate that was held back and
+    // then ended (revoked or replaced) would stay on the page's held-back list until the gateway restarts.
+    for (const id of new Set([...this.authorizations.keys(), ...this.withheld.keys()])) {
       try { await this.syncAuthorization(id); } catch { /* kept until stale */ }
     }
   }
@@ -216,6 +218,7 @@ export class AttestationCache {
   /** Drop a replaced mandate from the cache now (it was just recorded). */
   dropReplaced(authorizationId: string): void {
     this.authorizations.delete(authorizationId);
+    this.withheld.delete(authorizationId);
   }
 
   /**
@@ -411,11 +414,13 @@ export class AttestationCache {
     // a new action only produces dead proposals. Remove any cached copy too.
     if (result.revoked) {
       this.authorizations.delete(authorizationId);
+      this.withheld.delete(authorizationId); // an ended mandate is not "held back"
       return null;
     }
     // Replaced by a mandate the person approved: same as revoked on this gateway.
     if (this.isReplaced(authorizationId)) {
       this.authorizations.delete(authorizationId);
+      this.withheld.delete(authorizationId);
       return null;
     }
 

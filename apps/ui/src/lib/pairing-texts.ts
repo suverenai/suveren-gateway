@@ -14,10 +14,11 @@
  */
 import { textForCode } from './device-texts';
 import { SP, SHARED_ERRORS, whenText } from '@suveren/approval-card/lib/pairing-texts';
+import { liveTexts } from '@suveren/approval-card/lib/as-host';
 
 export { whenText };
 
-export const PT = {
+export const PT = liveTexts({
   // ─── The Devices page ─────────────────────────────────────────────────────────
   devicesTitle: SP.devicesTitle, // shared (approval-card pairing-texts)
   devicesBack: 'Back to settings', // DRAFT
@@ -44,7 +45,7 @@ export const PT = {
   // Changes when D2 ships (the phone approves): today the phone only reads, so "you approve or reject them here" is true; after D2 it is not.
   addPhoneIntro: 'The Suveren app on your phone becomes one of your devices. For now you read requests there. You approve or reject them here.', // DRAFT (= P.joinIntro, from the other side)
   addPhoneShow: 'Show the code', // DRAFT
-  addPhoneScan: 'On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.', // DRAFT (= P.welcomeJoin)
+  addPhoneScan: 'On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.', // DRAFT (= P.welcomeJoin); the sentence of a server that names no phone app address (see addPhoneScanText)
   addPhoneQrLabel: 'Code to add a phone', // DRAFT (the picture's text for a screen reader)
   addPhoneQrTime: 'The code works for 10 minutes. Show it to your own phone only.', // DRAFT
   addPhoneConnected: 'Your phone is connecting...', // DRAFT
@@ -94,10 +95,21 @@ export const PT = {
   back: SP.back, // shared (approval-card pairing-texts)
   startAgain: SP.startAgain, // shared (approval-card pairing-texts)
   tryAgain: SP.tryAgain, // shared (approval-card pairing-texts)
-} as const;
+} as const);
+
+/**
+ * "Add a phone": where the person opens the phone app. The address comes from the gateway (`appOrigin`: SUVEREN_APP_ORIGIN, or
+ * app.suveren.ai for suveren.ai), never from the Authority Server. Without one the sentence is `PT.addPhoneScan`.
+ * Outside `PT` on purpose: the host of the app is not the name of the Authority Server and must not be rewritten with it.
+ */
+export function addPhoneScanText(appOrigin: string | undefined): string {
+  let host = '';
+  try { host = appOrigin ? new URL(appOrigin).host : ''; } catch { host = ''; }
+  return host ? `On your phone, open ${host}, choose Add this phone to my account, and scan this code.` : PT.addPhoneScan;
+}
 
 /** The sentence for a pairing code. DRAFT, in the style of the phone app's `ERRORS`; a code nobody here knows falls to the device-key texts, then the generic one. */
-const ERRORS: Record<string, string> = {
+const ERRORS: Record<string, string> = liveTexts({
   ...SHARED_ERRORS, // the pairing sentences both apps say in the same words
   other_account: 'This phone belongs to another account than the one this computer is signed in to. Nothing was added.', // DRAFT (plan 20.2)
   sign_in_first: 'This computer holds logins for connected systems. Sign in to your account first, then add this computer.', // DRAFT (plan 20.2)
@@ -115,7 +127,7 @@ const ERRORS: Record<string, string> = {
   no_user_verification: 'The phone did not ask for a touch. Nothing was added.', // DRAFT
   helper_unavailable: 'This computer cannot ask for your touch right now. Nothing changed.', // DRAFT
   no_biometry: 'This computer has no Touch ID. Nothing changed.', // DRAFT
-};
+});
 
 export function pairingErrorText(code: string | undefined): string {
   const key = (code ?? '').toLowerCase();

@@ -85,7 +85,13 @@ describe('Add a phone', () => {
     expect(qr).toContain('class="device-qr"');
     expect(qr).toContain('role="img"');
     expect(qr).toContain(`aria-label="${PT.addPhoneQrLabel}"`);
-    expect(text(qr)).toContain(PT.addPhoneScan); expect(text(qr)).toContain(PT.addPhoneQrTime);
+    // An Authority Server that names no phone app address (an older one): the sentence without an address.
+    expect(text(qr)).toContain('On your phone, open the Suveren app, choose Add this phone to my account, and scan this code.');
+    expect(text(qr)).toContain(PT.addPhoneQrTime);
+    // One that names it: its host is in the sentence, whatever it is.
+    const named = text(render(st({ flow: 'admit', step: 'qr', qr: 'SUVEREN-PAIR-1:abc', expiresAt: NOW + 600 }, { appOrigin: 'https://app.example-company.com' })));
+    expect(named).toContain('On your phone, open app.example-company.com, choose Add this phone to my account, and scan this code.');
+    expect(named).not.toContain('app.suveren.ai');
     // the secret text is drawn, never printed as text
     expect(text(qr)).not.toContain('SUVEREN-PAIR-1');
     expect(text(render(st({ flow: 'admit', step: 'connected' })))).toContain(PT.addPhoneConnected);

@@ -264,7 +264,7 @@ export function mountDeviceKeyRoutes(app: Express, o: DeviceKeyMountOptions): {
         const user = o.vault.getSessionUser();
         return { signedIn: !!cookie && !(isBearerCredential(cookie) && !user), did: user?.did ?? null };
       },
-    }));
+    }, () => o.vault.hasPassword()));
     if (o.device?.decision) {
       decisions = new DeviceDecisions({
         vault: o.vault, store: device.store, client: device.client,

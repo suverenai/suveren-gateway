@@ -33,6 +33,30 @@ describe('PairingDriver: the page shows what the control plane says', () => {
     expect(join.get().view).toEqual({ flow: 'none' });
   });
 
+  it('"Add a phone": asks once where the phone app is opened, and keeps it while the polls go on', async () => {
+    const p = plane({
+      'POST /auth/device/pairing/admit/start': ok(QR),
+      'GET /auth/device/pairing/app-origin': () => ({ status: 200, body: { ok: true, appOrigin: 'https://app.example-company.com' } }),
+      'GET /auth/device/pairing/status': ok(QR),
+    });
+    const d = new PairingDriver({ client: p.client, flow: 'admit' }, { view: { flow: 'none' }, busy: false, loading: false });
+    await d.start();
+    expect(d.get().appOrigin).toBe('https://app.example-company.com');
+    await d.poll();
+    expect(d.get().appOrigin).toBe('https://app.example-company.com');
+    expect(p.calls.filter(c => c.includes('app-origin'))).toHaveLength(1);
+  });
+
+  it('an Authority Server that names no phone app address: none is set, the page still works', async () => {
+    const p = plane({
+      'POST /auth/device/pairing/admit/start': ok(QR),
+      'GET /auth/device/pairing/app-origin': () => ({ status: 200, body: { ok: true } }),
+    });
+    const d = new PairingDriver({ client: p.client, flow: 'admit' }, { view: { flow: 'none' }, busy: false, loading: false });
+    await d.start();
+    expect(d.get()).toEqual({ view: QR, busy: false, loading: false });
+  });
+
   it('start: the QR from the control plane; a refusal keeps the view and says why in words', async () => {
     const p = plane({ 'POST /auth/device/pairing/admit/start': ok(QR) });
     const d = new PairingDriver({ client: p.client, flow: 'admit' }, { view: { flow: 'none' }, busy: false, loading: false });

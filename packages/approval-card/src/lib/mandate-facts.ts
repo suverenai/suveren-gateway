@@ -122,6 +122,6 @@ export function shortSummary(input: FactsInput): ShortSummary {
 /** "Allowed recipients a@x, b@x and 1 more · Daily send limit 20 · +2 more": the one line a list card shows. */
 export function shortSummaryText(input: FactsInput): string {
   const s = shortSummary(input);
-  return [...s.facts.map((f) => `${f.label} ${f.value}`), ...(s.more > 0 ? [`+${s.more} more`] : [])].join(' · ');
+  return [...s.facts.map((f) => `${f.label} ${f.value}`), ...(s.more > 0 ? [`+${s.more} more`] : [])].join('\u00A0· '); // no-break space before the dot: a wrapped line never starts with it
 }
 

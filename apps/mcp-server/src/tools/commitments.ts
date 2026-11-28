@@ -18,7 +18,7 @@
 
 import { readRefusal } from '@hap/core/refusal';
 import type { SharedState } from '../lib/shared-state';
-import { lockedNotice } from '../lib/locked-notice';
+import { lockedNoticeNow } from '../lib/locked-notice-now';
 import { endedFromRefusal, mandateEndedProposalText } from '../lib/guidance';
 import type { IntegrationManager } from '../lib/integration-manager';
 import { SPReceiptError, type SPProposal } from '../lib/sp-client';
@@ -865,7 +865,7 @@ export function checkPendingCommitmentsHandler(
 ) {
   return async (args: { proposal_id?: string; wait_seconds?: number }) => {
     if (!state.spClient.isUnlocked()) {
-      return { content: [{ type: 'text' as const, text: lockedNotice('check commitments', state.spClient.getLockReason() ?? 'restart') }] };
+      return { content: [{ type: 'text' as const, text: await lockedNoticeNow('check commitments', state.spClient.getLockReason() ?? 'restart') }] };
     }
     try {
       if (args.proposal_id) {

@@ -58,7 +58,18 @@ export function uiPort(): string {
   return process.env.SUVEREN_UI_PORT ?? process.env.SUVEREN_CP_PORT ?? '3400';
 }
 
-function bootLockedNotice(what: string): string {
+function bootLockedNotice(what: string, byPassword: boolean): string {
+  if (byPassword) {
+    // Device keys on: the person unlocks with their password or Touch ID, not the account key.
+    return (
+      `${what} Suveren gateway is running but LOCKED, so it cannot read any ` +
+      `mandates or credentials.\n\n` +
+      `This is not the same as having no mandates — yours are on disk, ` +
+      `encrypted, and unreadable until someone unlocks them.\n\n` +
+      `TELL THE USER: open the Suveren Gateway page in your own browser and unlock it with your password or Touch ID. ` +
+      `It boots locked by design after every restart.`
+    );
+  }
   return (
     `${what} Suveren gateway is running but LOCKED, so it cannot read any ` +
     `mandates or credentials.\n\n` +
@@ -74,8 +85,8 @@ function expiredSessionNotice(what: string): string {
   return (
     `${what} Suveren gateway's sign-in has ended (sign-ins last 30 days, or ` +
     `it was revoked), so it is now LOCKED.\n\n` +
-    `TELL THE USER: open the Suveren Gateway page in your own browser and enter your Suveren API key to sign ` +
-    `in again. Your mandates are safe; nothing ran.`
+    `TELL THE USER: open the Suveren Gateway page in your own browser and sign in again. ` +
+    `Your mandates are safe; nothing ran.`
   );
 }
 
@@ -128,7 +139,7 @@ function managedWrongTeamNotice(what: string): string {
  * person — the agent is the only thing that can see this state, and the person
  * is the only one who can fix it.
  */
-export function lockedNotice(action?: string, reason: LockedReason = 'restart'): string {
+export function lockedNotice(action?: string, reason: LockedReason = 'restart', env: NodeJS.ProcessEnv = process.env, hasPassword = false): string {
   const what = action ? `Cannot ${action}: the` : 'The';
   switch (reason) {
     case 'expired': return expiredSessionNotice(what);
@@ -136,6 +147,6 @@ export function lockedNotice(action?: string, reason: LockedReason = 'restart'):
     case 'as-tls-mismatch': return asTlsMismatchNotice(what);
     case 'as-url-changed': return asUrlChangedNotice(what);
     case 'managed-wrong-team': return managedWrongTeamNotice(what);
-    default: return bootLockedNotice(what);
+    default: return bootLockedNotice(what, env.SUVEREN_DEVICE_KEYS === 'on' && hasPassword);
   }
 }

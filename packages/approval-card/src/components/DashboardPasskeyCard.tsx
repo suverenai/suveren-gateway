@@ -9,8 +9,9 @@
  * dashboard or an AI writes reaches this screen.
  */
 import { ResultStamp } from './ResultStamp';
+import { liveTexts } from '../lib/as-host';
 
-export const PASSKEY_TEXT = {
+export const PASSKEY_TEXT = liveTexts({
   // DRAFT
   title: 'Add a passkey for your dashboard',
   // DRAFT
@@ -47,7 +48,7 @@ export const PASSKEY_TEXT = {
   gone: 'This passkey request is no longer waiting. Make the passkey again on the dashboard.',
   touchFailed: 'Your touch did not work. Nothing changed. Try again.',
   failed: 'suveren.ai did not add the passkey. Nothing changed. Try again.',
-} as const;
+} as const);
 
 export interface PasskeyRequestView {
   code: string;

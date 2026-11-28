@@ -16,8 +16,9 @@
  */
 
 import { SP, SHARED_ERRORS } from '@suveren/approval-card/lib/pairing-texts';
+import { liveTexts } from '@suveren/approval-card/lib/as-host';
 
-export const P = {
+export const P = liveTexts({
   // ─── The phone cannot pair (compat.ts) ───────────────────────────────────────
   needsTitle: 'This phone cannot be set up yet', // DRAFT
   needsIntro: 'To work, this app needs:', // DRAFT
@@ -290,13 +291,13 @@ export const P = {
   mineActiveUntil: (when: string) => `Active until ${when}`, // DRAFT new
   noticeGiven: (title: string, by: string) => `The mandate for ${title} was given on ${by}.`, // DRAFT new (mockup F2)
   noticeEnded: (title: string, by: string) => `The mandate for ${title} was ended on ${by}.`, // DRAFT new (mockup F2)
-} as const;
+} as const);
 
 /**
  * Why a request shows no buttons (card-checks.ts). One sentence each, written for a person who knows nothing of keys or
  * fingerprints: what is wrong in their words, that nothing was decided, and what to do. Every text DRAFT.
  */
-const BLOCKED: Record<string, string> = {
+const BLOCKED: Record<string, string> = liveTexts({
   not_pending: 'This request was already decided, or it ran out.', // DRAFT
   content_not_here: 'This phone has not received the key to this request yet. Another of your devices will pass it on. Try again in a little while.', // DRAFT (= S8.notYetOpenable, shorter)
   content_unreadable: 'This phone cannot open this request. Decide it on another of your devices.', // DRAFT
@@ -319,7 +320,7 @@ const BLOCKED: Record<string, string> = {
   session_ended: 'The app closed itself. Open it again with your touch.', // DRAFT
   reads_failed: 'This request could not be checked right now. Nothing was decided. Try again.', // DRAFT
   proposal_invalid: 'This request could not be read. Nothing was decided.', // DRAFT
-};
+});
 
 export function blockedText(reason: string): string {
   return Object.prototype.hasOwnProperty.call(BLOCKED, reason) ? BLOCKED[reason] : BLOCKED.reads_failed;
@@ -329,7 +330,7 @@ export function blockedText(reason: string): string {
 export const BLOCKED_REASONS: readonly string[] = Object.keys(BLOCKED);
 
 /** The sentence for a code. Total: a code nobody knows gets the generic text, never the code itself and never the server's message. */
-const ERRORS: Record<string, string> = {
+const ERRORS: Record<string, string> = liveTexts({
   ...SHARED_ERRORS, // the pairing sentences both apps say in the same words
   generic: 'This did not work. Nothing was changed. Try again.', // DRAFT (= T.generic 103)
   // The phone's passkey
@@ -426,7 +427,7 @@ const ERRORS: Record<string, string> = {
   mandate_expired_grant: 'This mandate was waiting too long and has run out. Nothing was signed. Prepare it again on your computer.', // DRAFT new
   check_required_grant: 'Your touch is needed to give a mandate. Nothing was signed. Try again.', // DRAFT new
   end_failed: 'suveren.ai did not accept ending the mandate. It still runs. Try again.', // DRAFT new
-};
+});
 
 export function errorText(code: string | undefined): string {
   const key = (code ?? '').toLowerCase();

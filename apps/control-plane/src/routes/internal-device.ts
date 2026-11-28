@@ -37,7 +37,7 @@ function secretMatches(provided: string | undefined, expected: string): boolean 
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function createInternalDeviceRouter(getSecret: () => string, store: DeviceChainStore, pins: DevicePinStore, mandates?: { store: MandateGrantStore; grants: MandateGrants; account?: () => { signedIn: boolean; did: string | null } }): Router {
+export function createInternalDeviceRouter(getSecret: () => string, store: DeviceChainStore, pins: DevicePinStore, mandates?: { store: MandateGrantStore; grants: MandateGrants; account?: () => { signedIn: boolean; did: string | null } }, hasPassword?: () => boolean): Router {
   const router = Router();
   const guarded = (handler: (req: Request, res: Response) => void) => (req: Request, res: Response): void => {
     if (!secretMatches(req.header('X-Internal-Secret') ?? undefined, getSecret())) {
@@ -68,6 +68,9 @@ export function createInternalDeviceRouter(getSecret: () => string, store: Devic
     }
     res.json({ state });
   }));
+
+  // Whether this gateway has an unlock password (readable while locked): the locked notice the AI gets names password or Touch ID only then.
+  router.get('/unlock-password', guarded((_req, res) => { res.json({ hasPassword: hasPassword?.() === true }); }));
 
   router.post('/device-pin/get', guarded((req, res) => {
     const { did } = (req.body ?? {}) as { did?: unknown };

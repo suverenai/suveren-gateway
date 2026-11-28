@@ -56,6 +56,7 @@ class FakeAs {
   failChain = false;
   /** What `GET /api/mandates?authorization_id=` answers as `authorization_id` (a mix-up) */
   answerAuthz: string | null = null;
+  revokedIds = new Set<string>();
   private server!: Server;
   url = '';
 
@@ -116,7 +117,7 @@ class FakeAs {
       const list = this.blobs.get(id);
       if (!list) return json(200, { authorization_id: id, mandates: [], complete: false });
       return json(200, {
-        authorization_id: this.answerAuthz ?? id, profile_id: 'test-pay@1', bounds: { profile: 'test-pay@1' }, scope_hash: 'sha256:s', complete: true, revoked: false,
+        authorization_id: this.answerAuthz ?? id, profile_id: 'test-pay@1', bounds: { profile: 'test-pay@1' }, scope_hash: 'sha256:s', complete: true, revoked: this.revokedIds.has(id),
         required_domains: ['owner'], attested_domains: ['owner'], deferred_commitment_domains: ['owner'],
         mandates: list.map(b => ({ domain: 'owner', blob: b, expires_at: now() + 3600 })),
       });
@@ -612,6 +613,18 @@ describe('the held-back list (GET /internal/held-back reads this)', () => {
     w.as.blobs.set(AUTHZ, []);                                  // what the Authority Server answers once every blob expired
     expect(await w.cache.syncAuthorization(AUTHZ)).toBeNull();  // not honoured
     expect(w.cache.withheldList()).toEqual([]);                 // and not listed as held back
+  });
+
+  // Live 2026-11-27: mandates held back (an owner this gateway does not honour) and then ended on the Authority Server stayed on the
+  // page's held-back list until a restart: the refusal had dropped them from the cache, so the timer never looked at them again, and
+  // the revoked path did not clear the hold.
+  it('a held-back mandate that is then ended leaves the held-back list on the next recheck', async () => {
+    const w = await world({ noGrant: true });
+    await w.cache.syncAuthorization(AUTHZ);
+    expect(w.cache.withheldList()).toHaveLength(1);
+    w.as.revokedIds.add(AUTHZ);
+    await w.cache.recheckAll();
+    expect(w.cache.withheldList()).toEqual([]);
   });
 
   it('a live, granted mandate whose blobs ran out is dropped from the cache, never listed as held back', async () => {
