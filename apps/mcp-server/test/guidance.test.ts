@@ -486,16 +486,16 @@ describe('5. refusal endings', () => {
     };
     const text = (field: unknown, value: unknown) => refusalNextStep('CUMULATIVE_LIMIT_EXCEEDED', 'Post', { profile: schema, field, value });
     it('weekly', () => {
-      expect(text('send_weekly_max', 30)).toBe('Nothing ran. The weekly send limit (30) is used up. Tell the person; they can raise it or wait until next week. Do not retry the same call.');
+      expect(text('send_weekly_max', 30)).toBe('Nothing ran. The weekly send limit (30) is used up: 30 in the last 7 days. Tell the person; they can raise it, or wait until earlier ones are more than 7 days old. Do not retry the same call.');
     });
     it('daily', () => {
-      expect(text('send_daily_max', 5)).toBe('Nothing ran. The daily send limit (5) is used up. Tell the person; they can raise it or wait until tomorrow. Do not retry the same call.');
+      expect(text('send_daily_max', 5)).toBe('Nothing ran. The daily send limit (5) is used up: 5 in the last 24 hours. Tell the person; they can raise it, or wait until earlier ones are more than 24 hours old. Do not retry the same call.');
     });
     it('monthly sum, named by the field it adds up', () => {
-      expect(text('spend_monthly_max', 500)).toBe('Nothing ran. The monthly amount limit (500) is used up. Tell the person; they can raise it or wait until next month. Do not retry the same call.');
+      expect(text('spend_monthly_max', 500)).toBe('Nothing ran. The monthly amount limit (500) is used up for this month. Tell the person; they can raise it, or wait until next month. Do not retry the same call.');
     });
     it('a window the gateway has no word for reads neutrally', () => {
-      expect(text('post_quarterly_max', 3)).toBe('Nothing ran. The limit (3) is used up. Tell the person; they can raise it or wait until the period ends. Do not retry the same call.');
+      expect(text('post_quarterly_max', 3)).toBe('Nothing ran. The limit (3) is used up. Tell the person; they can raise it, or wait until the period ends. Do not retry the same call.');
     });
     it('a sum limit is named by what it adds up, even when it names actions; underscores become spaces', () => {
       const p = { boundsSchema: { fields: {
@@ -503,9 +503,9 @@ describe('5. refusal endings', () => {
         customer_create_daily_max: { boundType: { kind: 'cumulative_count', window: 'daily' }, appliesTo: ['customer_create'] },
       } } };
       expect(refusalNextStep('CUMULATIVE_LIMIT_EXCEEDED', undefined, { profile: p, field: 'amount_daily_max', value: 500 }))
-        .toContain('The daily amount limit (500) is used up.');
+        .toContain('The daily amount limit (500) is used up: 500 in the last 24 hours.');
       expect(refusalNextStep('CUMULATIVE_LIMIT_EXCEEDED', undefined, { profile: p, field: 'customer_create_daily_max', value: 3 }))
-        .toContain('The daily customer create limit (3) is used up.');
+        .toContain('The daily customer create limit (3) is used up: 3 in the last 24 hours.');
     });
     it('a value that is not a finite number is left out', () => {
       expect(text('send_daily_max', '5')).toContain('The daily send limit is used up.');

@@ -180,7 +180,7 @@ export class DeviceClient {
   /** Approve one with this computer's key and its check (one touch). */
   approveDashboardPasskey(requestId: string) { return this.go<{ registered: true; credId: string; code: string }>(`/auth/device/dashboard-passkeys/${encodeURIComponent(requestId)}/approve`, json({})); }
   pairingStatus() { return this.go<{ view: PairingView }>('/auth/device/pairing/status'); }
-  /** Where the phone app is opened, as the Authority Server says it; no `appOrigin` when it names none. */
+  /** Where the phone app is opened, as the gateway holds it; no `appOrigin` when it has none. */
   pairingAppOrigin() { return this.go<{ appOrigin?: string }>('/auth/device/pairing/app-origin'); }
   admitStart() { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/start', json({})); }
   admitChoose(code: string) { return this.go<{ view: PairingView }>('/auth/device/pairing/admit/choose', json({ code })); }

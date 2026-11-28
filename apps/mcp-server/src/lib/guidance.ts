@@ -764,16 +764,19 @@ export interface UsedUpLimit {
   value: unknown;
 }
 
-/** How a window reads in a sentence: "weekly" … "until next week". Any window the schema adds without a word here reads neutrally. */
-const WINDOW_WORDS: Record<string, { adjective: string; until: string }> = {
-  daily: { adjective: 'daily', until: 'until tomorrow' },
-  weekly: { adjective: 'weekly', until: 'until next week' },
+/**
+ * How each window counts at the Authority Server (bound-check.ts): daily and weekly are ROLLING (the last 24 hours / 7 days),
+ * monthly is the calendar month. `span` is set for a rolling window, so the text can say when earlier uses stop counting.
+ */
+const WINDOW_WORDS: Record<string, { adjective: string; span?: string; until: string }> = {
+  daily: { adjective: 'daily', span: '24 hours', until: 'until earlier ones are more than 24 hours old' },
+  weekly: { adjective: 'weekly', span: '7 days', until: 'until earlier ones are more than 7 days old' },
   monthly: { adjective: 'monthly', until: 'until next month' },
 };
 
 /**
- * "Nothing ran. The weekly send limit (30) is used up. Tell the person; they can raise it or wait
- * until next week." Generated from the bound that was hit: the window and the action types it
+ * "Nothing ran. The weekly send limit (30) is used up: 30 in the last 7 days. Tell the person; they can raise it, or wait until
+ * earlier ones are more than 7 days old." Generated from the bound that was hit: the window and the action types it
  * governs come from the profile's bound schema, the value from the refusal. Undefined when the
  * refusal does not name a cumulative bound the profile knows, so the caller keeps its general text.
  */
@@ -791,9 +794,11 @@ export function usedUpLimitText(limit: UsedUpLimit | undefined): string | undefi
   const label = bt.kind === 'cumulative_sum' && bt.of ? plain(bt.of)
     : actions && actions.length > 0 ? actions.map(plain).join(' or ')
     : undefined;
-  const value = typeof limit.value === 'number' && Number.isFinite(limit.value) ? ` (${limit.value})` : '';
+  const n = typeof limit.value === 'number' && Number.isFinite(limit.value) ? limit.value : undefined;
+  const value = n !== undefined ? ` (${n})` : '';
   const name = [words?.adjective, label, 'limit'].filter(Boolean).join(' ');
-  return `Nothing ran. The ${name}${value} is used up. Tell the person; they can raise it or wait ${words?.until ?? 'until the period ends'}. Do not retry the same call.`;
+  const how = words?.span && n !== undefined ? `: ${n} in the last ${words.span}` : bt.window === 'monthly' ? ' for this month' : '';
+  return `Nothing ran. The ${name}${value} is used up${how}. Tell the person; they can raise it, or wait ${words?.until ?? 'until the period ends'}. Do not retry the same call.`;
 }
 
 /**

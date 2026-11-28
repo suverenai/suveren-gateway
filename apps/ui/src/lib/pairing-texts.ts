@@ -98,8 +98,8 @@ export const PT = liveTexts({
 } as const);
 
 /**
- * "Add a phone": where the person opens the phone app. The address comes from the Authority Server (`appOrigin`), never from this
- * code: a company's own server names its own. Without one (an older server, or none configured) the sentence is `PT.addPhoneScan`.
+ * "Add a phone": where the person opens the phone app. The address comes from the gateway (`appOrigin`: SUVEREN_APP_ORIGIN, or
+ * app.suveren.ai for suveren.ai), never from the Authority Server. Without one the sentence is `PT.addPhoneScan`.
  * Outside `PT` on purpose: the host of the app is not the name of the Authority Server and must not be rewritten with it.
  */
 export function addPhoneScanText(appOrigin: string | undefined): string {

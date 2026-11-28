@@ -4,7 +4,7 @@
  *
  *   GET  /auth/device/devices                 the devices of this account, from the chain this computer verified
  *   GET  /auth/device/pairing/status          the pairing in progress (the mailbox is looked at once) or { flow: 'none' }
- *   GET  /auth/device/pairing/app-origin      where the phone app is opened, as the Authority Server says it: { ok, appOrigin? } (absent when it names none)
+ *   GET  /auth/device/pairing/app-origin      where the phone app is opened, held by the gateway: { ok, appOrigin? } (absent when it has none)
  *   POST /auth/device/pairing/admit/start     "Add a phone": the QR of an admitter (shown_by: admitter)
  *   POST /auth/device/pairing/admit/choose    { code } the tapped comparison code; the touch; the append
  *   POST /auth/device/pairing/join/start      "Add this computer": the QR of a joiner (shown_by: joiner)

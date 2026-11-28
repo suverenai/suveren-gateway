@@ -1,34 +1,49 @@
 /**
- * "Add a phone" says where the phone app is opened. The address is the Authority Server's to give (`appOrigin` of
- * GET /api/as/compat); an older server, an unconfigured one, an unreachable one or a value that is not a bare origin gives none.
+ * "Add a phone" says where the phone app is opened. The gateway holds that address; the Authority Server never gives it, so a
+ * hacked or hostile server cannot send people to a fake app. SUVEREN_APP_ORIGIN (set by IT) wins; otherwise app.suveren.ai for a
+ * gateway on suveren.ai; otherwise none.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { DevicePairing } from '../lib/device-pairing';
 
-const pairingWith = (call: (m: string, p: string) => Promise<{ status: number; body: unknown }>) =>
-  new DevicePairing({ vault: { onLocked: () => {} }, client: { asUrl: 'https://as.example.com', call } } as never);
+const calls: string[] = [];
+const on = (asUrl: string) => new DevicePairing({
+  vault: { onLocked: () => {} },
+  client: { asUrl, call: async (m: string, p: string) => { calls.push(`${m} ${p}`); return { status: 200, body: { appOrigin: 'https://evil.example' } }; } },
+} as never);
 
-const answers = (status: number, body: unknown) => pairingWith(async (m, p) => {
-  expect([m, p]).toEqual(['GET', '/api/as/compat']);
-  return { status, body };
-});
+const prev = process.env.SUVEREN_APP_ORIGIN;
+afterEach(() => { if (prev === undefined) delete process.env.SUVEREN_APP_ORIGIN; else process.env.SUVEREN_APP_ORIGIN = prev; });
 
 describe('DevicePairing.appOrigin', () => {
-  it('is the origin the Authority Server names', async () => {
-    expect(await answers(200, { appOrigin: 'https://app.example.com' }).appOrigin()).toBe('https://app.example.com');
-    expect(await answers(200, { appOrigin: 'http://localhost:4200' }).appOrigin()).toBe('http://localhost:4200');
+  it('is app.suveren.ai for a gateway on suveren.ai, with or without www', async () => {
+    delete process.env.SUVEREN_APP_ORIGIN;
+    expect(await on('https://suveren.ai').appOrigin()).toBe('https://app.suveren.ai');
+    expect(await on('https://www.suveren.ai').appOrigin()).toBe('https://app.suveren.ai');
   });
-  it('is nothing for an older server (no field), an error answer or a body that is not JSON', async () => {
-    expect(await answers(200, { protocolVersion: '0.7' }).appOrigin()).toBeUndefined();
-    expect(await answers(500, { appOrigin: 'https://app.example.com' }).appOrigin()).toBeUndefined();
-    expect(await answers(200, null).appOrigin()).toBeUndefined();
+  it('is none for another Authority Server when IT set nothing', async () => {
+    delete process.env.SUVEREN_APP_ORIGIN;
+    expect(await on('https://as.example.com').appOrigin()).toBeUndefined();
+    expect(await on('http://localhost:4100').appOrigin()).toBeUndefined();
   });
-  it('is nothing for a value that is not a bare https origin', async () => {
-    for (const bad of ['http://app.example.com', 'https://app.example.com/path', 'https://user@app.example.com', 'app.example.com', 42, '']) {
-      expect(await answers(200, { appOrigin: bad }).appOrigin()).toBeUndefined();
+  it('is what IT set in SUVEREN_APP_ORIGIN, whatever the Authority Server', async () => {
+    process.env.SUVEREN_APP_ORIGIN = 'https://app.example-company.com';
+    expect(await on('https://suveren.ai').appOrigin()).toBe('https://app.example-company.com');
+    process.env.SUVEREN_APP_ORIGIN = 'http://localhost:4200';
+    expect(await on('http://localhost:4100').appOrigin()).toBe('http://localhost:4200');
+  });
+  it('is none for a set value that is not a bare https origin — never a guess', async () => {
+    for (const bad of ['http://app.example.com', 'https://app.example.com/path', 'https://user@app.example.com', 'app.example.com']) {
+      process.env.SUVEREN_APP_ORIGIN = bad;
+      expect(await on('https://suveren.ai').appOrigin()).toBeUndefined();
     }
   });
-  it('is nothing when the server cannot be reached', async () => {
-    expect(await pairingWith(async () => { throw new Error('down'); }).appOrigin()).toBeUndefined();
+  it('never asks the Authority Server', async () => {
+    calls.length = 0;
+    delete process.env.SUVEREN_APP_ORIGIN;
+    await on('https://suveren.ai').appOrigin();
+    process.env.SUVEREN_APP_ORIGIN = 'https://app.example-company.com';
+    await on('https://as.example.com').appOrigin();
+    expect(calls).toEqual([]);
   });
 });
